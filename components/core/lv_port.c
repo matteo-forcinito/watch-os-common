@@ -330,7 +330,7 @@ static void style_focus(lv_obj_t *obj)
     lv_obj_set_style_outline_color(obj, lv_color_hex(0xFF9F0A), LV_STATE_FOCUS_KEY | LV_STATE_EDITED);
 
     /* Scrolling to the focused object is ours (centred, see on_group_focus), not LVGL's. */
-    lv_obj_set_flag(obj, LV_OBJ_FLAG_SCROLL_ON_FOCUS, false);
+    lv_obj_set_scroll_on_focus(obj, false);
 }
 
 /* A dialog on the top layer takes the focus; otherwise the active screen. */

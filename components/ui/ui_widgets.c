@@ -106,7 +106,7 @@ static void add_scroll_arc(lv_obj_t *page)
     lv_obj_t *arc = lv_arc_create(lv_obj_get_parent(page));
     int32_t size = board_info()->width - 8;
 
-    lv_obj_set_flag(arc, LV_OBJ_FLAG_FLOATING, true);   /* outside any flex layout of the parent */
+    lv_obj_set_floating(arc, true);   /* outside any flex layout of the parent */
     lv_obj_set_size(arc, size, size);
     lv_obj_align(arc, LV_ALIGN_CENTER, 0, 0);
     lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
