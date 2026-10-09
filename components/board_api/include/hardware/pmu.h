@@ -34,6 +34,13 @@ int pmu_battery_percent(void);
 /* Battery voltage in millivolts, 0 if unknown. */
 int pmu_battery_mv(void);
 
+/*
+ * Battery voltage measured right now (pmu_battery_mv() may return a value a
+ * few seconds old). For the battery health test, which compares the voltage
+ * with and without a load. Blocks a few ms; not from an interrupt.
+ */
+int pmu_battery_mv_fresh(void);
+
 bool pmu_battery_present(void);
 bool pmu_is_charging(void);
 bool pmu_usb_present(void);

@@ -15,6 +15,8 @@ idf_component_register(
         "apps/extapp.c"
         "update/fw_update.c"
         "update/fw_version.c"
+        "battery/battery_health.c"
+        "battery/battery_model.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

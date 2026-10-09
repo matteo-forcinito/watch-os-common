@@ -26,6 +26,7 @@ static const app_t *const s_apps[] = {
     &web_app,
     &usb_drive_app,
     &sdcard_app,
+    &battery_app,
     &settings_app,
     /* hidden */
     &alarm_edit_app,

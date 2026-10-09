@@ -18,6 +18,7 @@ idf_component_register(
         "timer/timer_app.c"
         "usb/usb_drive_app.c"
         "sdcard/sdcard_app.c"
+        "battery/battery_app.c"
         "update/update_app.c"
     INCLUDE_DIRS
         "include"

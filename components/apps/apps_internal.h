@@ -24,6 +24,7 @@ extern const app_t timer_app;
 extern const app_t music_app;
 extern const app_t usb_drive_app;
 extern const app_t sdcard_app;
+extern const app_t battery_app;
 extern const app_t launcher_all_app;    /* hidden: every app in a list (round launcher, "Altre") */
 extern const app_t call_app;
 extern const app_t update_app;          /* hidden: Settings > Aggiornamento */

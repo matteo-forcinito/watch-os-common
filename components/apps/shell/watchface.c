@@ -399,7 +399,7 @@ void watchface_create(lv_obj_t *parent)
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollable(row, false);
 
-    lv_obj_t *battery = complication(row, "settings.about");
+    lv_obj_t *battery = complication(row, "battery");
     s_face.battery_arc = lv_arc_create(battery);
     lv_obj_set_size(s_face.battery_arc, 92, 92);
     lv_arc_set_bg_angles(s_face.battery_arc, 0, 360);
