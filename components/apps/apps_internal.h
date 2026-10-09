@@ -28,6 +28,7 @@ extern const app_t launcher_all_app;    /* hidden: every app in a list (round la
 extern const app_t call_app;
 extern const app_t update_app;          /* hidden: Settings > Aggiornamento */
 extern const app_t versions_app;        /* hidden: every release online + on the SD card */
+extern const app_t folder_app;          /* hidden: one folder of versions_app, arg = folder id */
 
 /* ---- shell pieces (tiles of the home screen) */
 void watchface_create(lv_obj_t *parent);

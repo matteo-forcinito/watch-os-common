@@ -267,6 +267,98 @@ static void on_local(lv_event_t *e)
     }
 }
 
+/*
+ * The list is grouped in folders, newest first:
+ *
+ *     STABILI   v2 (3)  v1 (5)
+ *     DEV       v2 (4)
+ *     SCHEDA SD Firmware salvati (2)
+ *
+ * A folder is a sub-page (folder_app) showing its versions; the data stays in
+ * s_versions, owned by this page, which stays open underneath.
+ */
+typedef enum
+{
+    FOLDER_STABLE,
+    FOLDER_DEV,
+    FOLDER_SD,
+} folder_kind_t;
+
+#define FOLDER_ARG(kind, major)  ((void *)(intptr_t)(((kind) << 16) | ((major) & 0xFFFF)))
+#define FOLDER_KIND(arg)         ((folder_kind_t)((intptr_t)(arg) >> 16))
+#define FOLDER_MAJOR(arg)        ((int)((intptr_t)(arg) & 0xFFFF))
+
+static int major_of(const char *version)
+{
+    return (int)strtol(version, NULL, 10);
+}
+
+static bool in_folder(const fw_release_t *r, folder_kind_t kind, int major)
+{
+    bool dev = strcmp(r->channel, "dev") == 0;
+    return dev == (kind == FOLDER_DEV) && major_of(r->version) == major;
+}
+
+/* "3 versioni · ultima 1.2.0 · in uso" for a folder row. */
+static void folder_value(folder_kind_t kind, int major, char *out, size_t size)
+{
+    const char *running = fw_update_running_version();
+    const char *newest = NULL;
+    bool current = false;
+    int count = 0;
+
+    for (int i = 0; i < s_versions->online_count; i++)
+    {
+        const fw_release_t *r = &s_versions->online[i];
+
+        if (in_folder(r, kind, major))
+        {
+            newest = newest != NULL ? newest : r->version;   /* list is newest first */
+            current |= strcmp(r->version, running) == 0;
+            count++;
+        }
+    }
+
+    snprintf(out, size, "%d · ultima %s%s", count, newest != NULL ? newest : "-", current ? " · in uso" : "");
+}
+
+static void open_folder(lv_event_t *e)
+{
+    app_open("settings.update.folder", lv_event_get_user_data(e));
+}
+
+/* One row per major version of a channel, newest first. */
+static void add_channel_folders(folder_kind_t kind, const char *section)
+{
+    int last_major = -1;
+    bool any = false;
+
+    for (int i = 0; i < s_versions->online_count; i++)
+    {
+        const fw_release_t *r = &s_versions->online[i];
+        int major = major_of(r->version);
+
+        if ((strcmp(r->channel, "dev") == 0) != (kind == FOLDER_DEV) || major == last_major)
+        {
+            continue;
+        }
+
+        if (!any)
+        {
+            ui_section(s_list, section);
+            any = true;
+        }
+
+        char name[12];
+        char value[64];
+        snprintf(name, sizeof(name), "v%d", major);
+        folder_value(kind, major, value, sizeof(value));
+        ui_row(s_list, LV_SYMBOL_DIRECTORY, kind == FOLDER_DEV ? UI_COLOR_ORANGE : UI_COLOR_GREEN, name, value,
+               open_folder, FOLDER_ARG(kind, major));
+        last_major = major;
+    }
+}
+
 static void show_versions(void *arg)
 {
     versions_t *v = arg;
@@ -284,47 +376,104 @@ static void show_versions(void *arg)
         lv_obj_delete(lv_obj_get_child(s_list, 1));
     }
 
-    const char *running = fw_update_running_version();
-    char value[40];
-
-    ui_section(s_list, "ONLINE");
-
     if (v->online_err != ESP_OK)
     {
-        ui_text(s_list, v->online_err == ESP_ERR_TIMEOUT ? "Wi-Fi non disponibile." : "Elenco non leggibile.", true);
+        ui_text(s_list, v->online_err == ESP_ERR_TIMEOUT ? "Online: Wi-Fi non disponibile." : "Online: elenco non leggibile.",
+                true);
     }
     else if (v->online_count == 0)
     {
         ui_text(s_list, "Nessuna release pubblicata.", true);
     }
 
-    for (int i = 0; i < v->online_count; i++)
-    {
-        const fw_release_t *r = &v->online[i];
-        bool dev = strcmp(r->channel, "dev") == 0;
-        bool current = strcmp(r->version, running) == 0;
+    add_channel_folders(FOLDER_STABLE, "STABILI");
+    add_channel_folders(FOLDER_DEV, "DEV (VERSIONI DI PROVA)");
 
-        snprintf(value, sizeof(value), "%s%s", current ? "in uso · " : "", r->date[0] ? r->date : r->channel);
-        ui_row(s_list, dev ? LV_SYMBOL_WARNING : LV_SYMBOL_OK, dev ? UI_COLOR_ORANGE : UI_COLOR_GREEN, r->version,
-               value, on_online, (void *)(intptr_t)i);
-    }
+    ui_section(s_list, "SCHEDA SD");
 
-    ui_section(s_list, "SULLA SCHEDA SD");
+    char value[24];
+    snprintf(value, sizeof(value), "%d", v->local_count);
+    ui_row(s_list, LV_SYMBOL_SD_CARD, UI_COLOR_TEAL, "Firmware salvati", value, open_folder, FOLDER_ARG(FOLDER_SD, 0));
 
-    if (v->local_count == 0)
-    {
-        ui_text(s_list, "Nessun firmware salvato (cartella /firmware).", true);
-    }
-
-    for (int i = 0; i < v->local_count; i++)
-    {
-        bool current = strcmp(v->local[i].version, running) == 0;
-        ui_row(s_list, LV_SYMBOL_SD_CARD, UI_COLOR_TEAL, v->local[i].version, current ? "in uso" : "",
-               on_local, (void *)(intptr_t)i);
-    }
-
-    ui_text(s_list, "Arancione = canale dev (versioni di prova).", true);
+    lv_obj_t *running = ui_text(s_list, "", true);
+    lv_label_set_text_fmt(running, "In uso: %s", fw_update_running_version());
 }
+
+/* ---- one folder */
+
+static void folder_create(lv_obj_t *screen, void *arg)
+{
+    folder_kind_t kind = FOLDER_KIND(arg);
+    int major = FOLDER_MAJOR(arg);
+    char title[24];
+
+    if (kind == FOLDER_SD)
+    {
+        snprintf(title, sizeof(title), "Scheda SD");
+    }
+    else
+    {
+        snprintf(title, sizeof(title), "%s v%d", kind == FOLDER_DEV ? "Dev" : "Stabili", major);
+    }
+
+    lv_obj_t *page = ui_page(screen, title);
+
+    if (s_versions == NULL)
+    {
+        ui_text(page, "Elenco non disponibile.", true);
+        return;
+    }
+
+    const char *running = fw_update_running_version();
+
+    if (kind == FOLDER_SD)
+    {
+        if (s_versions->local_count == 0)
+        {
+            ui_text(page, "Nessun firmware salvato (cartella /firmware).", true);
+        }
+
+        for (int i = 0; i < s_versions->local_count; i++)
+        {
+            bool current = strcmp(s_versions->local[i].version, running) == 0;
+            ui_row(page, LV_SYMBOL_SD_CARD, UI_COLOR_TEAL, s_versions->local[i].version, current ? "in uso" : "",
+                   on_local, (void *)(intptr_t)i);
+        }
+
+        return;
+    }
+
+    for (int i = 0; i < s_versions->online_count; i++)
+    {
+        const fw_release_t *r = &s_versions->online[i];
+
+        if (!in_folder(r, kind, major))
+        {
+            continue;
+        }
+
+        char value[40];
+        bool current = strcmp(r->version, running) == 0;
+        snprintf(value, sizeof(value), "%s%s", current ? "in uso · " : "", r->date);
+        ui_row(page, kind == FOLDER_DEV ? LV_SYMBOL_WARNING : LV_SYMBOL_OK,
+               kind == FOLDER_DEV ? UI_COLOR_ORANGE : UI_COLOR_GREEN, r->version, value, on_online,
+               (void *)(intptr_t)i);
+
+        if (r->notes[0] != '\0')
+        {
+            ui_text(page, r->notes, true);
+        }
+    }
+}
+
+const app_t folder_app = {
+    .id = "settings.update.folder",
+    .name = "Versioni",
+    .icon = LV_SYMBOL_DIRECTORY,
+    .color = UI_COLOR_INDIGO,
+    .flags = APP_FLAG_HIDDEN,
+    .create = folder_create,
+};
 
 static void versions_task(void *arg)
 {

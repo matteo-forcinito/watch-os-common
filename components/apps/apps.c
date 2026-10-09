@@ -41,6 +41,7 @@ static const app_t *const s_apps[] = {
     &call_app,
     &update_app,
     &versions_app,
+    &folder_app,
     &launcher_all_app,
 };
 
@@ -88,14 +89,21 @@ static void on_alarm(const alarm_t *alarm)
 
 /*
  * While a firmware is written: one still screen over everything, no
- * animation, no progress bar. Flash writes pause the chip's cache many times
- * a second, so anything that moves would stutter; the progress is shown in
- * the browser (PC upload) instead. It changes only when the new version is
- * known and at the restart; on failure it goes away and a toast says why.
+ * animation. Flash writes pause the chip's cache many times a second, so
+ * anything that moves would stutter and slow the install down. The progress
+ * (bar + percent) is redrawn at most every UPDATE_DRAW_MS: a few ms of
+ * drawing every 2 s is nothing next to a download limited by the network.
+ * On failure the screen goes away and a toast says why.
  */
+#define UPDATE_DRAW_MS  2000
+
 static lv_obj_t *s_update_panel = NULL;
 static lv_obj_t *s_update_title = NULL;
 static lv_obj_t *s_update_text = NULL;
+static lv_obj_t *s_update_bar = NULL;
+static lv_obj_t *s_update_percent = NULL;
+static bool s_update_titled = false;
+static uint32_t s_update_drawn_ms = 0;
 
 static void update_panel_show(void)
 {
@@ -130,6 +138,21 @@ static void update_panel_show(void)
     lv_obj_set_style_text_font(s_update_text, UI_FONT_BODY, 0);
     lv_obj_set_style_text_color(s_update_text, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
     lv_label_set_text(s_update_text, "Installazione in corso.\nNon spegnere l'orologio.");
+
+    s_update_bar = lv_bar_create(s_update_panel);
+    lv_obj_set_size(s_update_bar, LV_PCT(80), 10);
+    lv_bar_set_range(s_update_bar, 0, 100);
+    lv_obj_set_style_anim_duration(s_update_bar, 0, 0);   /* jumps: no animation frames */
+    lv_obj_set_style_bg_color(s_update_bar, lv_color_hex(UI_COLOR_CARD_HI), 0);
+    lv_obj_set_style_bg_color(s_update_bar, ui_accent(), LV_PART_INDICATOR);
+
+    s_update_percent = lv_label_create(s_update_panel);
+    lv_obj_set_style_text_font(s_update_percent, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(s_update_percent, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
+    lv_label_set_text(s_update_percent, "0%");
+
+    s_update_titled = false;
+    s_update_drawn_ms = lv_tick_get();
 }
 
 static void update_panel_hide(void)
@@ -140,6 +163,8 @@ static void update_panel_hide(void)
         s_update_panel = NULL;
         s_update_title = NULL;
         s_update_text = NULL;
+        s_update_bar = NULL;
+        s_update_percent = NULL;
     }
 }
 
@@ -157,6 +182,8 @@ static void on_update_phase(lv_observer_t *observer, lv_subject_t *subject)
     else if (phase == FW_UPDATE_RESTARTING && s_update_text != NULL)
     {
         lv_label_set_text(s_update_text, "Verificato. Riavvio...");
+        lv_bar_set_value(s_update_bar, 100, LV_ANIM_OFF);
+        lv_label_set_text(s_update_percent, "100%");
     }
     else if (phase == FW_UPDATE_FAILED && s_update_panel != NULL)
     {
@@ -165,16 +192,32 @@ static void on_update_phase(lv_observer_t *observer, lv_subject_t *subject)
     }
 }
 
-/* The only change while writing: the version, as soon as the file header tells it. */
+/* Progress: the version as soon as the file header tells it, then the percent every UPDATE_DRAW_MS. */
 static void on_update_percent(lv_observer_t *observer, lv_subject_t *subject)
 {
     (void)observer;
 
-    if (s_update_title != NULL && lv_subject_get_int(subject) > 0 && fw_update_new_version()[0] != '\0')
+    int percent = lv_subject_get_int(subject);
+
+    if (s_update_panel == NULL || percent <= 0)
+    {
+        return;
+    }
+
+    if (!s_update_titled && fw_update_new_version()[0] != '\0')
     {
         lv_label_set_text_fmt(s_update_title, "Versione %s", fw_update_new_version());
-        s_update_title = NULL;   /* once */
+        s_update_titled = true;
     }
+
+    if (lv_tick_elaps(s_update_drawn_ms) < UPDATE_DRAW_MS)
+    {
+        return;
+    }
+
+    s_update_drawn_ms = lv_tick_get();
+    lv_bar_set_value(s_update_bar, percent, LV_ANIM_OFF);
+    lv_label_set_text_fmt(s_update_percent, "%d%%", percent);
 }
 
 static void on_focus_changed(bool on)
