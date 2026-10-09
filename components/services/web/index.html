@@ -93,7 +93,7 @@ button.ghost{background:var(--hi)}button.red{background:var(--red)}.status{color
  <div class="row"><label>Versione installata</label><b id="fw_ver">-</b></div>
  <div class="row"><input type="file" id="fw_file" accept=".bin"><button onclick="fwUpload()">Installa</button></div>
  <div class="bar" id="fw_bar" hidden><div id="fw_bar_fill"></div></div>
- <div class="status" id="fw_info">Scegli il file <b>.bin</b> del firmware (cartella <b>build</b> del progetto): l'orologio lo verifica, si riavvia e torna da solo alla versione precedente se quella nuova non parte.</div>
+ <div class="status" id="fw_info">Scegli <b>firmware.bin</b> (cartella <b>build</b> del progetto, o dalle release): l'orologio lo verifica, si riavvia e torna da solo alla versione precedente se quella nuova non parte.</div>
  <div class="row"><label>Manifest online (JSON)</label><input type="text" id="update_url" placeholder="https://.../version.json"></div>
  <div class="row"><button class="ghost" onclick="api('/api/settings',{update_url:$('update_url').value}).then(done)">Salva indirizzo</button></div>
 </div>

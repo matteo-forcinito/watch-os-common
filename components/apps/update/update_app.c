@@ -157,7 +157,7 @@ static void create(lv_obj_t *screen, void *arg)
 
     ui_section(page, "DAL COMPUTER");
     ui_text(page, "Apri la pagina web dell'orologio, sezione \"Aggiornamento firmware\", e scegli "
-                  "il file .bin del firmware (cartella build).", true);
+                  "build/firmware.bin.", true);
     ui_row(page, LV_SYMBOL_UPLOAD, UI_COLOR_BLUE, "Apri pagina web", NULL, apps_open_cb, (void *)"web");
 
     /* Observers die with their objects: nothing to remove by hand. */

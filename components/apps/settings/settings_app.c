@@ -755,7 +755,8 @@ static void about_update(lv_timer_t *timer)
 
     lv_label_set_text_fmt(s_about,
                           "Scheda: %s\n"
-                          "Firmware: %s (ESP-IDF %s)\n\n"
+                          "Variante: %s · %ux%u %s · %s\n"
+                          "Firmware: %s · %s (ESP-IDF %s)\n\n"
                           "Batteria: %d%%  %d mV%s\n"
                           "RAM interna libera: %u KB (min %u)\n"
                           "PSRAM libera: %u KB\n"
@@ -763,7 +764,11 @@ static void about_update(lv_timer_t *timer)
                           "IP: %s\n"
                           "Acceso da: %lldh %02lldm\n"
                           "Ultimo avvio: %s",
-                          board_info()->name, esp_app_get_description()->version, esp_get_idf_version(),
+                          board_info()->name, board_info()->product, board_info()->width, board_info()->height,
+                          board_info()->round ? "rotondo" : "rettangolare",
+                          board_info()->has_knob ? "touch + rotella" : "touch",
+                          esp_app_get_description()->version, esp_app_get_description()->project_name,
+                          esp_get_idf_version(),
                           pmu_battery_percent(), pmu_battery_mv(), pmu_is_charging() ? " (in carica)" : "",
                           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
                           (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
