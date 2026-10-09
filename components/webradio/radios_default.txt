@@ -1,0 +1,58 @@
+# Web radio stations for the AMOLED Watch.
+#
+# One station per line:   name | genre | stream URL
+#
+# Supported: MP3 or AAC streams (Icecast, Shoutcast v2), .pls / .m3u
+# playlists pointing to them, and HLS (.m3u8) with AAC in .ts or .aac
+# segments, over HTTP or HTTPS. Not supported: Shoutcast v1 ("ICY 200 OK"),
+# DRM, Opus/Ogg.
+#
+# Copy this file to /sdcard/config/radios.txt to edit it (or use the web
+# page). HTTPS addresses checked in October 2026.
+
+# ---- Preferite (the six favorites shown first)
+m2o | dance | https://4c4b867c89244861ac216426883d1ad0.msvdn.net/radiom2o/radiom2o/play1.m3u8
+Radio Zeta | italia | https://dd782ed59e2a4e86aabf6fc508674b59.msvdn.net/live/S9346184/XEx1LqlYbNic/playlist_audio.m3u8
+Radio 105 HipHop & RnB | hiphop | https://icy.unitedradio.it/105HipHopRnB.mp3
+Radio Italia | italia | https://radioitaliasmi.akamaized.net/hls/live/2093120/RISMI/stream01/streamPlaylist.m3u8
+Jazz Radio | jazz | https://jazzradio.ice.infomaniak.ch/jazzradio-high.mp3
+Virgin Radio | rock | https://icy.unitedradio.it/Virgin.mp3
+
+# ---- Italia
+RTL 102.5 | italia | https://dd782ed59e2a4e86aabf6fc508674b59.msvdn.net/live/S97044836/tbbP8T1ZRPBL/playlist_audio.m3u8
+Radio Deejay | italia | https://4c4b867c89244861ac216426883d1ad0.msvdn.net/radiodeejay/radiodeejay/play1.m3u8
+Radio Capital | italia | https://4c4b867c89244861ac216426883d1ad0.msvdn.net/radiocapital/radiocapital/play1.m3u8
+Radio 105 | italia | https://icy.unitedradio.it/Radio105.mp3
+R101 | italia | http://icecast.unitedradio.it/r101_mp3
+Radio Monte Carlo | italia | https://icy.unitedradio.it/RMC.mp3
+Radio Subasio | italia | https://icy.unitedradio.it/Subasio.mp3
+RDS | italia | https://stream.rds.radio/audio/rds.stream_aac64/chunklist.m3u8
+Lattemiele | italia | https://sr15.inmystream.it:8000/stream
+Rai Radio 1 | italia | http://icestreaming.rai.it/1.mp3
+Rai Radio 2 | italia | http://icestreaming.rai.it/2.mp3
+Rai Radio 3 | italia | http://icestreaming.rai.it/3.mp3
+
+# ---- Rock
+Radio Freccia | rock | https://dd782ed59e2a4e86aabf6fc508674b59.msvdn.net/live/S3160845/0tuSetc8UFkF/playlist_audio.m3u8
+Virgin Rock Classics | rock | https://icy.unitedradio.it/VirginRockClassics.mp3
+FIP Rock | rock | https://icecast.radiofrance.fr/fiprock-hifi.aac
+
+# ---- Hip hop / Rap
+FIP Hip Hop | hiphop | https://icecast.radiofrance.fr/fiphiphop-hifi.aac
+WEFUNK | hiphop | https://s-14.wefunkradio.com:8443/wefunk64.mp3
+Radio 105 Rap Italia | rap | https://icy.unitedradio.it/105RapItalia.mp3
+181.FM Old School HipHop | hiphop | http://listen.181fm.com/181-oldschool_128k.mp3
+
+# ---- Jazz
+FIP Jazz | jazz | https://icecast.radiofrance.fr/fipjazz-hifi.aac
+Radio Swiss Jazz | jazz | https://stream.srg-ssr.ch/m/rsj/mp3_128
+Jazz Radio Piano Jazz | jazz | http://jzr-piano.ice.infomaniak.ch/jzr-piano.mp3
+SmoothJazz.com | jazz | https://smoothjazz.cdnstream1.com/2585_128.mp3
+
+# ---- Pop / altro
+Radio Swiss Pop | pop | https://stream.srg-ssr.ch/m/rsp/mp3_128
+Heart 80s | pop | https://media-ssl.musicradio.com/Heart80sMP3
+SWR3 | pop | https://liveradio.swr.de/sw282p3/swr3/play.mp3
+KEXP Seattle | generale | http://live-mp3-128.kexp.org/kexp128.mp3
+BBC World Service | news | http://stream.live.vc.bbcmedia.co.uk/bbc_world_service
+Radio Swiss Classic | classica | https://stream.srg-ssr.ch/m/rsc_de/mp3_128

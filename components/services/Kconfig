@@ -1,0 +1,12 @@
+menu "Watch OS services"
+
+    config WATCH_UPDATE_MANIFEST_URL
+        string "Online update: default manifest URL"
+        default ""
+        help
+            JSON manifest checked by Settings > Aggiornamento when the user did
+            not set an address: {"version": "1.2.0", "url": "https://.../x.bin"}.
+            Each firmware project sets its own in sdkconfig.defaults (the CI
+            publishes it, see .github/workflows/release.yml).
+
+endmenu

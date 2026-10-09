@@ -1,0 +1,42 @@
+# services: the base system's logic (network, time, alarms, notifications,
+# weather, sounds, setup web page, external apps).
+idf_component_register(
+    SRCS
+        "net/http_stream.c"
+        "wifi/wifi.c"
+        "time/time_sync.c"
+        "sound/sound.c"
+        "alarm/alarm.c"
+        "notify/notify.c"
+        "weather/weather.c"
+        "web/web_server.c"
+        "web/web_files.c"
+        "web/captive_dns.c"
+        "apps/extapp.c"
+        "update/fw_update.c"
+        "update/fw_version.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        core
+        hardware
+        esp_http_client
+    PRIV_REQUIRES
+        esp_wifi
+        esp_netif
+        lwip
+        esp_pm
+        esp_event
+        esp_http_server
+        esp-tls
+        mbedtls
+        nvs_flash
+        app_update
+        bootloader_support
+        esp_partition
+        esp_timer
+        cjson
+        mdns
+    EMBED_TXTFILES
+        "web/index.html"
+)

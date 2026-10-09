@@ -1,0 +1,5 @@
+dependencies:
+  idf:
+    version: ">=6.0"
+  # USB drive app: the SD card as a USB stick (TinyUSB mass storage).
+  espressif/esp_tinyusb: "^2.0.0"

@@ -1,0 +1,38 @@
+# apps: the watch shell (home screen) and the built-in apps.
+idf_component_register(
+    SRCS
+        "apps.c"
+        "shell/shell.c"
+        "shell/watchface.c"
+        "shell/launcher.c"
+        "shell/control_center.c"
+        "shell/notifications.c"
+        "shell/now_playing.c"
+        "alarms/alarms_app.c"
+        "alarms/ring_app.c"
+        "weather/weather_app.c"
+        "settings/settings_app.c"
+        "misc/misc_apps.c"
+        "web/web_app.c"
+        "extapps/extapps_app.c"
+        "timer/timer_app.c"
+        "usb/usb_drive_app.c"
+        "sdcard/sdcard_app.c"
+        "update/update_app.c"
+    INCLUDE_DIRS
+        "include"
+    PRIV_INCLUDE_DIRS
+        "."
+    REQUIRES
+        core
+    PRIV_REQUIRES
+        ui
+        services
+        companion
+        hardware
+        esp_pm
+        esp_tinyusb
+        esp_timer
+        app_update
+        esp_app_format
+)

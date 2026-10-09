@@ -1,0 +1,96 @@
+#ifndef SERVICES_WIFI_H
+#define SERVICES_WIFI_H
+
+/*
+ * Wi-Fi, switched on only while someone needs it.
+ *
+ * Wi-Fi is the most power-hungry part of the chip (~80-100 mA while on), so
+ * it is reference counted: the radio, the weather, the time sync and the web
+ * page "acquire" it and "release" it when done. A few seconds after the last
+ * release the radio is switched off.
+ *
+ *     if (wifi_acquire(15000) == ESP_OK)     // joins the best known network
+ *     {
+ *         ... HTTP requests ...
+ *         wifi_release();
+ *     }
+ *
+ * Known networks are kept in NVS (up to 8). At boot they are merged with
+ * /sdcard/config/wifi.txt ("ssid = password" lines) and with /networks.json
+ * from the old Arduino launcher.
+ */
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "esp_err.h"
+
+#define WIFI_KNOWN_MAX  8
+#define WIFI_SCAN_MAX   20
+
+typedef struct
+{
+    char ssid[33];
+    int8_t rssi;     /* dBm: -50 great, -80 weak */
+    bool open;       /* no password */
+    bool known;
+} wifi_ap_t;
+
+typedef struct
+{
+    char ssid[33];
+    char password[65];
+} wifi_known_t;
+
+esp_err_t wifi_service_init(void);
+
+/* Connect to a known network (blocking, up to timeout_ms) and hold Wi-Fi on. */
+esp_err_t wifi_acquire(uint32_t timeout_ms);
+
+/* Done with the network: Wi-Fi goes off shortly after the last release. */
+void wifi_release(void);
+
+/*
+ * Big transfers (firmware update): no modem sleep while held, several times
+ * faster. Balanced calls: wifi_set_fast(true) ... wifi_set_fast(false).
+ */
+void wifi_set_fast(bool fast);
+
+bool wifi_is_connected(void);
+
+/* Name of the network we are on ("" if none). */
+void wifi_current_ssid(char *out, size_t size);
+
+/* Our IP address as text, false if none. */
+bool wifi_get_ip(char *out, size_t size);
+
+/* Signal of the current network in dBm (0 if not connected). */
+int wifi_rssi(void);
+
+/* Scan (blocks ~2 s). Strongest first, one entry per name. Returns the count. */
+int wifi_scan(wifi_ap_t *out, int max);
+
+/* Try a network; on success it is saved as known. Holds Wi-Fi like wifi_acquire(). */
+esp_err_t wifi_connect_new(const char *ssid, const char *password, uint32_t timeout_ms);
+
+/* Known networks. */
+int wifi_known_list(wifi_known_t *out, int max);
+esp_err_t wifi_known_add(const char *ssid, const char *password);
+esp_err_t wifi_known_remove(const char *ssid);
+bool wifi_known_any(void);
+
+/* Reason (wifi_err_reason_t) of the last failed / lost connection, 0 if none. */
+int wifi_last_reason(void);
+
+/* That reason in words: "password errata", "rete non trovata (solo 2,4 GHz)"... */
+const char *wifi_reason_text(int reason);
+
+/*
+ * Setup access point ("<product>-XXXX", e.g. "AMOLED-Watch-XXXX"): lets a phone open the setup page
+ * when no known network is around. Counts as an acquire.
+ */
+esp_err_t wifi_start_access_point(char *ssid_out, size_t size);
+void wifi_stop_access_point(void);
+
+#endif
