@@ -218,11 +218,13 @@ static void screen_changed(lv_observer_t *observer, lv_subject_t *subject)
 
 /* ------------------------------------------------------------- layout */
 
-static lv_obj_t *complication(lv_obj_t *parent, const char *open_app)
+#define COMPLICATION_SIZE 104
+
+static lv_obj_t *complication(lv_obj_t *parent, const char *open_app, int32_t size)
 {
     lv_obj_t *c = lv_obj_create(parent);
     ui_make_card(c);
-    lv_obj_set_size(c, 104, 104);
+    lv_obj_set_size(c, size, size);
     lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_pad_all(c, 0, 0);
     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
@@ -281,13 +283,13 @@ static void music_pill(lv_obj_t *root, int32_t max_width)
     lv_obj_center(s_face.music_label);
 }
 
-static void weather_and_alarm(lv_obj_t *row)
+static void weather_and_alarm(lv_obj_t *row, int32_t size)
 {
-    s_face.weather_box = complication(row, "weather");
+    s_face.weather_box = complication(row, "weather", size);
     s_face.weather_label = lv_label_create(s_face.weather_box);
     lv_obj_set_style_text_font(s_face.weather_label, UI_FONT_BODY, 0);
 
-    lv_obj_t *alarm = complication(row, "alarms");
+    lv_obj_t *alarm = complication(row, "alarms", size);
     lv_obj_t *bell = lv_label_create(alarm);
     lv_label_set_text(bell, LV_SYMBOL_BELL);
     lv_obj_set_style_text_color(bell, lv_color_hex(UI_COLOR_ORANGE), 0);
@@ -297,12 +299,34 @@ static void weather_and_alarm(lv_obj_t *row)
 }
 
 /*
- * Round layout (412 x 412 on the Watcher). Vertical positions keep every
- * element inside the circle: at y the visible width is 2 * sqrt(r^2 - (r - y)^2).
+ * Round layout: 412 x 412 on the Watcher, 360 x 360 on the Knob, 466 x 466 on the AMOLED 1.75. Vertical
+ * positions keep every element inside the circle: at y the visible width is
+ * 2 * sqrt(r^2 - (r - y)^2). On the small panel the same layout would put
+ * the complications into the cut-off corners, so it is tighter there.
  */
+typedef struct
+{
+    int32_t status_y;
+    int32_t date_y;
+    int32_t time_y;
+    int32_t complication;
+    int32_t row_width;
+    int32_t row_y;
+    int32_t pill_y;
+    int32_t pill_width;
+} round_layout_t;
+
+static const round_layout_t s_round_large = {26, 70, 98, COMPLICATION_SIZE, 240, 244, 352, 180};
+static const round_layout_t s_round_small = {20, 54, 72, 84, 200, 208, 298, 150};
+
 static void build_round(lv_obj_t *root)
 {
     const int32_t size = board_info()->width;
+    const bool small = size < 400;
+    const round_layout_t *l = small ? &s_round_small : &s_round_large;
+
+    /* The large layout is drawn for 412 px: on bigger panels (466 px) it moves down to stay centred. */
+    const int32_t dy = small ? 0 : (size - 412) / 2;
 
     /* battery: a ring along the edge of the glass */
     s_face.battery_arc = lv_arc_create(root);
@@ -320,32 +344,32 @@ static void build_round(lv_obj_t *root)
     lv_obj_t *status = status_row(root);
     lv_obj_set_size(status, LV_SIZE_CONTENT, 34);
     lv_obj_set_style_pad_hor(status, 14, 0);
-    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, 26);
+    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, l->status_y + dy);
     s_face.status_battery = lv_label_create(status);
     lv_obj_set_style_text_color(s_face.status_battery, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
 
     s_face.date = lv_label_create(root);
-    lv_obj_set_style_text_font(s_face.date, UI_FONT_LARGE, 0);
+    lv_obj_set_style_text_font(s_face.date, small ? UI_FONT_BODY : UI_FONT_LARGE, 0);
     lv_obj_set_style_text_color(s_face.date, ui_accent(), 0);
-    lv_obj_set_style_text_letter_space(s_face.date, 2, 0);
-    lv_obj_align(s_face.date, LV_ALIGN_TOP_MID, 0, 70);
+    lv_obj_set_style_text_letter_space(s_face.date, small ? 1 : 2, 0);
+    lv_obj_align(s_face.date, LV_ALIGN_TOP_MID, 0, l->date_y + dy);
 
     s_face.time = lv_label_create(root);
     lv_obj_set_style_text_font(s_face.time, ui_font_clock, 0);
     lv_obj_set_style_text_letter_space(s_face.time, -4, 0);
-    lv_obj_align(s_face.time, LV_ALIGN_TOP_MID, 0, 98);
+    lv_obj_align(s_face.time, LV_ALIGN_TOP_MID, 0, l->time_y + dy);
 
     lv_obj_t *row = lv_obj_create(root);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, 240, 104);
-    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, 244);
+    lv_obj_set_size(row, l->row_width, l->complication);
+    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, l->row_y + dy);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollable(row, false);
-    weather_and_alarm(row);
+    weather_and_alarm(row, l->complication);
 
-    music_pill(root, 180);
-    lv_obj_align(s_face.music_pill, LV_ALIGN_TOP_MID, 0, 352);
+    music_pill(root, l->pill_width);
+    lv_obj_align(s_face.music_pill, LV_ALIGN_TOP_MID, 0, l->pill_y + dy);
 }
 
 void watchface_create(lv_obj_t *parent)
@@ -399,7 +423,7 @@ void watchface_create(lv_obj_t *parent)
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollable(row, false);
 
-    lv_obj_t *battery = complication(row, "battery");
+    lv_obj_t *battery = complication(row, "battery", COMPLICATION_SIZE);
     s_face.battery_arc = lv_arc_create(battery);
     lv_obj_set_size(s_face.battery_arc, 92, 92);
     lv_arc_set_bg_angles(s_face.battery_arc, 0, 360);
@@ -415,7 +439,7 @@ void watchface_create(lv_obj_t *parent)
     s_face.battery_label = lv_label_create(battery);
     lv_obj_set_style_text_font(s_face.battery_label, UI_FONT_SMALL, 0);
 
-    weather_and_alarm(row);
+    weather_and_alarm(row, COMPLICATION_SIZE);
 
     /* phone music pill */
     music_pill(root, 300);

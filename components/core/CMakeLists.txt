@@ -10,6 +10,7 @@ idf_component_register(
         "clock.c"
         "sys.c"
         "monkey.c"
+        "devcon.c"
         "lv_mem_psram.c"
     INCLUDE_DIRS
         "include"
@@ -22,6 +23,9 @@ idf_component_register(
         espcoredump
         esp_pm
         esp_hw_support
+        esp_driver_gpio
+        esp_driver_uart
+        esp_driver_usb_serial_jtag
 )
 
 # LVGL calls the allocator in lv_mem_psram.c, but LVGL is linked after core:

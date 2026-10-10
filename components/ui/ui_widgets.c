@@ -268,6 +268,34 @@ lv_obj_t *ui_icon_bubble(lv_obj_t *parent, const char *icon, uint32_t color, int
     return bubble;
 }
 
+/* Width of the longest word of `text`: a row label is never narrower, so it wraps between words. */
+static int32_t longest_word_width(const char *text, const lv_font_t *font)
+{
+    int32_t longest = 0;
+    char word[48];
+
+    while (*text != '\0')
+    {
+        size_t n = strcspn(text, " ");
+
+        if (n > 0)
+        {
+            size_t copy = n < sizeof(word) - 1 ? n : sizeof(word) - 1;
+            lv_point_t size;
+
+            memcpy(word, text, copy);
+            word[copy] = '\0';
+            lv_text_get_size(&size, word, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+            longest = size.x > longest ? size.x : longest;
+        }
+
+        text += n;
+        text += *text == ' ' ? 1 : 0;
+    }
+
+    return longest;
+}
+
 static lv_obj_t *row_base(lv_obj_t *page, const char *icon, uint32_t color, const char *text)
 {
     lv_obj_t *row = lv_obj_create(page);
@@ -286,8 +314,11 @@ static lv_obj_t *row_base(lv_obj_t *page, const char *icon, uint32_t color, cons
 
     lv_obj_t *label = lv_label_create(row);
     lv_label_set_text(label, text);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_flex_grow(label, 1);
+
+    /* Narrow rows (round 360 px panel): wrap between words, never inside one ("Spegniment-o"). */
+    lv_obj_set_style_min_width(label, longest_word_width(text, lv_obj_get_style_text_font(label, LV_PART_MAIN)), 0);
 
     return row;
 }
@@ -299,10 +330,13 @@ lv_obj_t *ui_row(lv_obj_t *page, const char *icon, uint32_t color, const char *t
 
     lv_obj_t *value_label = lv_label_create(row);
     lv_label_set_text(value_label, value != NULL ? value : "");
-    lv_label_set_long_mode(value_label, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_style_max_width(value_label, 150, 0);
     lv_obj_set_style_text_color(value_label, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
     lv_obj_set_style_text_font(value_label, UI_FONT_SMALL, 0);
+
+    /* One line, cut with "..." when the row is narrow: the name on the left matters more. */
+    lv_label_set_long_mode(value_label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_max_width(value_label, LV_PCT(45), 0);
+    lv_obj_set_height(value_label, lv_font_get_line_height(UI_FONT_SMALL));
     lv_obj_set_user_data(row, value_label);
 
     if (on_click != NULL)

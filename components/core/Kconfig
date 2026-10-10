@@ -8,4 +8,13 @@ menu "Watch OS"
             the UI forever (no taps, only safe apps) and logs a health report
             every minute. Never enable it in a release.
 
+    config WATCH_DEV_CONSOLE
+        bool "Development console (screenshots, open apps, readings over USB)"
+        default n
+        select LV_USE_SNAPSHOT
+        help
+            Commands typed on the console drive the UI and print readings, for
+            testing from the PC (tools/devcon.py in the firmware repos). Anyone
+            with a USB cable could use it: never enable it in a release.
+
 endmenu
