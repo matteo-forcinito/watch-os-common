@@ -54,6 +54,22 @@ bool lv_port_is_running(void);
  */
 void lv_port_refresh_now(void);
 
+/*
+ * Health. lv_port_stall_ms(): how long the lvgl task has been busy in its
+ * current pass (0 = waiting for work); a pass of many seconds means the UI is
+ * stuck (the power manager then restarts with a core dump instead of a frozen
+ * screen). lv_port_take_stats(): slowest pass and DMA "done" interrupts that
+ * never came since the last call. Any task.
+ */
+uint32_t lv_port_stall_ms(void);
+void lv_port_take_stats(uint32_t *max_pass_ms, uint32_t *flush_timeouts);
+
+/*
+ * Synthetic touch for tests (monkey test): read instead of the touch chip
+ * until a "released" has been read. Any task.
+ */
+void lv_port_fake_touch(bool pressed, int x, int y);
+
 /* Called (in the lvgl task) for a "swipe right from the left edge". */
 void lv_port_set_back_gesture_cb(void (*cb)(void));
 

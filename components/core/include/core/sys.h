@@ -49,6 +49,14 @@ void sys_check_last_reset(void);
 const char *sys_last_reset_text(void);
 bool sys_last_reset_was_crash(void);
 
+/*
+ * Health report in the log (RAM, slowest UI pass, free stack of every task;
+ * warnings for tasks close to overflowing). sys_health_start() repeats it
+ * every 10 minutes from the worker; sys_health_log() prints one now.
+ */
+void sys_health_start(void);
+void sys_health_log(void);
+
 /* Free internal RAM in bytes and the largest block. */
 size_t sys_internal_free(void);
 size_t sys_internal_largest(void);

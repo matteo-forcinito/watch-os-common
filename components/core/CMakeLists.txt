@@ -9,6 +9,7 @@ idf_component_register(
         "app_manager.c"
         "clock.c"
         "sys.c"
+        "monkey.c"
         "lv_mem_psram.c"
     INCLUDE_DIRS
         "include"

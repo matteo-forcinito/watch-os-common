@@ -1,6 +1,7 @@
 #include "core/app.h"
 
 #include "core/lv_port.h"
+#include "core/monkey.h"
 #include "core/power.h"
 #include "core/settings.h"
 #include "core/state.h"
@@ -262,8 +263,67 @@ static void close_entry(const stack_entry_t *entry)
     retire(entry->screen);
 }
 
+static int stack_index(const app_t *app)
+{
+    for (int i = 0; i < s_depth; i++)
+    {
+        if (s_stack[i].app == app)
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/*
+ * One instance per app: apps keep their widgets in static variables, so a
+ * second instance would take them over and the first one's destroy() (which
+ * runs late, when its screen is deleted) would free the second one's timers
+ * while the first one's keep writing into deleted labels. Opening an app
+ * that is already in the stack closes it (and what is above it) first, and
+ * deletes its screen now, so its destroy() runs before the new create().
+ */
+static bool make_room_for(const app_t *app, void *arg)
+{
+    int index = stack_index(app);
+
+    if (index < 0)
+    {
+        return true;
+    }
+
+    if (index == s_depth - 1 && arg == NULL)
+    {
+        return false;   /* already on screen: nothing to do */
+    }
+
+    if (index == s_depth - 1)
+    {
+        ESP_LOGW(TAG, "%s is on screen: not opened again", app->id);
+        return false;   /* its screen is shown: it cannot be deleted before the new one exists */
+    }
+
+    ESP_LOGW(TAG, "%s already open: the old one is closed first", app->id);
+
+    while (s_depth > index)
+    {
+        stack_entry_t top = s_stack[--s_depth];
+        close_entry(&top);
+    }
+
+    gc();   /* not shown and no transition running: deleted now -> destroy() */
+
+    return true;
+}
+
 static void do_open(const app_t *app, void *arg)
 {
+    if (!monkey_app_allowed(app->id) || !make_room_for(app, arg))
+    {
+        return;
+    }
+
     if (s_depth >= MAX_STACK)
     {
         ESP_LOGW(TAG, "Navigation stack full");

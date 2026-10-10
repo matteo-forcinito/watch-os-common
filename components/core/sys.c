@@ -1,17 +1,26 @@
 #include "core/sys.h"
 
+#include "core/lv_port.h"
+
+#include "hardware/pmu.h"
+
 #include "esp_core_dump.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/queue.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 static const char *TAG = "sys";
 
 #define WORKER_STACK  6144
 #define WORKER_QUEUE  16
+
+#define HEALTH_PERIOD_S     600   /* one health report every 10 minutes */
+#define HEALTH_STACK_WARN   600   /* bytes of stack never used: less is a warning */
 
 typedef struct
 {
@@ -150,4 +159,95 @@ bool sys_task_create(TaskFunction_t fn, const char *name, uint32_t stack, void *
     sys_heap_log(name);
 
     return false;
+}
+
+/* ------------------------------------------------------------- health */
+
+/*
+ * One report in the log: RAM (now and the lowest ever), the slowest UI pass
+ * and the stack each task never touched. Tasks close to overflowing are
+ * reported as warnings, so a crash can be prevented before it happens.
+ */
+void sys_health_log(void)
+{
+    uint32_t max_pass_ms = 0;
+    uint32_t flush_timeouts = 0;
+
+    lv_port_take_stats(&max_pass_ms, &flush_timeouts);
+    sys_heap_log("health");
+    ESP_LOGI(TAG, "[health] up %lld min, slowest UI pass %u ms, lost flush IRQs %u",
+             (long long)(esp_timer_get_time() / 60000000), (unsigned)max_pass_ms, (unsigned)flush_timeouts);
+
+    if (pmu_present())
+    {
+        ESP_LOGI(TAG, "[health] battery %d%% %d mV%s%s", pmu_battery_percent(), pmu_battery_mv(),
+                 pmu_is_charging() ? ", charging" : "", pmu_usb_present() ? ", USB" : "");
+    }
+
+#if configUSE_TRACE_FACILITY
+    UBaseType_t room = uxTaskGetNumberOfTasks() + 4;   /* a few may start meanwhile */
+    TaskStatus_t *tasks = malloc(sizeof(TaskStatus_t) * room);
+
+    if (tasks == NULL)
+    {
+        return;
+    }
+
+    UBaseType_t count = uxTaskGetSystemState(tasks, room, NULL);
+    char line[200];
+    int used = 0;
+
+    for (UBaseType_t i = 0; i < count; i++)
+    {
+        unsigned free_bytes = (unsigned)tasks[i].usStackHighWaterMark;   /* bytes on ESP-IDF */
+
+        if (free_bytes < HEALTH_STACK_WARN)
+        {
+            ESP_LOGW(TAG, "[health] task \"%s\" has only %u bytes of stack left", tasks[i].pcTaskName, free_bytes);
+        }
+
+        used += snprintf(line + used, sizeof(line) - used, " %s:%u", tasks[i].pcTaskName, free_bytes);
+
+        if (used > (int)sizeof(line) - 30 || i == count - 1)
+        {
+            ESP_LOGI(TAG, "[health] stack free:%s", line);
+            used = 0;
+        }
+    }
+
+    free(tasks);
+#endif
+}
+
+static void health_job(void *arg)
+{
+    (void)arg;
+    sys_health_log();
+}
+
+static void health_timer_cb(void *arg)
+{
+    (void)arg;
+    sys_post(health_job, NULL);
+}
+
+void sys_health_start(void)
+{
+    static esp_timer_handle_t timer = NULL;
+
+    if (timer != NULL)
+    {
+        return;
+    }
+
+    const esp_timer_create_args_t args = {
+        .callback = health_timer_cb,
+        .name = "health",
+        .skip_unhandled_events = true,
+    };
+
+    if (esp_timer_create(&args, &timer) == ESP_OK)
+    {
+        esp_timer_start_periodic(timer, (uint64_t)HEALTH_PERIOD_S * 1000000);
+    }
 }

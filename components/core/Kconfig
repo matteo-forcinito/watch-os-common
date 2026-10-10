@@ -1,0 +1,11 @@
+menu "Watch OS"
+
+    config WATCH_MONKEY_TEST
+        bool "Monkey test (random swipes, apps, screen on/off)"
+        default n
+        help
+            Stress test for development: after the boot a task plays with
+            the UI forever (no taps, only safe apps) and logs a health report
+            every minute. Never enable it in a release.
+
+endmenu

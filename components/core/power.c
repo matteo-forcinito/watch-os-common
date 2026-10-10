@@ -13,6 +13,7 @@
 #include "esp_pm.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -22,7 +23,8 @@
 
 static const char *TAG = "power";
 
-#define TASK_STACK          4096
+/* I2C (PMU, touch), panel commands, LVGL lock and logs: 4 KB overflowed once. */
+#define TASK_STACK          6144
 #define TASK_PRIORITY       5
 #define DIM_BEFORE_OFF_MS   4000
 #define AOD_BRIGHTNESS      24
@@ -32,6 +34,7 @@ static const char *TAG = "power";
 #define BATTERY_POLL_OFF_MS 120000
 #define FADE_STEPS          6
 #define FADE_STEP_MS        20
+#define LVGL_STALL_MS       8000   /* one lvgl pass this long = the UI is stuck */
 
 typedef enum
 {
@@ -287,6 +290,22 @@ static void check_usb_power(void)
 
 /* -------------------------------------------------------------- task */
 
+/*
+ * A stuck UI must not look like a dead watch until the battery runs out:
+ * restart with a core dump (the next boot says where it was stuck). The power
+ * task itself is watched by the task watchdog (it wakes at least every 300 ms).
+ */
+static void check_lvgl_stall(void)
+{
+    uint32_t stall_ms = lv_port_stall_ms();
+
+    if (stall_ms >= LVGL_STALL_MS)
+    {
+        ESP_LOGE(TAG, "lvgl task stuck for %u ms: restarting", (unsigned)stall_ms);
+        esp_system_abort("lvgl task stuck");
+    }
+}
+
 static void power_task(void *arg)
 {
     (void)arg;
@@ -294,8 +313,13 @@ static void power_task(void *arg)
     int64_t next_key_poll = 0;
     int64_t next_battery_poll = 0;
 
+    esp_task_wdt_add(NULL);
+
     while (true)
     {
+        esp_task_wdt_reset();
+        check_lvgl_stall();
+
         int64_t now = now_us();
 
         /* Screen timeouts. */

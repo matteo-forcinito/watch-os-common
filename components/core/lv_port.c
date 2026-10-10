@@ -57,6 +57,16 @@ static atomic_bool s_refresh_request = false;
 static QueueHandle_t s_async = NULL;
 
 static volatile bool s_running = true;
+
+/* Health: when the current lvgl pass started (0 = waiting), slowest pass, lost flush interrupts. */
+static _Atomic int64_t s_pass_start_us = 0;
+static _Atomic uint32_t s_max_pass_ms = 0;
+static _Atomic uint32_t s_flush_timeouts = 0;
+
+/* Synthetic touch (monkey test): 0 = none, else FAKE_xxx flags | x << 12 | y. */
+#define FAKE_PRESSED  (1u << 30)
+#define FAKE_RELEASED (1u << 29)
+static _Atomic uint32_t s_fake_touch = 0;
 static volatile bool s_touch_irq = false;
 static void (*s_back_cb)(void) = NULL;
 static bool (*s_back_allowed)(void) = NULL;
@@ -107,7 +117,11 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *pixels)
 static void flush_wait_cb(lv_display_t *disp)
 {
     (void)disp;
-    xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(100));
+
+    if (xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(100)) != pdTRUE)
+    {
+        atomic_fetch_add(&s_flush_timeouts, 1);   /* the DMA "done" never came: the frame is late */
+    }
 }
 
 /* Panels only accept some window alignments: the hardware layer knows which. */
@@ -160,7 +174,24 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 
     uint16_t x = 0;
     uint16_t y = 0;
-    bool pressed = touch_read(&x, &y);
+    bool pressed;
+    uint32_t fake = atomic_load(&s_fake_touch);
+
+    if (fake != 0)
+    {
+        pressed = (fake & FAKE_PRESSED) != 0;
+        x = (uint16_t)((fake >> 12) & 0xFFF);
+        y = (uint16_t)(fake & 0xFFF);
+
+        if (!pressed)
+        {
+            atomic_compare_exchange_strong(&s_fake_touch, &fake, 0);   /* released once, then the real chip */
+        }
+    }
+    else
+    {
+        pressed = touch_read(&x, &y);
+    }
 
     if (!pressed)
     {
@@ -599,6 +630,9 @@ static void lvgl_task(void *arg)
             boosted = true;
         }
 
+        int64_t pass_start = esp_timer_get_time();
+        atomic_store(&s_pass_start_us, pass_start);
+
         lv_lock();
 
         handle_touch_irq();
@@ -643,6 +677,14 @@ static void lvgl_task(void *arg)
         }
 
         lv_unlock();
+
+        uint32_t pass_ms = (uint32_t)((esp_timer_get_time() - pass_start) / 1000);
+        atomic_store(&s_pass_start_us, 0);
+
+        if (pass_ms > atomic_load(&s_max_pass_ms))
+        {
+            atomic_store(&s_max_pass_ms, pass_ms);
+        }
 
         /* Long pause ahead (no animation running): let the CPU slow down and sleep. */
         if (boosted && (wait_ms == LV_NO_TIMER_READY || wait_ms > BOOST_HOLD_MS))
@@ -859,6 +901,27 @@ void lv_port_refresh_now(void)
     {
         ESP_LOGW(TAG, "Refresh took more than 500 ms");
     }
+}
+
+void lv_port_fake_touch(bool pressed, int x, int y)
+{
+    uint32_t value = (pressed ? FAKE_PRESSED : FAKE_RELEASED) | (((uint32_t)x & 0xFFF) << 12) | ((uint32_t)y & 0xFFF);
+
+    atomic_store(&s_fake_touch, value);
+    touch_irq(NULL);   /* same path as the INT pin: wakes the screen, starts reading */
+}
+
+uint32_t lv_port_stall_ms(void)
+{
+    int64_t start = atomic_load(&s_pass_start_us);
+
+    return start == 0 ? 0 : (uint32_t)((esp_timer_get_time() - start) / 1000);
+}
+
+void lv_port_take_stats(uint32_t *max_pass_ms, uint32_t *flush_timeouts)
+{
+    *max_pass_ms = atomic_exchange(&s_max_pass_ms, 0);
+    *flush_timeouts = atomic_exchange(&s_flush_timeouts, 0);
 }
 
 void lv_port_set_back_gesture_cb(void (*cb)(void))
