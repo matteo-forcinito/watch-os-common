@@ -17,6 +17,7 @@ idf_component_register(
         "update/fw_version.c"
         "battery/battery_health.c"
         "battery/battery_model.c"
+        "storage/storage.c"
     INCLUDE_DIRS
         "include"
     REQUIRES
@@ -39,6 +40,8 @@ idf_component_register(
         esp_timer
         cjson
         mdns
+        fatfs
+        wear_levelling
     EMBED_TXTFILES
         "web/index.html"
 )

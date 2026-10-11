@@ -289,7 +289,7 @@ static void password_entered(const char *password, void *user_data)
 static void connect_done(void *arg)
 {
     bool ok = arg != NULL;
-    ui_toast(ok ? "Connesso e salvato" : "Connessione non riuscita");
+    ui_toast(ok ? "Connesso e salvato" : "Connessione o salvataggio non riuscito");
 }
 
 static void wifi_connect_task(void *arg)
@@ -444,7 +444,9 @@ static void wifi_create(lv_obj_t *screen, void *arg)
         }
     }
 
-    ui_text(s_wifi->page, "Le reti si possono aggiungere anche dalla pagina web o in /config/wifi.txt sulla SD.", true);
+    ui_text(s_wifi->page, board_info()->has_sdcard
+                ? "Le reti si possono aggiungere anche dalla pagina web o in /config/wifi.txt sulla SD."
+                : "Le reti vengono salvate nella memoria interna. Puoi aggiungerle anche dalla pagina web.", true);
 
     lv_subject_add_observer_obj(state_subject(STATE_WIFI), wifi_status_update, s_wifi->page, NULL);
 }
@@ -741,6 +743,10 @@ static void about_update(lv_timer_t *timer)
 
     char ip[20] = "-";
     char sd[40] = "assente";
+    if (!board_info()->has_sdcard)
+    {
+        snprintf(sd, sizeof(sd), "non supportata");
+    }
     uint32_t total_mb = 0;
     uint32_t free_mb = 0;
     wifi_get_ip(ip, sizeof(ip));

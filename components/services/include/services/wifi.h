@@ -16,8 +16,8 @@
  *     }
  *
  * Known networks are kept in NVS (up to 8). At boot they are merged with
- * /sdcard/config/wifi.txt ("ssid = password" lines) and with /networks.json
- * from the old Arduino launcher.
+ * config/wifi.txt in the available file storage ("ssid = password" lines).
+ * On SD-equipped boards, /networks.json from the old Arduino launcher is also imported.
  */
 
 #include <stdbool.h>

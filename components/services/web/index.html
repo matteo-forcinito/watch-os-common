@@ -63,7 +63,8 @@ button.ghost{background:var(--hi)}button.red{background:var(--red)}.status{color
 </div>
 
 
-<h2>Scheda SD</h2>
+<section id="files_section" hidden>
+<h2 id="files_title">File</h2>
 <div class="card">
  <div class="crumbs" id="fs_crumbs"></div>
  <div class="tools">
@@ -82,12 +83,15 @@ button.ghost{background:var(--hi)}button.red{background:var(--red)}.status{color
  <div class="row"><button onclick="fsSave()">Salva</button><button class="ghost" onclick="fsCloseEditor()">Chiudi</button></div>
 </div>
 
+</section>
+<section id="external_section" hidden>
 <h2>App esterne</h2>
 <div class="card">
  <div class="row"><label>Nome</label><input type="text" id="u_name" placeholder="MiaApp"></div>
  <div class="row"><input type="file" id="u_file" accept=".bin"><button onclick="upload()">Carica .bin</button></div>
 </div>
 
+</section>
 <h2>Aggiornamento firmware</h2>
 <div class="card">
  <div class="row"><label>Versione installata</label><b id="fw_ver">-</b></div>
@@ -109,7 +113,11 @@ function dayText(m){return m==0?'Una volta':m==127?'Ogni giorno':days.filter((d,
 async function load(){
  const s=await api('/api/state');const st=s.settings;
  if(s.product){document.title=s.product;$('product').textContent=s.product}
- $('status').textContent=`Batteria ${s.battery<0?'-':s.battery+'%'}${s.charging?' (in carica)':''} · Wi-Fi ${s.wifi||'access point'} · SD ${s.sd?'ok':'assente'}`;
+ $('status').textContent=`Batteria ${s.battery<0?'-':s.battery+'%'}${s.charging?' (in carica)':''} · Wi-Fi ${s.wifi||'access point'}${s.has_sdcard ? ` · SD ${s.sd?'ok':'assente'}` : ''}`;
+ $('files_section').hidden=!s.files;
+ $('external_section').hidden=!s.has_sdcard;
+ $('files_title').textContent=s.has_sdcard?'Scheda SD':'Memoria interna';
+ if(s.files)fsLoad(cwd);
  for(const k of['brightness','screen_timeout','volume','timezone','device_name','update_url'])$(k).value=st[k]||'';
  $('fw_ver').textContent=s.version||'-';
  for(const k of['always_on','tap_to_wake','wake_on_notification','time_24h','auto_time','ble'])$(k).checked=st[k];
@@ -137,7 +145,7 @@ async function fsLoad(path){
  const r=await fetch('/api/fs/list?path='+enc(path)).then(x=>x.json()).catch(()=>({ok:false,message:'Errore di rete'}));
  if(!r.ok){toast(r.message||'Errore');return}
  cwd=r.path;const parts=cwd.split('/').filter(x=>x);let acc='';
- $('fs_crumbs').innerHTML='<span data-p="/" onclick="fsLoad(this.dataset.p)">SD</span>'+parts.map(p=>{acc+='/'+p;return ' / <span data-p="'+esc(acc)+'" onclick="fsLoad(this.dataset.p)">'+esc(p)+'</span>'}).join('');
+ $('fs_crumbs').innerHTML='<span data-p="/" onclick="fsLoad(this.dataset.p)">'+esc(r.storage||'File')+'</span>'+parts.map(p=>{acc+='/'+p;return ' / <span data-p="'+esc(acc)+'" onclick="fsLoad(this.dataset.p)">'+esc(p)+'</span>'}).join('');
  $('fs_info').textContent=`${r.free_mb} MB liberi su ${r.total_mb} MB`;
  const items=r.entries.sort((a,b)=>(b.d-a.d)||a.n.localeCompare(b.n));
  $('fs_list').innerHTML=items.length?items.map((e,i)=>{const p=join(cwd,e.n);return `<div class="fs-row"><span>${e.d?'&#128193;':'&#128196;'}</span>`+
@@ -169,7 +177,7 @@ function fwUpload(){const f=$('fw_file').files[0];if(!f)return toast('Scegli il 
  x.onload=()=>{let r={ok:false};try{r=JSON.parse(x.responseText)}catch(e){}$('fw_info').textContent=r.message||(r.ok?'Fatto':'Errore');
   $('fw_bar').hidden=true;if(r.ok){$('fw_info').textContent='Installato e verificato: l’orologio si riavvia con la nuova versione. Per tornare a questa pagina riapri l’app Web.'}};
  x.onerror=()=>{$('fw_info').textContent='Errore di rete';$('fw_bar').hidden=true};x.send(f)}
-drawDays();load();fsLoad('/');
+drawDays();load();
 </script>
 </body>
 </html>

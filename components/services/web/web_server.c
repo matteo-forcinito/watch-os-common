@@ -7,6 +7,7 @@
 #include "hardware/board.h"
 #include "hardware/pmu.h"
 #include "hardware/sdcard.h"
+#include "services/storage.h"
 #include "services/alarm.h"
 #include "services/fw_update.h"
 #include "services/wifi.h"
@@ -168,6 +169,8 @@ static esp_err_t handle_state(httpd_req_t *req)
     cJSON_AddStringToObject(json, "wifi", text);
     cJSON_AddNumberToObject(json, "time", (double)time(NULL));
     cJSON_AddBoolToObject(json, "sd", sdcard_is_mounted());
+    cJSON_AddBoolToObject(json, "has_sdcard", board_info()->has_sdcard);
+    cJSON_AddBoolToObject(json, "files", storage_dir() != NULL);
     cJSON_AddStringToObject(json, "version", fw_update_running_version());
 
     cJSON *set = cJSON_AddObjectToObject(json, "settings");
@@ -296,7 +299,7 @@ static esp_err_t handle_wifi_add(httpd_req_t *req)
 
     if (err != ESP_OK || remove || !connect)
     {
-        return send_ok(req, err == ESP_OK, NULL);
+        return send_ok(req, err == ESP_OK, err == ESP_OK ? NULL : "Salvataggio rete non riuscito");
     }
 
     if (s_connect == CONNECT_RUNNING)

@@ -4,6 +4,7 @@
 #include "core/settings.h"
 #include "core/state.h"
 #include "core/sys.h"
+#include "hardware/board.h"
 #include "services/fw_update.h"
 #include "services/fw_version.h"
 #include "ui/ui.h"
@@ -389,11 +390,14 @@ static void show_versions(void *arg)
     add_channel_folders(FOLDER_STABLE, "STABILI");
     add_channel_folders(FOLDER_DEV, "DEV (VERSIONI DI PROVA)");
 
-    ui_section(s_list, "SCHEDA SD");
+    if (board_info()->has_sdcard)
+    {
+        ui_section(s_list, "SCHEDA SD");
 
-    char value[24];
-    snprintf(value, sizeof(value), "%d", v->local_count);
-    ui_row(s_list, LV_SYMBOL_SD_CARD, UI_COLOR_TEAL, "Firmware salvati", value, open_folder, FOLDER_ARG(FOLDER_SD, 0));
+        char value[24];
+        snprintf(value, sizeof(value), "%d", v->local_count);
+        ui_row(s_list, LV_SYMBOL_SD_CARD, UI_COLOR_TEAL, "Firmware salvati", value, open_folder, FOLDER_ARG(FOLDER_SD, 0));
+    }
 
     lv_obj_t *running = ui_text(s_list, "", true);
     lv_label_set_text_fmt(running, "In uso: %s", fw_update_running_version());

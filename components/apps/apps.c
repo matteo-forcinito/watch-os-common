@@ -230,8 +230,13 @@ void apps_init(void)
 {
     for (size_t i = 0; i < sizeof(s_apps) / sizeof(s_apps[0]); i++)
     {
-        /* The USB drive needs the ESP32's own USB port on a connector. */
-        if (s_apps[i] == &usb_drive_app && !board_info()->has_usb_otg)
+        /* The USB drive lends the card to the PC: it needs both the ESP32's own USB port and a card slot. */
+        if (s_apps[i] == &usb_drive_app && (!board_info()->has_usb_otg || !board_info()->has_sdcard))
+        {
+            continue;
+        }
+
+        if (s_apps[i] == &sdcard_app && !board_info()->has_sdcard)
         {
             continue;
         }

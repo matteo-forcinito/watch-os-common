@@ -1,4 +1,5 @@
 #include "services/wifi.h"
+#include "services/storage.h"
 
 #include "core/state.h"
 #include "core/sys.h"
@@ -52,16 +53,40 @@ static int s_known_count = 0;
 
 /* ------------------------------------------------------ known networks */
 
-static void known_save(void)
+static esp_err_t known_save(void)
 {
     nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
 
-    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
+    if (err != ESP_OK)
     {
-        nvs_set_blob(nvs, NVS_KEY, s_known, sizeof(wifi_known_t) * (size_t)s_known_count);
-        nvs_commit(nvs);
-        nvs_close(nvs);
+        return err;
     }
+
+    if (s_known_count == 0)
+    {
+        err = nvs_erase_key(nvs, NVS_KEY);
+        if (err == ESP_ERR_NVS_NOT_FOUND)
+        {
+            err = ESP_OK;
+        }
+    }
+    else
+    {
+        err = nvs_set_blob(nvs, NVS_KEY, s_known, sizeof(wifi_known_t) * (size_t)s_known_count);
+    }
+
+    if (err == ESP_OK)
+    {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Cannot save known networks: %s", esp_err_to_name(err));
+    }
+    return err;
 }
 
 static void known_load(void)
@@ -76,9 +101,15 @@ static void known_load(void)
 
     size_t size = sizeof(s_known);
 
-    if (nvs_get_blob(nvs, NVS_KEY, s_known, &size) == ESP_OK)
+    if (nvs_get_blob(nvs, NVS_KEY, s_known, &size) == ESP_OK &&
+        size <= sizeof(s_known) && size % sizeof(wifi_known_t) == 0)
     {
         s_known_count = (int)(size / sizeof(wifi_known_t));
+        for (int i = 0; i < s_known_count; i++)
+        {
+            s_known[i].ssid[sizeof(s_known[i].ssid) - 1] = '\0';
+            s_known[i].password[sizeof(s_known[i].password) - 1] = '\0';
+        }
     }
 
     nvs_close(nvs);
@@ -148,7 +179,8 @@ static char *trim(char *text)
 /* /sdcard/config/wifi.txt: "ssid = password" per line, # comments. */
 static bool import_wifi_txt(void)
 {
-    FILE *file = fopen(SDCARD_MOUNT "/config/wifi.txt", "r");
+    char path[64];
+    FILE *file = storage_config_path("wifi.txt", path, sizeof(path)) ? fopen(path, "r") : NULL;
     bool changed = false;
 
     if (file == NULL)
@@ -513,10 +545,13 @@ esp_err_t wifi_service_init(void)
 
     known_load();
 
-    if (sdcard_is_mounted())
+    if (storage_dir() != NULL)
     {
         bool changed = import_wifi_txt();
-        changed |= import_arduino_json();
+        if (sdcard_is_mounted())
+        {
+            changed |= import_arduino_json();
+        }
 
         if (changed)
         {
@@ -716,9 +751,9 @@ esp_err_t wifi_connect_new(const char *ssid, const char *password, uint32_t time
     if (err == ESP_OK)
     {
         known_put(ssid, password);
-        known_save();
+        err = known_save();
     }
-    else if (--s_refs == 0)
+    if (err != ESP_OK && --s_refs == 0)
     {
         esp_timer_start_once(s_off_timer, 1000);
     }
@@ -742,14 +777,21 @@ esp_err_t wifi_known_add(const char *ssid, const char *password)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
-    if (known_put(ssid, password))
+    if (ssid == NULL || ssid[0] == '\0' || strlen(ssid) > 32 ||
+        (password != NULL && strlen(password) > 64))
     {
-        known_save();
+        xSemaphoreGive(s_mutex);
+        return ESP_ERR_INVALID_ARG;
     }
-
+    known_put(ssid, password);
+    esp_err_t err = known_save();
+    if (err != ESP_OK)
+    {
+        known_load();
+    }
     xSemaphoreGive(s_mutex);
 
-    return ESP_OK;
+    return err;
 }
 
 esp_err_t wifi_known_remove(const char *ssid)
@@ -762,12 +804,17 @@ esp_err_t wifi_known_remove(const char *ssid)
     {
         memmove(&s_known[index], &s_known[index + 1], sizeof(wifi_known_t) * (size_t)(s_known_count - index - 1));
         s_known_count--;
-        known_save();
+    }
+
+    esp_err_t err = index >= 0 ? known_save() : ESP_ERR_NOT_FOUND;
+    if (err != ESP_OK && index >= 0)
+    {
+        known_load();
     }
 
     xSemaphoreGive(s_mutex);
 
-    return index >= 0 ? ESP_OK : ESP_ERR_NOT_FOUND;
+    return err;
 }
 
 bool wifi_known_any(void)

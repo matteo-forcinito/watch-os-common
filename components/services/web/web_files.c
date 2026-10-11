@@ -1,4 +1,5 @@
 #include "web_files.h"
+#include "services/storage.h"
 
 #include "hardware/sdcard.h"
 
@@ -84,7 +85,12 @@ static bool make_path(const char *path, char *out, size_t size)
         }
     }
 
-    int written = snprintf(out, size, SDCARD_MOUNT "%s", path);
+    const char *root = storage_dir();
+    if (root == NULL)
+    {
+        return false;
+    }
+    int written = snprintf(out, size, "%s%s", root, path);
 
     if (written <= 0 || (size_t)written >= size)
     {
@@ -92,7 +98,7 @@ static bool make_path(const char *path, char *out, size_t size)
     }
 
     /* "/sdcard/x/" -> "/sdcard/x", "/sdcard/" -> "/sdcard" (the root is always "/sdcard"). */
-    while (written > (int)strlen(SDCARD_MOUNT) && out[written - 1] == '/')
+    while (written > (int)strlen(root) && out[written - 1] == '/')
     {
         out[--written] = '\0';
     }
@@ -146,12 +152,12 @@ static esp_err_t reply(httpd_req_t *req, bool ok, const char *message)
 
 static bool card_ready(httpd_req_t *req)
 {
-    if (sdcard_is_mounted())
+    if (storage_dir() != NULL)
     {
         return true;
     }
 
-    reply(req, false, "Scheda SD non disponibile");
+    reply(req, false, "Memoria file non disponibile");
     return false;
 }
 
@@ -300,7 +306,19 @@ static esp_err_t handle_list(httpd_req_t *req)
 
     uint32_t total_mb = 0;
     uint32_t free_mb = 0;
-    sdcard_space(&total_mb, &free_mb);
+    if (sdcard_is_mounted())
+    {
+        sdcard_space(&total_mb, &free_mb);
+    }
+    else
+    {
+        size_t total_kb = 0;
+        size_t free_kb = 0;
+        storage_flash_space(&total_kb, &free_kb);
+        total_mb = (uint32_t)(total_kb / 1024);
+        free_mb = (uint32_t)(free_kb / 1024);
+    }
+    cJSON_AddStringToObject(json, "storage", sdcard_is_mounted() ? "SD" : "Memoria interna");
     cJSON_AddNumberToObject(json, "total_mb", total_mb);
     cJSON_AddNumberToObject(json, "free_mb", free_mb);
 
@@ -377,7 +395,7 @@ static esp_err_t handle_put(httpd_req_t *req)
         return ESP_OK;
     }
 
-    if (!query_path(req, "path", path, sizeof(path)) || strcmp(path, SDCARD_MOUNT) == 0)
+    if (!query_path(req, "path", path, sizeof(path)) || strcmp(path, storage_dir()) == 0)
     {
         return reply(req, false, "Percorso non valido");
     }
@@ -457,7 +475,7 @@ static esp_err_t handle_rename(httpd_req_t *req)
     }
 
     if (!query_path(req, "from", from, sizeof(from)) || !query_path(req, "to", to, sizeof(to)) ||
-        strcmp(from, SDCARD_MOUNT) == 0)
+        strcmp(from, storage_dir()) == 0)
     {
         return reply(req, false, "Percorso non valido");
     }
@@ -483,7 +501,7 @@ static esp_err_t handle_delete(httpd_req_t *req)
         return ESP_OK;
     }
 
-    if (!query_path(req, "path", path, sizeof(path)) || strcmp(path, SDCARD_MOUNT) == 0)
+    if (!query_path(req, "path", path, sizeof(path)) || strcmp(path, storage_dir()) == 0)
     {
         return reply(req, false, "Percorso non valido");
     }
