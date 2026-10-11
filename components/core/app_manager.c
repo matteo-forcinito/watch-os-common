@@ -604,11 +604,17 @@ static void toggle_focus_mode(void)
     }
 }
 
-static void button_handler(button_id_t button, button_event_t event)
+void app_manager_button(button_id_t button, button_event_t event)
 {
     if (event == BUTTON_DOUBLE_CLICK)
     {
         toggle_focus_mode();
+        return;
+    }
+
+    const app_t *app = app_current();
+    if (app != NULL && app->button != NULL && app->button(button, event))
+    {
         return;
     }
 
@@ -687,5 +693,5 @@ void app_manager_init(void)
 
     lv_port_set_back_gesture_cb(back_gesture);
     lv_port_set_back_gesture_filter(back_gesture_allowed);
-    power_set_button_handler(button_handler);
+    power_set_button_handler(app_manager_button);
 }

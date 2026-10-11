@@ -39,6 +39,7 @@
 #include <stdint.h>
 
 #include "lvgl.h"
+#include "hardware/button.h"
 
 typedef enum
 {
@@ -61,6 +62,8 @@ typedef struct app
     void (*resume)(void);                           /* visible again (a sub-page was closed) */
     void (*pause)(void);                            /* a sub-page covers it */
     bool (*back)(void);                             /* return true to handle "back" yourself */
+    /* Optional input override, before normal navigation. True consumes the event. */
+    bool (*button)(button_id_t button, button_event_t event);
 } app_t;
 
 void app_register(const app_t *app);
@@ -96,5 +99,8 @@ void app_manager_set_focus_cb(void (*changed)(bool on));
 
 /* Start the manager (after lv_port_init and power_init). */
 void app_manager_init(void);
+
+/* Dispatch a logical button event in the LVGL task (also used by devtools). */
+void app_manager_button(button_id_t button, button_event_t event);
 
 #endif
