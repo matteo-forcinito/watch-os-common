@@ -1,5 +1,5 @@
 # webradio: internet radio engine (HTTP/HTTPS, HLS, MP3/AAC) + station list.
-# Not part of the base system: used by the external WebRadio app.
+# + the Radio app (radio_app.h): internal on some boards, the external WebRadio app on others.
 idf_component_register(
     SRCS
         "radio.c"
@@ -7,6 +7,7 @@ idf_component_register(
         "hls.c"
         "stream_format.c"
         "radio_list.c"
+        "radio_app.c"
     INCLUDE_DIRS
         "include"
     PRIV_INCLUDE_DIRS
@@ -16,6 +17,7 @@ idf_component_register(
         services
     PRIV_REQUIRES
         hardware
+        ui
         esp_http_client
         esp_audio_codec
         nvs_flash

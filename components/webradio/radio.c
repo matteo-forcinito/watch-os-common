@@ -5,7 +5,7 @@
 
 #include "core/settings.h"
 #include "core/state.h"
-#include "hardware/sdcard.h"
+#include "services/storage.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -23,7 +23,7 @@
 
 static const char *TAG = "radio_svc";
 
-#define LIST_FILE       SDCARD_MOUNT "/config/radios.txt"
+#define LIST_NAME       "radios.txt"   /* in the SD card or flash config folder (services/storage.h) */
 #define NVS_NAMESPACE   "radio"
 #define NVS_FAVORITES   "favorites"
 #define FAV_NAME_MAX    RADIO_NAME_MAX
@@ -105,13 +105,14 @@ static void list_load(void)
 {
     s_list.count = 0;
 
-    FILE *file = sdcard_is_mounted() ? fopen(LIST_FILE, "r") : NULL;
+    char path[64];
+    FILE *file = storage_config_path(LIST_NAME, path, sizeof(path)) ? fopen(path, "r") : NULL;
 
     if (file != NULL)
     {
         radio_list_read(&s_list, file);
         fclose(file);
-        ESP_LOGI(TAG, "%d stations from the SD card", s_list.count);
+        ESP_LOGI(TAG, "%d stations from %s", s_list.count, path);
     }
 
     if (s_list.count == 0)
@@ -123,17 +124,14 @@ static void list_load(void)
 
 static esp_err_t list_save(void)
 {
-    if (!sdcard_is_mounted())
+    char path[64];
+
+    if (!storage_config_path(LIST_NAME, path, sizeof(path)))
     {
-        return ESP_ERR_NOT_FOUND;
+        return ESP_ERR_NOT_FOUND;   /* no card and no flash file system: built-in list only */
     }
 
-    if (mkdir(SDCARD_MOUNT "/config", 0775) != 0 && errno != EEXIST)
-    {
-        return ESP_FAIL;
-    }
-
-    FILE *file = fopen(LIST_FILE, "w");
+    FILE *file = fopen(path, "w");
 
     if (file == NULL)
     {
