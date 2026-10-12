@@ -136,7 +136,7 @@ static void tick(lv_timer_t *timer)
             if (s_snapshot.count > 0)
             {
                 voice_memo_format_name(s_snapshot.names[s_selected], date, sizeof(date));
-                lv_label_set_text_fmt(s_name, "%s\n%s %d / %d", date, s_selected == 0 ? "Ultima memo ·" : "Memo",
+                lv_label_set_text_fmt(s_name, "%s\n%s %d / %d", date, s_selected == 0 ? "Ultima memo Â·" : "Memo",
                                       s_selected + 1, s_snapshot.count);
             }
             else
@@ -263,7 +263,7 @@ static void volume_event(lv_event_t *event)
 {
     int percent = lv_slider_get_value(lv_event_get_target_obj(event));
     voice_memo_set_volume(percent);
-    lv_label_set_text_fmt(s_volume_label, "Volume memo · %d%%", percent);
+    lv_label_set_text_fmt(s_volume_label, "Volume memo Â· %d%%", percent);
 }
 
 static void menu_event(lv_event_t *e)
@@ -306,7 +306,7 @@ static void menu_event(lv_event_t *e)
     lv_obj_set_scrollable(volume, false);
     s_volume_label = lv_label_create(volume);
     lv_obj_set_style_text_font(s_volume_label, UI_FONT_SMALL, 0);
-    lv_label_set_text_fmt(s_volume_label, "Volume memo · %d%%", voice_memo_volume());
+    lv_label_set_text_fmt(s_volume_label, "Volume memo Â· %d%%", voice_memo_volume());
     lv_obj_align(s_volume_label, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_t *slider = lv_slider_create(volume);
     lv_obj_set_size(slider, 240, 8);

@@ -7,6 +7,7 @@ idf_component_register(
         "time/time_sync.c"
         "sound/sound.c"
         "sound/voice_memo.c"
+        "sensors/motion.c"
         "alarm/alarm.c"
         "notify/notify.c"
         "weather/weather.c"

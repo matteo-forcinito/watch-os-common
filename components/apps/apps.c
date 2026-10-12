@@ -12,6 +12,7 @@
 
 #include "hardware/board.h"
 #include "hardware/microphone.h"
+#include "hardware/imu.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,7 @@ static const app_t *const s_apps[] = {
     &weather_app,
     &timer_app,
     &voice_memo_app,
+    &sensors_app,
     &music_app,
     &flashlight_app,
     &web_app,
@@ -254,6 +256,11 @@ void apps_init(void)
         }
 
         if (s_apps[i] == &voice_memo_app && !microphone_supported())
+        {
+            continue;
+        }
+
+        if (s_apps[i] == &sensors_app && !imu_supported())
         {
             continue;
         }

@@ -35,6 +35,11 @@ static const char *TAG = "devcon";
 #if CONFIG_WATCH_DEV_CONSOLE
 
 #include "driver/gpio.h"
+#if CONFIG_HEAP_TRACING_STANDALONE
+#include "esp_heap_trace.h"
+#include "esp_heap_caps.h"
+static heap_trace_record_t *s_trace;
+#endif
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -390,6 +395,27 @@ static void handle(char *line)
     {
         run_in_ui(list_apps, NULL);
     }
+#if CONFIG_HEAP_TRACING_STANDALONE
+    else if (strcmp(cmd, "heapstart") == 0)
+    {
+        if (s_trace == NULL)
+        {
+            s_trace = heap_caps_calloc(1024, sizeof(*s_trace), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
+        esp_err_t err = s_trace != NULL ? heap_trace_init_standalone(s_trace, 1024) : ESP_ERR_NO_MEM;
+        if (err == ESP_OK)
+        {
+            err = heap_trace_start(HEAP_TRACE_LEAKS);
+        }
+        printf("@TRACE %s\n", esp_err_to_name(err));
+    }
+    else if (strcmp(cmd, "heapstop") == 0)
+    {
+        esp_err_t err = heap_trace_stop();
+        heap_trace_dump_caps(MALLOC_CAP_SPIRAM);
+        printf("@TRACE %s\n", esp_err_to_name(err));
+    }
+#endif
     else if (strcmp(cmd, "open") == 0 && a1 != NULL)
     {
         static char id[48];   /* app_open() may queue the request: keep the string alive */

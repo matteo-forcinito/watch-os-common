@@ -1,13 +1,13 @@
-# Memo vocali: verifica in corso
+# Memo vocali: verifica AMOLED 1.8
 
 ## Stato — 12 ottobre 2026
 
 Prototipo interno sull'AMOLED 1.8 collegato a COM3, firmware diagnostico
-`1.3.7-dev.1`. Non pubblicato nel canale stabile: l'utente segnala memo
-silenziose, mentre conferma che la sveglia emette suoni.
+`1.3.7-dev.1`. Il 12 ottobre l'utente ha confermato sia il tono di prova
+sia una nuova memo parlata udibile. Release di produzione prevista: `1.3.7`.
 
-`CONFIG_WATCH_VOICE_MEMOS` è un'opzione sperimentale disabilitata per default.
-È attiva solo nella configurazione diagnostica dell'AMOLED collegato.
+`CONFIG_WATCH_VOICE_MEMOS` resta disabilitata per default nel codice comune.
+È abilitata nei default di produzione AMOLED 1.8; console diagnostica spenta.
 
 La cattura hardware sugli altri tre dispositivi è esplicitamente non
 supportata in questo primo step. Le relative app non vengono mostrate.
@@ -36,9 +36,9 @@ supportata in questo primo step. Le relative app non vengono mostrate.
 
 ## Evidenza raccolta
 
-Build finale riuscita sui quattro firmware di produzione, con prototipo e
-console diagnostica disabilitati. Riuscita anche la build AMOLED con prototipo
-attivo e console diagnostica. Nessuna nuova release stabile di questo step.
+Build di compatibilità riuscite sui quattro firmware e build diagnostica
+AMOLED con memo e Sensori. La produzione AMOLED abilita le memo; gli altri
+modelli mantengono gli adattatori microfono non supportati e app nascosta.
 
 Flash dell'AMOLED limitato all'immagine OS in ota0; verificati identità/MAC,
 nome immagine e hash. NVS e app esterna in ota1 conservate.
@@ -61,8 +61,15 @@ vengono respinte e ripetute. Il controllo temporaneo dei log e il WAV di tono
 sono disponibili soltanto con console di sviluppo, assente dalle produzioni.
 Il tono sintetico è marcato «Prova audio» e non sovrascrive memo esistenti.
 Il WAV di prova recuperato via USB è lungo 1,5 secondi: RMS 8294, picco 12000,
-nessun campione saturo. Il suo ascolto tramite il lettore delle memo è ancora
-da confermare sul dispositivo; il file sintetico non contiene dati personali.
+nessun campione saturo. Il suo ascolto tramite il lettore delle memo è stato
+confermato dall'utente: «Il tono si sente». Il file non contiene dati personali.
+
+Nuova registrazione parlata identificata per data/ora e scaricata solo via USB:
+5,04 secondi, PCM 16 kHz mono 16 bit, RMS 170,74, picco 1536, DC 2,81,
+zero campioni saturi. RMS dei primi cinque secondi: 119,45 / 230,60 /
+184,02 / 155,12 / 146,82. Conferma dell'utente: «sento la memo».
+Il livello resta contenuto: non è una misura calibrata di sensibilità e non
+dimostra ascolto a distanza. Nessuna amplificazione automatica introdotta.
 
 Prova sul dispositivo: primo swipe blocca, la registrazione continua dopo il
 rilascio (schermata acquisita a 12 secondi), secondo swipe e rilascio salvano.
@@ -72,21 +79,29 @@ dal pulsante, evitando la propagazione automatica alla schermata LVGL.
 La coda finale di riproduzione viene drenata per massimo 200 ms, con controllo
 di stop/sveglia ogni 20 ms; 80 ms non erano sufficienti a 16 kHz.
 
-## Verifiche ancora obbligatorie
+## Priorità audio e verifiche residue
 
-1. Riproduzione del tono noto attraverso lo stesso lettore WAV delle memo;
-   confronto con una nuova registrazione parlata identificata per data/ora.
-2. Livello utile della voce e ascolto percepibile; non correggere amplificando
-   alla cieca un ingresso potenzialmente privo di segnale.
-3. Conferma dell'ergonomia con il dito reale e su schermi differenti;
-   blocco/sblocco e selezione iniziale sono verificati tramite input diagnostico.
-4. Volume percepito, stop, uscita e cancellazione confermata.
-5. Precedenza reale della sveglia durante registrazione/riproduzione.
-   La prova automatica precedente non ha attivato il timer: non è superata.
-   La conferma dell'utente che la sveglia suona non sostituisce questa prova.
-6. Recupero dopo interruzione, SD piena/assente, registrazione massima,
-   misura di heap e ripetizione dopo riconnessioni Wi-Fi/BLE.
-7. Attivazione nelle produzioni e release soltanto dopo la verifica audio.
+Aggiornamento del 12 ottobre, prova controllata successiva: timer impostato
+esplicitamente a un minuto, registrazione iniziata durante il countdown.
+Alla scadenza il recorder ha chiuso 1.241.600 byte PCM (38,8 secondi) con
+`ESP_OK`; il codec ha aperto l'uscita allarme a 22.050 Hz 14 ms dopo.
+Questa verifica supera il controllo di precedenza e rilascio del codec
+descritto sotto; resta da confermare il suono percepito. Touch diagnostico
+rilasciato e timer cancellato nel blocco di pulizia della prova.
+
+Verificati: tono noto, registrazione parlata/ascolto, nomi datati e selezione
+iniziale, blocco/sblocco diagnostico e precedenza del timer in registrazione.
+Prima di estendere la validazione ad altri hardware, restano:
+
+1. Ergonomia con dito reale e su schermi differenti.
+2. Volume percepito in ambienti diversi; ascolto della sveglia durante memo
+   e prova di precedenza durante riproduzione.
+3. Recupero dopo interruzione, SD piena/assente e durata massima su hardware.
+4. Misure di autonomia e prove prolungate con riconnessioni Wi-Fi/BLE.
+
+Queste prove residue non sono presentate come già superate. Durata, spazio,
+validazione WAV e recupero `.part` sono protetti nel codice; la registrazione
+richiede sempre microSD montata e azione manuale dell'utente.
 
 WAV personali e catture diagnostiche restano nella directory ignorata
 `build/microphone-stage`; non devono entrare nei repository o nelle release.

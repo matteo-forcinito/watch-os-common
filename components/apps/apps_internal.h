@@ -21,6 +21,7 @@ extern const app_t web_app;
 extern const app_t extapps_run_app;     /* hidden: arg = extapp_t * (malloc, freed by it) */
 extern const app_t power_app;
 extern const app_t voice_memo_app;
+extern const app_t sensors_app;
 extern const app_t timer_app;
 extern const app_t music_app;
 extern const app_t usb_drive_app;
