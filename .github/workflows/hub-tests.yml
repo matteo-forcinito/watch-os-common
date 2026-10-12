@@ -1,0 +1,29 @@
+name: Remote Hub state tests
+
+on:
+  push:
+    paths:
+      - 'remote/hub/**'
+      - '.github/workflows/hub-tests.yml'
+  pull_request:
+    paths:
+      - 'remote/hub/**'
+      - '.github/workflows/hub-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  state-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test actual C with sanitizers
+        run: |
+          mkdir -p build/hub-tests
+          cc -std=c11 -Wall -Wextra -Werror -O1 -g \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I remote/hub remote/hub/hub_state.c \
+            remote/hub/tests/test_hub_state.c -o build/hub-tests/test_hub_state
+          build/hub-tests/test_hub_state
