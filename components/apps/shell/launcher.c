@@ -205,6 +205,21 @@ static void select_entry(int index)
     lv_label_set_text(s_center_name, s_entries[index].name);
 }
 
+bool launcher_rotate(int delta)
+{
+    if (s_ring == NULL || s_entry_count == 0 || delta == 0)
+    {
+        return false;
+    }
+    int index = (s_selected + delta % s_entry_count) % s_entry_count;
+    if (index < 0)
+    {
+        index += s_entry_count;
+    }
+    select_entry(index);
+    return true;
+}
+
 static void on_ring_icon(lv_event_t *e)
 {
     int index = (int)(intptr_t)lv_event_get_user_data(e);

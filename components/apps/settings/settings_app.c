@@ -137,6 +137,12 @@ static void set_wake_notify(lv_event_t *e)
     EDIT_SETTINGS(s->wake_on_notification = on);
 }
 
+static void set_border_progress(lv_event_t *e)
+{
+    EDIT_SETTINGS(s->border_progress = switch_on(e));
+    ui_toast("Applicato alle schermate che apri");
+}
+
 static void set_knob_focus(lv_event_t *e)
 {
     bool on = switch_on(e);
@@ -156,6 +162,7 @@ static void display_create(lv_obj_t *screen, void *arg)
     snprintf(value, sizeof(value), "%u s", st->screen_timeout_s);
     ui_row(page, LV_SYMBOL_EYE_CLOSE, UI_COLOR_INDIGO, "Spegnimento", value, cycle_timeout, NULL);
     ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_PURPLE, "Always on", st->always_on, set_aod, NULL);
+    ui_switch_row(page, LV_SYMBOL_LOOP, UI_COLOR_TEAL, "Progresso sul bordo", st->border_progress, set_border_progress, NULL);
     ui_switch_row(page, LV_SYMBOL_UP, UI_COLOR_BLUE, "Tocca per accendere", st->tap_to_wake, set_tap, NULL);
     ui_switch_row(page, LV_SYMBOL_BELL, UI_COLOR_ORANGE, "Accendi con notifiche", st->wake_on_notification,
                   set_wake_notify, NULL);
@@ -170,8 +177,9 @@ static void display_create(lv_obj_t *screen, void *arg)
 
     if (board_info()->has_knob)
     {
-        ui_text(page, "Rotella: con \"focus\" girandola scegli le voci e premendola le apri; "
-                      "tieni premuto per tornare indietro. Doppio click per cambiare modalità ovunque.", true);
+        ui_text(page, "Rotella: gira per scorrere, con focus scegli le voci. Tocca per aprire; "
+                      "scorri dal bordo sinistro per tornare. Sulle rotelle con click puoi anche "
+                      "premere per aprire e fare doppio click per cambiare modalità.", true);
     }
 }
 

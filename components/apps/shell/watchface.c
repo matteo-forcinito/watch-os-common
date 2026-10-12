@@ -41,6 +41,7 @@ typedef struct
     lv_obj_t *time;
     lv_obj_t *date;
     lv_obj_t *battery_arc;
+    lv_obj_t *battery_border;
     lv_obj_t *battery_label;
     lv_obj_t *status_battery;
     lv_obj_t *status_ble;
@@ -98,6 +99,12 @@ static void update_battery(lv_observer_t *observer, lv_subject_t *subject)
     bool charging = state_get(STATE_CHARGING) != 0;
     uint32_t color = charging ? UI_COLOR_GREEN : (percent >= 0 && percent < 20 ? UI_COLOR_RED : UI_COLOR_GREEN);
 
+    if (s_face.battery_border != NULL)
+    {
+        ui_border_progress_set(s_face.battery_border, percent < 0 ? 100 : percent, 100);
+        ui_border_progress_color(s_face.battery_border, color);
+        lv_obj_set_hidden(s_face.battery_border, !settings_get()->border_progress);
+    }
     lv_arc_set_value(s_face.battery_arc, percent < 0 ? 100 : percent);
     lv_obj_set_style_arc_color(s_face.battery_arc, lv_color_hex(color), LV_PART_INDICATOR);
 
@@ -441,6 +448,8 @@ void watchface_create(lv_obj_t *parent)
 
     weather_and_alarm(row, COMPLICATION_SIZE);
 
+    s_face.battery_border = ui_border_progress_create(root, UI_COLOR_GREEN);
+
     /* phone music pill */
     music_pill(root, 300);
     lv_obj_align(s_face.music_pill, LV_ALIGN_BOTTOM_MID, 0, -26);
@@ -455,6 +464,7 @@ static void watchface_observe(lv_obj_t *root)
     lv_subject_add_observer_obj(state_subject(STATE_SETTINGS_VERSION), update_time, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_BATTERY), update_battery, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_CHARGING), update_battery, root, NULL);
+    lv_subject_add_observer_obj(state_subject(STATE_SETTINGS_VERSION), update_battery, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_BLE), update_links, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_WIFI), update_links, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_WEATHER_VERSION), update_weather, root, NULL);

@@ -8,6 +8,7 @@ idf_component_register(
         "ui_round_keyboard.c"
         "ui_weather.c"
         "ui_image.c"
+        "ui_border_progress.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

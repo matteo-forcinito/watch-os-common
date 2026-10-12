@@ -106,6 +106,13 @@ lv_obj_t *ui_icon_bubble(lv_obj_t *parent, const char *icon, uint32_t color, int
 /* Give any object the card look + press feedback. */
 void ui_make_card(lv_obj_t *obj);
 
+/* Passive screen-border progress. Call from the LVGL task; NULL is safe.
+ * Circle on round boards, rounded rectangle otherwise. No animation task.
+ * Parent must cover the display; delete the parent to free the instance. */
+lv_obj_t *ui_border_progress_create(lv_obj_t *screen, uint32_t color);
+void ui_border_progress_set(lv_obj_t *border, int32_t value, int32_t maximum);
+void ui_border_progress_color(lv_obj_t *border, uint32_t color);
+
 /* ---- overlays */
 
 /* Short message sliding in from the top, gone after ~2 s. */

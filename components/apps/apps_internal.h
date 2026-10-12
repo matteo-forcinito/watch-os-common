@@ -35,7 +35,8 @@ extern const app_t folder_app;          /* hidden: one folder of versions_app, a
 void watchface_create(lv_obj_t *parent);
 void watchface_aod_create(lv_obj_t *screen);
 void launcher_create(lv_obj_t *parent);
-void launcher_refresh(void);            /* rescan the SD card apps */
+void launcher_refresh(void);
+bool launcher_rotate(int delta); /* select a round icon; touch the centre to open */
 void control_center_create(lv_obj_t *parent);
 void shell_show_control_center(void);   /* slide the home screen to the control center */
 void notifications_create(lv_obj_t *parent);

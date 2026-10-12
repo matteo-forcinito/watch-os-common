@@ -2,6 +2,7 @@
 
 #include "apps/apps.h"
 #include "core/power.h"
+#include "core/lv_port.h"
 #include "core/state.h"
 #include "services/notify.h"
 #include "ui/ui.h"
@@ -96,6 +97,20 @@ static void tile_changed(lv_event_t *e)
     }
 }
 
+static void on_knob(lv_event_t *event)
+{
+    lv_port_knob_t *knob = lv_event_get_param(event);
+    if (knob == NULL || knob->handled || lv_port_focus_mode() || s_tiles == NULL)
+    {
+        return;
+    }
+    /* A rotary-only board opens the selected icon by touching the centre. */
+    if (lv_tileview_get_tile_active(s_tiles) == lv_obj_get_child(s_tiles, 3))
+    {
+        knob->handled = launcher_rotate(knob->delta);
+    }
+}
+
 void shell_create(void)
 {
     lv_obj_t *home = lv_obj_create(NULL);
@@ -127,6 +142,7 @@ void shell_create(void)
 
     lv_subject_add_observer_obj(state_subject(STATE_NOTIF_VERSION), notifications_changed, s_tiles, NULL);
 
+    lv_obj_add_event_cb(home, on_knob, lv_port_knob_event(), NULL);
     app_manager_set_home(home, home_back);
     app_manager_set_aod(watchface_aod_create);
 }

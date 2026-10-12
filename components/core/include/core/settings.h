@@ -61,6 +61,8 @@ typedef struct
 
     /* online updates: 0 = stable releases, 1 = dev builds too (fw_channel_t) */
     uint8_t update_channel;
+    /* Optional perimeter indicators on every display shape. */
+    bool border_progress;
 } settings_t;
 
 esp_err_t settings_init(void);

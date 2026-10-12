@@ -5,6 +5,7 @@
 #include "core/lv_port.h"
 #include "core/power.h"
 #include "core/state.h"
+#include "core/settings.h"
 #include "ui/ui.h"
 #include "services/fw_update.h"
 #include "services/alarm.h"
@@ -102,6 +103,7 @@ static lv_obj_t *s_update_panel = NULL;
 static lv_obj_t *s_update_title = NULL;
 static lv_obj_t *s_update_text = NULL;
 static lv_obj_t *s_update_bar = NULL;
+static lv_obj_t *s_update_border = NULL;
 static lv_obj_t *s_update_percent = NULL;
 static bool s_update_titled = false;
 static uint32_t s_update_drawn_ms = 0;
@@ -152,6 +154,11 @@ static void update_panel_show(void)
     lv_obj_set_style_text_color(s_update_percent, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
     lv_label_set_text(s_update_percent, "0%");
 
+    if (settings_get()->border_progress)
+    {
+        s_update_border = ui_border_progress_create(s_update_panel, UI_COLOR_BLUE);
+        lv_obj_set_hidden(s_update_bar, s_update_border != NULL);
+    }
     s_update_titled = false;
     s_update_drawn_ms = lv_tick_get();
 }
@@ -165,6 +172,7 @@ static void update_panel_hide(void)
         s_update_title = NULL;
         s_update_text = NULL;
         s_update_bar = NULL;
+        s_update_border = NULL;
         s_update_percent = NULL;
     }
 }
@@ -184,6 +192,7 @@ static void on_update_phase(lv_observer_t *observer, lv_subject_t *subject)
     {
         lv_label_set_text(s_update_text, "Verificato. Riavvio...");
         lv_bar_set_value(s_update_bar, 100, LV_ANIM_OFF);
+        ui_border_progress_set(s_update_border, 100, 100);
         lv_label_set_text(s_update_percent, "100%");
     }
     else if (phase == FW_UPDATE_FAILED && s_update_panel != NULL)
@@ -218,12 +227,13 @@ static void on_update_percent(lv_observer_t *observer, lv_subject_t *subject)
 
     s_update_drawn_ms = lv_tick_get();
     lv_bar_set_value(s_update_bar, percent, LV_ANIM_OFF);
+    ui_border_progress_set(s_update_border, percent, 100);
     lv_label_set_text_fmt(s_update_percent, "%d%%", percent);
 }
 
 static void on_focus_changed(bool on)
 {
-    ui_toast(on ? "Focus: gira per scegliere, premi per aprire" : "Rotella: scorrimento");
+    ui_toast(on ? "Focus: gira per scegliere; tocca per aprire" : "Rotella: scorrimento");
 }
 
 void apps_init(void)

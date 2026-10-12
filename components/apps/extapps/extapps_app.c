@@ -2,6 +2,7 @@
 
 #include "core/lv_port.h"
 #include "core/sys.h"
+#include "core/settings.h"
 #include "services/extapp.h"
 #include "ui/ui.h"
 
@@ -27,6 +28,7 @@ typedef struct
 {
     extapp_t app;
     lv_obj_t *bar;
+    lv_obj_t *border;
     lv_obj_t *status;
     lv_obj_t *button;
     bool installing;
@@ -49,7 +51,12 @@ static void progress_update(void *arg)
         return;
     }
 
-    lv_obj_set_hidden(s_run->bar, false);
+    lv_obj_set_hidden(s_run->bar, s_run->border != NULL);
+    if (s_run->border != NULL)
+    {
+        lv_obj_set_hidden(s_run->border, false);
+        ui_border_progress_set(s_run->border, s_percent, 100);
+    }
     lv_bar_set_value(s_run->bar, s_percent, LV_ANIM_ON);
     lv_label_set_text_fmt(s_run->status, s_percent >= 100 ? "Avvio..." : "Installazione %d%%", s_percent);
 }
@@ -106,6 +113,7 @@ static void start(void)
     job->generation = s_generation;
     s_run->installing = true;
     s_percent = 0;
+    ui_border_progress_set(s_run->border, 0, 100);
 
     lv_obj_set_hidden(s_run->button, true);
     lv_obj_set_style_text_color(s_run->status, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
@@ -176,6 +184,15 @@ static void run_create(lv_obj_t *screen, void *arg)
     s_run->button = ui_button(screen, cached ? "Apri" : "Installa e apri", UI_COLOR_PURPLE, on_start, NULL);
     lv_obj_t *hint = ui_text(screen, "Nell'app premi BOOT per tornare qui.", true);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+
+    if (settings_get()->border_progress)
+    {
+        s_run->border = ui_border_progress_create(screen, UI_COLOR_PURPLE);
+        if (s_run->border != NULL)
+        {
+            lv_obj_set_hidden(s_run->border, true);
+        }
+    }
 
     if (cached)
     {

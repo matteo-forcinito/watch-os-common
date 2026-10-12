@@ -1,6 +1,7 @@
 #include "apps_internal.h"
 
 #include "core/power.h"
+#include "core/settings.h"
 #include "services/sound.h"
 #include "ui/ui.h"
 
@@ -25,6 +26,8 @@ static stopwatch_t s_watch;
 static esp_timer_handle_t s_countdown = NULL;
 static int64_t s_countdown_end_us = 0;
 static int s_countdown_minutes = 5;
+static int64_t s_countdown_duration_us = 0;
+static lv_obj_t *s_border = NULL;
 
 static lv_obj_t *s_watch_label = NULL;
 static lv_obj_t *s_watch_button = NULL;
@@ -40,6 +43,14 @@ static void tick(lv_timer_t *timer)
 {
     (void)timer;
 
+    if (s_border != NULL)
+    {
+        int64_t remaining = s_countdown_end_us - esp_timer_get_time();
+        int32_t fraction = s_countdown_end_us != 0 && s_countdown_duration_us > 0 && remaining > 0 ?
+            (int32_t)(remaining * 1000 / s_countdown_duration_us) : 0;
+        lv_obj_set_hidden(s_border, s_countdown_end_us == 0);
+        ui_border_progress_set(s_border, fraction, 1000);
+    }
     int64_t ms = watch_elapsed() / 1000;
     lv_label_set_text_fmt(s_watch_label, "%02d:%02d.%d", (int)(ms / 60000), (int)(ms / 1000 % 60), (int)(ms / 100 % 10));
 
@@ -113,6 +124,7 @@ static void on_countdown(lv_event_t *e)
     }
 
     uint64_t us = (uint64_t)s_countdown_minutes * 60 * 1000000;
+    s_countdown_duration_us = (int64_t)us;
     s_countdown_end_us = esp_timer_get_time() + (int64_t)us;
     esp_timer_start_once(s_countdown, us);
 }
@@ -164,6 +176,10 @@ static void create(lv_obj_t *screen, void *arg)
 
     ui_button(page, "Avvia / Stop", UI_COLOR_ORANGE, on_countdown, NULL);
 
+    if (settings_get()->border_progress)
+    {
+        s_border = ui_border_progress_create(screen, UI_COLOR_ORANGE);
+    }
     s_tick = lv_timer_create(tick, 100, NULL);
     tick(s_tick);
 }
@@ -171,6 +187,7 @@ static void create(lv_obj_t *screen, void *arg)
 static void destroy(void)
 {
     lv_timer_delete(s_tick);
+    s_border = NULL;
     s_tick = NULL;
 }
 

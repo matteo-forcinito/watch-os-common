@@ -51,6 +51,7 @@ static void set_defaults(settings_t *s)
     s->accent_color = 0x3D8BFF;
     s->knob_focus = false;
     s->update_channel = 0;
+    s->border_progress = false;
 }
 
 static void sanitize(settings_t *s)
