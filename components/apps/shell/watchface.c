@@ -42,6 +42,7 @@ typedef struct
     lv_obj_t *date;
     lv_obj_t *battery_arc;
     lv_obj_t *battery_border;
+    lv_obj_t *battery_box;
     lv_obj_t *battery_label;
     lv_obj_t *status_battery;
     lv_obj_t *status_ble;
@@ -104,6 +105,12 @@ static void update_battery(lv_observer_t *observer, lv_subject_t *subject)
         ui_border_progress_set(s_face.battery_border, percent < 0 ? 100 : percent, 100);
         ui_border_progress_color(s_face.battery_border, color);
         lv_obj_set_hidden(s_face.battery_border, !settings_get()->border_progress);
+    }
+    if (s_face.battery_box != NULL)
+    {
+        /* Keep the card as the fallback when the optional border cannot allocate. */
+        lv_obj_set_hidden(s_face.battery_box,
+                          s_face.battery_border != NULL && settings_get()->border_progress);
     }
     lv_arc_set_value(s_face.battery_arc, percent < 0 ? 100 : percent);
     lv_obj_set_style_arc_color(s_face.battery_arc, lv_color_hex(color), LV_PART_INDICATOR);
@@ -431,6 +438,7 @@ void watchface_create(lv_obj_t *parent)
     lv_obj_set_scrollable(row, false);
 
     lv_obj_t *battery = complication(row, "battery", COMPLICATION_SIZE);
+    s_face.battery_box = battery;
     s_face.battery_arc = lv_arc_create(battery);
     lv_obj_set_size(s_face.battery_arc, 92, 92);
     lv_arc_set_bg_angles(s_face.battery_arc, 0, 360);

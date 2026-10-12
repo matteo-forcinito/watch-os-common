@@ -38,6 +38,11 @@ static void point(border_t *state, float x, float y)
 
 static void corner(border_t *state, float x, float y, float radius, int start)
 {
+    if (radius <= 0)
+    {
+        point(state, x, y);
+        return;
+    }
     for (int step = 0; step <= 8; step++)
     {
         float angle = (start + step * 90.0f / 8) * PI_F / 180;
@@ -67,7 +72,8 @@ lv_obj_t *ui_border_progress_create(lv_obj_t *screen, uint32_t color)
     lv_obj_set_clickable(root, false);
     lv_obj_set_scrollable(root, false);
 
-    float width = board_info()->width, height = board_info()->height;
+    /* Coordinates address pixel centres: the last pixel is size - 1. */
+    float width = board_info()->width - 1, height = board_info()->height - 1;
     const float inset = 5;
     if (board_info()->round)
     {
@@ -80,7 +86,8 @@ lv_obj_t *ui_border_progress_create(lv_obj_t *screen, uint32_t color)
     }
     else
     {
-        float radius = 22;
+        float radius = fmaxf(0, board_info()->display_corner_radius - inset);
+        radius = fminf(radius, fminf(width, height) / 2 - inset);
         float left = inset, top = inset, right = width - inset, bottom = height - inset;
         point(state, width / 2, top);
         corner(state, right - radius, top + radius, radius, -90);
@@ -94,6 +101,9 @@ lv_obj_t *ui_border_progress_create(lv_obj_t *screen, uint32_t color)
     lv_obj_t *lines[] = {state->track, state->indicator};
     for (int i = 0; i < 2; i++)
     {
+        /* Do not inherit theme padding or a position offset at the panel edge. */
+        lv_obj_remove_style_all(lines[i]);
+        lv_obj_set_pos(lines[i], 0, 0);
         lv_obj_set_clickable(lines[i], false);
         lv_obj_set_scrollable(lines[i], false);
         lv_obj_set_style_line_width(lines[i], 5, 0);
