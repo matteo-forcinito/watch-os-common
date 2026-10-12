@@ -586,12 +586,12 @@ static void mouse_create(lv_obj_t *screen, void *arg)
     s_mouse = mouse;
     lv_obj_add_event_cb(screen, mouse_knob, lv_port_knob_event(), mouse);
     int32_t w = board_info()->width, h = board_info()->height;
+    int32_t size = (w < h ? w : h) * 49 / 100;
     if (panel != NULL)
     {
-        lv_obj_set_pos(panel->status, w / 2 - 90, h * 60 / 100);
+        lv_obj_set_pos(panel->status, w / 2 - 90, h * 22 / 100 + size - 38);
         lv_obj_set_width(panel->status, 180);
     }
-    int32_t size = (w < h ? w : h) * 49 / 100;
     mouse->pad = lv_obj_create(screen);
     lv_obj_remove_style_all(mouse->pad);
     lv_obj_set_size(mouse->pad, size, size);

@@ -34,6 +34,9 @@ La CI ricompila da `sdkconfig.defaults` e allega il pacchetto Remote al rilascio
   ota_1. Il binario di prova è stato scritto solo in ota_1, senza erase della NVS.
 - Avvio Remote 1.0.0 e registro delle 16 app verificati dalla console.
 - Collegamento HID BLE al PC osservato nel log.
+- Screenshot completi di tastiera PC, gamepad e categorie delle scorciatoie.
+  L'acquisizione seriale iniziale perdeva righe: lettura a blocchi e controllo
+  di completezza hanno permesso di ripeterla senza usare immagini corrotte.
 - Console iniziale: circa 104 KB di RAM interna libera, blocco massimo 56 KB,
   nessun interrupt di flush perso.
 - Le operazioni di controllo seriale possono riavviare il dispositivo; Remote
