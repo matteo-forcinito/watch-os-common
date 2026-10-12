@@ -1,6 +1,9 @@
 #include "ui/ui.h"
 
 #include "core/app.h"
+#include "hardware/board.h"
+
+bool ui_round_keyboard_create(lv_obj_t *screen, lv_obj_t *textarea, const char *title);
 
 #include <stdlib.h>
 #include <string.h>
@@ -95,7 +98,7 @@ static void confirm_answer(lv_event_t *e, bool yes)
     ui_confirm_cb_t cb = c->cb;
     void *user_data = c->user_data;
 
-    lv_obj_delete_async(c->overlay);   /* we are inside one of its buttons */
+    lv_obj_delete_async(c->overlay); /* we are inside one of its buttons */
     free(c);
 
     if (cb != NULL)
@@ -114,8 +117,8 @@ static void confirm_no(lv_event_t *e)
     confirm_answer(e, false);
 }
 
-void ui_confirm(const char *title, const char *text, const char *ok_text, uint32_t ok_color,
-                ui_confirm_cb_t cb, void *user_data)
+void ui_confirm(const char *title, const char *text, const char *ok_text, uint32_t ok_color, ui_confirm_cb_t cb,
+                void *user_data)
 {
     confirm_t *c = calloc(1, sizeof(confirm_t));
 
@@ -204,6 +207,7 @@ static void keyboard_event(lv_event_t *e)
 
     ui_text_cb_t cb = s_request.cb;
     void *user_data = s_request.user_data;
+    s_request.cb = NULL;
 
     app_back();
 
@@ -222,6 +226,31 @@ static void show_password_toggle(lv_event_t *e)
 static void keyboard_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
+
+    if (board_info()->round)
+    {
+        lv_obj_set_scrollable(screen, false);
+        s_textarea = lv_textarea_create(screen);
+        lv_textarea_set_one_line(s_textarea, true);
+        lv_textarea_set_text(s_textarea, s_request.initial);
+        lv_textarea_set_password_mode(s_textarea, s_request.password);
+        lv_obj_set_style_bg_color(s_textarea, lv_color_hex(UI_COLOR_CARD), 0);
+        lv_obj_set_style_border_width(s_textarea, 0, 0);
+        lv_obj_set_style_radius(s_textarea, 12, 0);
+        lv_obj_add_state(s_textarea, LV_STATE_FOCUSED);
+        lv_obj_add_event_cb(screen, keyboard_event, LV_EVENT_READY, NULL);
+        lv_obj_add_event_cb(screen, keyboard_event, LV_EVENT_CANCEL, NULL);
+        if (!ui_round_keyboard_create(screen, s_textarea, s_request.title))
+        {
+            ui_toast("Memoria insufficiente");
+            ui_text_cb_t cb = s_request.cb;
+            s_request.cb = NULL;
+            app_back();
+            if (cb != NULL)
+                cb(NULL, s_request.user_data);
+        }
+        return;
+    }
 
     lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_top(screen, 14, 0);
@@ -273,6 +302,15 @@ static void keyboard_destroy(void)
     s_textarea = NULL;
 }
 
+static bool keyboard_back(void)
+{
+    ui_text_cb_t cb = s_request.cb;
+    s_request.cb = NULL;
+    if (cb != NULL)
+        cb(NULL, s_request.user_data);
+    return false;
+}
+
 static const app_t s_keyboard_app = {
     .id = "system.keyboard",
     .name = "Tastiera",
@@ -281,6 +319,7 @@ static const app_t s_keyboard_app = {
     .flags = APP_FLAG_HIDDEN | APP_FLAG_NO_BACK_GESTURE,
     .create = keyboard_create,
     .destroy = keyboard_destroy,
+    .back = keyboard_back,
 };
 
 void ui_register_keyboard_app(void)

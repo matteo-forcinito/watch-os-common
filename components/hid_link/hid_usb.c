@@ -2,6 +2,8 @@
 
 #include "esp_log.h"
 #include "esp_pm.h"
+#include "esp_mac.h"
+#include <stdio.h>
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "class/hid/hid_device.h"
@@ -19,7 +21,7 @@
 static const char *TAG = "hid_usb";
 
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
-#define HID_EP_IN        0x81
+#define HID_EP_IN 0x81
 
 static const uint8_t s_config_descriptor[] = {
     /* config number, interface count, string index, total length, attributes, power (mA) */
@@ -28,17 +30,35 @@ static const uint8_t s_config_descriptor[] = {
     TUD_HID_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_NONE, HID_REPORT_MAP_BYTES, HID_EP_IN, 16, 5),
 };
 
+static char s_product[32] = "Watch Remote";
+static char s_serial[13];
 static const char *s_strings[] = {
-    (const char[]){0x09, 0x04},   /* English */
-    "AMOLED Watch",               /* manufacturer */
-    "AMOLED Remote",              /* product */
-    "0001",                       /* serial */
-    "AMOLED Remote HID",          /* HID interface */
+    (const char[]){0x09, 0x04}, /* English */
+    "Watch OS",                 /* manufacturer */
+    s_product,                  /* product */
+    s_serial,                   /* per-device serial */
+    "Remote HID",               /* HID interface */
 };
 
 static bool s_started = false;
 static esp_pm_lock_handle_t s_no_sleep = NULL;
 static esp_pm_lock_handle_t s_apb_max = NULL;
+
+static void release_power_locks(void)
+{
+    if (s_apb_max != NULL)
+    {
+        esp_pm_lock_release(s_apb_max);
+        esp_pm_lock_delete(s_apb_max);
+        s_apb_max = NULL;
+    }
+    if (s_no_sleep != NULL)
+    {
+        esp_pm_lock_release(s_no_sleep);
+        esp_pm_lock_delete(s_no_sleep);
+        s_no_sleep = NULL;
+    }
+}
 
 /* --- TinyUSB callbacks (called by the TinyUSB task) */
 
@@ -48,8 +68,8 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
     return hid_report_map;
 }
 
-uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
-                               uint8_t *buffer, uint16_t reqlen)
+uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer,
+                               uint16_t reqlen)
 {
     (void)instance;
     (void)report_id;
@@ -59,14 +79,14 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
     return 0;
 }
 
-void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
-                           uint8_t const *buffer, uint16_t bufsize)
+void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer,
+                           uint16_t bufsize)
 {
     (void)instance;
     (void)report_id;
     (void)report_type;
     (void)buffer;
-    (void)bufsize;   /* keyboard LEDs: not used */
+    (void)bufsize; /* keyboard LEDs: not used */
 }
 
 static void usb_event(tinyusb_event_t *event, void *arg)
@@ -85,21 +105,34 @@ static void usb_event(tinyusb_event_t *event, void *arg)
 
 esp_err_t hid_usb_start(const char *name)
 {
-    (void)name;
-
     if (s_started)
     {
         return ESP_OK;
     }
 
-    if (s_no_sleep == NULL && esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "hid_usb", &s_no_sleep) == ESP_OK)
-    {
-        esp_pm_lock_acquire(s_no_sleep);
-    }
+    snprintf(s_product, sizeof(s_product), "%.31s", name != NULL ? name : "Watch Remote");
+    uint8_t mac[6] = {0};
+    ESP_ERROR_CHECK(esp_efuse_mac_get_default(mac));
+    snprintf(s_serial, sizeof(s_serial), "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-    if (s_apb_max == NULL && esp_pm_lock_create(ESP_PM_APB_FREQ_MAX, 0, "hid_usb_apb", &s_apb_max) == ESP_OK)
+    esp_err_t err = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "hid_usb", &s_no_sleep);
+    if (err != ESP_OK)
     {
-        esp_pm_lock_acquire(s_apb_max);
+        return err;
+    }
+    err = esp_pm_lock_acquire(s_no_sleep);
+    if (err == ESP_OK)
+    {
+        err = esp_pm_lock_create(ESP_PM_APB_FREQ_MAX, 0, "hid_usb_apb", &s_apb_max);
+    }
+    if (err == ESP_OK)
+    {
+        err = esp_pm_lock_acquire(s_apb_max);
+    }
+    if (err != ESP_OK)
+    {
+        release_power_locks();
+        return err;
     }
 
     tinyusb_config_t config = TINYUSB_DEFAULT_CONFIG(usb_event);
@@ -107,12 +140,16 @@ esp_err_t hid_usb_start(const char *name)
     config.descriptor.string = s_strings;
     config.descriptor.string_count = sizeof(s_strings) / sizeof(s_strings[0]);
 
-    esp_err_t err = tinyusb_driver_install(&config);
+    err = tinyusb_driver_install(&config);
 
     if (err == ESP_OK)
     {
         s_started = true;
         ESP_LOGI(TAG, "USB keyboard ready (connect the cable)");
+    }
+    else
+    {
+        release_power_locks();
     }
 
     return err;
@@ -127,13 +164,13 @@ esp_err_t hid_usb_send(uint8_t report_id, const uint8_t *data, uint16_t length)
 
     if (tud_suspended())
     {
-        tud_remote_wakeup();   /* wake the sleeping PC with the key press */
+        tud_remote_wakeup(); /* wake the sleeping PC with the key press */
         return ESP_ERR_TIMEOUT;
     }
 
     if (!tud_hid_ready())
     {
-        return ESP_ERR_TIMEOUT;   /* endpoint busy: hid_tx tries again */
+        return ESP_ERR_TIMEOUT; /* endpoint busy: hid_tx tries again */
     }
 
     return tud_hid_report(report_id, data, length) ? ESP_OK : ESP_FAIL;

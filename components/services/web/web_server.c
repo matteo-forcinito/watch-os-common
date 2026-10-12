@@ -8,6 +8,7 @@
 #include "hardware/pmu.h"
 #include "hardware/sdcard.h"
 #include "services/storage.h"
+#include "services/extapp.h"
 #include "services/alarm.h"
 #include "services/fw_update.h"
 #include "services/wifi.h"
@@ -440,22 +441,45 @@ static esp_err_t handle_upload(httpd_req_t *req)
         return send_ok(req, false, "Nome app non valido");
     }
 
+    const char *root = storage_dir();
+    if (root == NULL)
+    {
+        return send_ok(req, false, "Memoria file non disponibile");
+    }
+    for (const char *p = name; *p != '\0'; p++)
+    {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') || *p == '_' || *p == '-'))
+        {
+            return send_ok(req, false, "Nome app non valido");
+        }
+    }
+    if (req->content_len == 0)
+    {
+        return send_ok(req, false, "Nome app non valido");
+    }
     if (!sdcard_is_mounted())
     {
-        return send_ok(req, false, "Serve la scheda SD");
+        size_t total_kb, free_kb;
+        storage_flash_space(&total_kb, &free_kb);
+        if (req->content_len <= 0 || (size_t)req->content_len > free_kb * 1024)
+        {
+            return send_ok(req, false, "Spazio insufficiente: conserva l'app attuale o rimuovila dalla pagina File prima di aggiornare");
+        }
     }
-
-    char path[96];
-    mkdir(SDCARD_MOUNT "/apps", 0775);
-    snprintf(path, sizeof(path), SDCARD_MOUNT "/apps/%s", name);
+    char path[96], final_path[96];
+    snprintf(path, sizeof(path), "%s/apps", root);
     mkdir(path, 0775);
-    snprintf(path, sizeof(path), SDCARD_MOUNT "/apps/%s/%s.bin", name, name);
+    snprintf(path, sizeof(path), "%s/apps/%s", root, name);
+    mkdir(path, 0775);
+    snprintf(final_path, sizeof(final_path), "%s/apps/%s/%s.bin", root, name, name);
+    snprintf(path, sizeof(path), "%s/apps/%s/.upload", root, name);
 
     FILE *file = fopen(path, "wb");
 
     if (file == NULL)
     {
-        return send_ok(req, false, "Scrittura su SD fallita");
+        return send_ok(req, false, "Scrittura file fallita");
     }
 
     char *buffer = malloc(8192);
@@ -479,14 +503,39 @@ static esp_err_t handle_upload(httpd_req_t *req)
 
     power_keep_screen_on(false);
     free(buffer);
-    fclose(file);
-
+    ok = fclose(file) == 0 && ok;
+    if (ok)
+    {
+        /* FatFS rename cannot overwrite. Keep the old image until publication
+         * succeeds; extapp_scan restores it after an interrupted replacement. */
+        char previous[96];
+        snprintf(previous, sizeof(previous), "%s/apps/%s/.previous", root, name);
+        struct stat st;
+        bool existed = stat(final_path, &st) == 0;
+        if (existed)
+        {
+            remove(previous);
+            ok = rename(final_path, previous) == 0;
+        }
+        if (ok)
+        {
+            ok = rename(path, final_path) == 0;
+            if (!ok && existed)
+            {
+                rename(previous, final_path);
+            }
+        }
+        if (ok)
+        {
+            remove(previous);
+            extapp_forget_cache();
+        }
+    }
     if (!ok)
     {
         remove(path);
     }
-
-    ESP_LOGI(TAG, "Upload %s: %s", path, ok ? "ok" : "failed");
+    ESP_LOGI(TAG, "Upload %s: %s", final_path, ok ? "ok" : "failed");
 
     return send_ok(req, ok, ok ? "App caricata" : "Upload interrotto");
 }

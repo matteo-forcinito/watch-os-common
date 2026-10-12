@@ -1,4 +1,5 @@
 #include "services/extapp.h"
+#include "services/storage.h"
 
 #include "core/power.h"
 #include "hardware/sdcard.h"
@@ -17,7 +18,6 @@
 
 static const char *TAG = "extapp";
 
-#define APPS_DIR      SDCARD_MOUNT "/apps"
 #define CHUNK         (16 * 1024)
 #define NVS_NAMESPACE "extapp"
 
@@ -71,7 +71,10 @@ static void read_manifest(const char *dir, extapp_t *app)
 
 int extapp_scan(extapp_t *out, int max)
 {
-    DIR *dir = sdcard_is_mounted() ? opendir(APPS_DIR) : NULL;
+    const char *root = storage_dir();
+    char apps_dir[32];
+    snprintf(apps_dir, sizeof(apps_dir), "%s/apps", root != NULL ? root : "");
+    DIR *dir = root != NULL ? opendir(apps_dir) : NULL;
     int count = 0;
 
     if (dir == NULL)
@@ -94,9 +97,17 @@ int extapp_scan(extapp_t *out, int max)
         snprintf(app->name, sizeof(app->name), "%.31s", entry->d_name);
 
         char folder[64];
-        snprintf(folder, sizeof(folder), APPS_DIR "/%.40s", entry->d_name);
+        snprintf(folder, sizeof(folder), "%.16s/%.40s", apps_dir, entry->d_name);
         snprintf(app->bin, sizeof(app->bin), "%s/%.40s.bin", folder, entry->d_name);
         read_manifest(folder, app);
+
+        char previous[EXTAPP_PATH_MAX + 16];
+        snprintf(previous, sizeof(previous), "%s/.previous", folder);
+        if (!file_exists(app->bin) && file_exists(previous))
+        {
+            /* Recover the old complete image if power failed during publication. */
+            rename(previous, app->bin);
+        }
 
         struct stat st;
 
@@ -115,9 +126,9 @@ int extapp_scan(extapp_t *out, int max)
             snprintf(icon, sizeof(icon), "%s/icon.bin", folder);
         }
 
-        if (file_exists(icon))
+        if (file_exists(icon) && sdcard_is_mounted())
         {
-            /* LVGL path: drive S: is /sdcard */
+            /* LVGL path: drive S: is /sdcard; internal-storage apps use a built-in icon. */
             snprintf(app->icon, sizeof(app->icon), "S:%.180s", icon + strlen(SDCARD_MOUNT));
         }
 
@@ -125,7 +136,7 @@ int extapp_scan(extapp_t *out, int max)
     }
 
     closedir(dir);
-    ESP_LOGI(TAG, "%d apps on the SD card", count);
+    ESP_LOGI(TAG, "%d external apps in %s", count, apps_dir);
 
     return count;
 }

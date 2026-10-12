@@ -379,7 +379,7 @@ static void all_create(lv_obj_t *screen, void *arg)
 
     if (s_ext_count > 0)
     {
-        ui_section(page, "SCHEDA SD");
+        ui_section(page, "APP ESTERNE");
     }
 
     for (int i = 0; i < s_ext_count; i++)
@@ -422,7 +422,7 @@ void launcher_create(lv_obj_t *parent)
         }
     }
 
-    s_sd_title = ui_section(s_page, "SCHEDA SD");
+    s_sd_title = ui_section(s_page, "APP ESTERNE");
     s_sd_grid = grid(s_page);
     launcher_refresh();
 }

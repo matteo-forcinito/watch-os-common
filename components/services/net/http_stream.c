@@ -105,7 +105,9 @@ esp_err_t http_stream_open(http_stream_t *stream, const char *url, bool icy_meta
         .event_handler = on_event,
         .user_data = stream,
         .keep_alive_enable = true,         /* notice dead connections */
+#if CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS
         .save_client_session = true,       /* TLS session resumption */
+#endif
     };
 
     stream->client = esp_http_client_init(&config);

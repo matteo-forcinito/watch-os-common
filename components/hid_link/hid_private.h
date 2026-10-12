@@ -7,9 +7,10 @@
 
 #include <stdint.h>
 
-#define HID_REPORT_KEYBOARD  1
-#define HID_REPORT_MEDIA     2
-#define HID_REPORT_MOUSE     3
+#define HID_REPORT_KEYBOARD 1
+#define HID_REPORT_MEDIA 2
+#define HID_REPORT_MOUSE 3
+#define HID_REPORT_GAMEPAD 4
 
 /*
  * One report map for both transports:
@@ -17,7 +18,7 @@
  *   id 2 media:    16-bit consumer usage
  *   id 3 mouse:    [buttons, x, y, wheel]
  */
-#define HID_REPORT_MAP_BYTES 144
+#define HID_REPORT_MAP_BYTES 192
 
 extern const uint8_t hid_report_map[HID_REPORT_MAP_BYTES];
 extern const uint16_t hid_report_map_len;

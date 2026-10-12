@@ -21,8 +21,8 @@
 
 static const char *TAG = "hid_ble";
 
-#define ADV_MIN  BLE_GAP_ADV_ITVL_MS(30)   /* fast: hosts find and reconnect quickly */
-#define ADV_MAX  BLE_GAP_ADV_ITVL_MS(50)
+#define ADV_MIN BLE_GAP_ADV_ITVL_MS(30) /* fast: hosts find and reconnect quickly */
+#define ADV_MAX BLE_GAP_ADV_ITVL_MS(50)
 
 void ble_store_config_init(void);
 
@@ -34,11 +34,11 @@ static bool s_running = false;
 static esp_hid_raw_report_map_t s_maps[1];
 
 static esp_hid_device_config_t s_config = {
-    .vendor_id = 0x303A,   /* Espressif */
+    .vendor_id = 0x303A, /* Espressif */
     .product_id = 0x8211,
-    .version = 0x0100,
+    .version = 0x0101,
     .device_name = s_name,
-    .manufacturer_name = "AMOLED Watch",
+    .manufacturer_name = "Watch OS",
     .serial_number = "0001",
     .report_maps = s_maps,
     .report_maps_len = 1,
@@ -54,9 +54,6 @@ static void advertise(void)
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     fields.appearance = ESP_HID_APPEARANCE_KEYBOARD;
     fields.appearance_is_present = 1;
-    fields.name = (const uint8_t *)s_name;
-    fields.name_len = (uint8_t)strlen(s_name);
-    fields.name_is_complete = 1;
     fields.uuids16 = &hid_uuid;
     fields.num_uuids16 = 1;
     fields.uuids16_is_complete = 1;
@@ -66,6 +63,19 @@ static void advertise(void)
     if (rc != 0)
     {
         ESP_LOGE(TAG, "Advertising data: %d", rc);
+        return;
+    }
+
+    /* The service/flags stay in the advertisement, the name in scan response:
+     * longer board names must never overflow BLE's 31-byte advertising limit. */
+    struct ble_hs_adv_fields response = {0};
+    response.name = (const uint8_t *)s_name;
+    response.name_len = (uint8_t)strlen(s_name);
+    response.name_is_complete = 1;
+    rc = ble_gap_adv_rsp_set_fields(&response);
+    if (rc != 0)
+    {
+        ESP_LOGE(TAG, "Scan response: %d", rc);
         return;
     }
 
@@ -91,61 +101,61 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
     switch (event->type)
     {
-        case BLE_GAP_EVENT_CONNECT:
-            if (event->connect.status != 0)
-            {
-                advertise();
-            }
-            break;
-
-        case BLE_GAP_EVENT_DISCONNECT:
-            ESP_LOGI(TAG, "Disconnected (reason %d)", event->disconnect.reason);
-            if (s_running)
-            {
-                advertise();
-            }
-            break;
-
-        case BLE_GAP_EVENT_ADV_COMPLETE:
-            if (s_running)
-            {
-                advertise();
-            }
-            break;
-
-        case BLE_GAP_EVENT_REPEAT_PAIRING:
+    case BLE_GAP_EVENT_CONNECT:
+        if (event->connect.status != 0)
         {
-            /* The host forgot us and pairs again: drop the old bond, accept the new one. */
-            struct ble_gap_conn_desc desc;
+            advertise();
+        }
+        break;
 
-            if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0)
-            {
-                ble_store_util_delete_peer(&desc.peer_id_addr);
-            }
+    case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI(TAG, "Disconnected (reason %d)", event->disconnect.reason);
+        if (s_running)
+        {
+            advertise();
+        }
+        break;
 
-            return BLE_GAP_REPEAT_PAIRING_RETRY;
+    case BLE_GAP_EVENT_ADV_COMPLETE:
+        if (s_running)
+        {
+            advertise();
+        }
+        break;
+
+    case BLE_GAP_EVENT_REPEAT_PAIRING:
+    {
+        /* The host forgot us and pairs again: drop the old bond, accept the new one. */
+        struct ble_gap_conn_desc desc;
+
+        if (ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc) == 0)
+        {
+            ble_store_util_delete_peer(&desc.peer_id_addr);
         }
 
-        case BLE_GAP_EVENT_PASSKEY_ACTION:
+        return BLE_GAP_REPEAT_PAIRING_RETRY;
+    }
+
+    case BLE_GAP_EVENT_PASSKEY_ACTION:
+    {
+        /* "Just works": accept a numeric comparison if the host asks for one. */
+        struct ble_sm_io io = {0};
+        io.action = event->passkey.params.action;
+
+        if (io.action == BLE_SM_IOACT_NUMCMP)
         {
-            /* "Just works": accept a numeric comparison if the host asks for one. */
-            struct ble_sm_io io = {0};
-            io.action = event->passkey.params.action;
-
-            if (io.action == BLE_SM_IOACT_NUMCMP)
-            {
-                io.numcmp_accept = 1;
-                ble_sm_inject_io(event->passkey.conn_handle, &io);
-            }
-            break;
+            io.numcmp_accept = 1;
+            ble_sm_inject_io(event->passkey.conn_handle, &io);
         }
+        break;
+    }
 
-        case BLE_GAP_EVENT_ENC_CHANGE:
-            ESP_LOGI(TAG, "Encryption: %s", event->enc_change.status == 0 ? "on" : "failed");
-            break;
+    case BLE_GAP_EVENT_ENC_CHANGE:
+        ESP_LOGI(TAG, "Encryption: %s", event->enc_change.status == 0 ? "on" : "failed");
+        break;
 
-        default:
-            break;
+    default:
+        break;
     }
 
     return 0;
@@ -159,24 +169,24 @@ static void hidd_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 
     switch ((esp_hidd_event_t)id)
     {
-        case ESP_HIDD_START_EVENT:
-            ble_hs_util_ensure_addr(0);
-            ble_hs_id_infer_auto(0, &s_own_addr_type);
-            advertise();
-            hid_link_set_state(HID_LINK_WAITING);
-            ESP_LOGI(TAG, "Advertising as \"%s\"", s_name);
-            break;
+    case ESP_HIDD_START_EVENT:
+        ble_hs_util_ensure_addr(0);
+        ble_hs_id_infer_auto(0, &s_own_addr_type);
+        advertise();
+        hid_link_set_state(HID_LINK_WAITING);
+        ESP_LOGI(TAG, "Advertising as \"%s\"", s_name);
+        break;
 
-        case ESP_HIDD_CONNECT_EVENT:
-            hid_link_set_state(HID_LINK_CONNECTED);
-            break;
+    case ESP_HIDD_CONNECT_EVENT:
+        hid_link_set_state(HID_LINK_CONNECTED);
+        break;
 
-        case ESP_HIDD_DISCONNECT_EVENT:
-            hid_link_set_state(s_running ? HID_LINK_WAITING : HID_LINK_OFF);
-            break;
+    case ESP_HIDD_DISCONNECT_EVENT:
+        hid_link_set_state(s_running ? HID_LINK_WAITING : HID_LINK_OFF);
+        break;
 
-        default:
-            break;
+    default:
+        break;
     }
 }
 
@@ -194,7 +204,7 @@ esp_err_t hid_ble_start(const char *name)
         return ESP_OK;
     }
 
-    snprintf(s_name, sizeof(s_name), "%s", name != NULL ? name : "AMOLED Remote");
+    snprintf(s_name, sizeof(s_name), "%.29s", name != NULL ? name : "Watch Remote");
     s_maps[0].data = hid_report_map;
     s_maps[0].len = hid_report_map_len;
 

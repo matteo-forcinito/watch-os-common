@@ -4,6 +4,8 @@ idf_component_register(
         "ui_theme.c"
         "ui_widgets.c"
         "ui_overlay.c"
+        "keyboard_layout.c"
+        "ui_round_keyboard.c"
         "ui_weather.c"
         "ui_image.c"
     INCLUDE_DIRS

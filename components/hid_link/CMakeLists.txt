@@ -15,4 +15,5 @@ idf_component_register(
         esp_hid
         esp_tinyusb
         esp_event
+        esp_hw_support
 )
