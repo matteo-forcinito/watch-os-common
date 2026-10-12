@@ -1,4 +1,4 @@
-# Remote 1.0.0 — verifiche e limiti
+# Remote 1.0.1 — verifiche e limiti
 
 Data: 12 ottobre 2026. ESP-IDF 6.1, LVGL 9.6.
 
@@ -32,7 +32,7 @@ La CI ricompila da `sdkconfig.defaults` e allega il pacchetto Remote al rilascio
 
 - Partizioni lette prima della prova: sistema in ota_0, precedente Remote in
   ota_1. Il binario di prova è stato scritto solo in ota_1, senza erase della NVS.
-- Avvio Remote 1.0.0 e registro delle 16 app verificati dalla console.
+- Avvio Remote 1.0.0 di sviluppo e registro delle 16 app verificati dalla console.
 - Collegamento HID BLE al PC osservato nel log.
 - Screenshot completi di tastiera PC, gamepad e categorie delle scorciatoie.
   L'acquisizione seriale iniziale perdeva righe: lettura a blocchi e controllo
@@ -73,3 +73,16 @@ La CI ricompila da `sdkconfig.defaults` e allega il pacchetto Remote al rilascio
 Il gamepad è HID generico, non XInput. I comandi Teams/Zoom/PowerPoint/browser
 dipendono da sistema, applicazione, impostazioni e finestra con focus. Remote
 non riceve stato microfono, camera, playback o slide dal computer.
+
+## Correzione 1.0.1
+
+La prova dal launcher 0.3.6 ha individuato che `ui_button()` non registrava
+i pulsanti tra gli oggetti selezionabili con la ghiera. Il helper ora li
+registra; i dialoghi usano inoltre un titolo bianco leggibile. Il profilo
+HID e i comandi della 1.0.0 restano gli stessi. Sul Watcher 0.3.7 il pulsante
+ha avviato l’installazione dalla SD nello slot ota_1 e Remote 1.0.1 si è
+avviata: 93 KB interni liberi, blocco massimo 54 KB, minimo 38 KB, PSRAM
+7528 KB. Il trasferimento HTTP aveva dato timeout al client; il log di avvio
+conferma la nuova immagine, ma non costituisce una verifica completa del
+trasferimento/read-back. Aggiunto accesso diretto a “Tutte le app” nelle
+Impostazioni dei quattro firmware.

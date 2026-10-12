@@ -1,4 +1,4 @@
-# Remote 1.0.0
+# Remote 1.0.1
 
 App esterna condivisa da Watcher W1-A, AMOLED 1.8, AMOLED 1.75 e Knob 1.8.
 Ogni modello richiede il proprio binario: i pacchetti non sono intercambiabili.

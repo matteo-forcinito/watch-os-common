@@ -427,6 +427,7 @@ lv_obj_t *ui_button(lv_obj_t *parent, const char *text, uint32_t color, lv_event
     lv_obj_t *button = lv_obj_create(parent);
     ui_make_card(button);
     lv_obj_set_clickable(button, true);
+    lv_port_set_focusable(button);
     lv_obj_set_style_bg_color(button, lv_color_hex(color), 0);
     lv_obj_set_style_bg_color(button, lv_color_lighten(lv_color_hex(color), 40), LV_STATE_PRESSED);
     lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);

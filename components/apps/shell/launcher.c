@@ -365,7 +365,14 @@ static void all_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
 
-    lv_obj_t *page = ui_page(screen, "App");
+    /* This page also opens directly from Settings, without visiting the grid. */
+    if (s_ext == NULL)
+    {
+        s_ext = calloc(EXTAPP_MAX, sizeof(extapp_t));
+    }
+    s_ext_count = s_ext != NULL ? extapp_scan(s_ext, EXTAPP_MAX) : 0;
+
+    lv_obj_t *page = ui_page(screen, "Tutte le app");
 
     for (size_t i = 0; i < app_count(); i++)
     {

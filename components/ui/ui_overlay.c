@@ -155,6 +155,7 @@ void ui_confirm(const char *title, const char *text, const char *ok_text, uint32
     lv_obj_t *title_label = lv_label_create(card);
     lv_label_set_text(title_label, title);
     lv_obj_set_style_text_font(title_label, UI_FONT_LARGE, 0);
+    lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
 
     if (text != NULL)
     {
