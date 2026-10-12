@@ -33,9 +33,13 @@ typedef struct
     char bin[EXTAPP_PATH_MAX];    /* /sdcard/apps/x/x.bin */
     char icon[EXTAPP_PATH_MAX];   /* "S:/apps/x/icon.png" for LVGL, "" if none */
     size_t size;
+    char version[32];
 } extapp_t;
 
 int extapp_scan(extapp_t *out, int max);
+
+/* Retarget metadata after manual upload. Caller owns the storage file lease. */
+esp_err_t extapp_upload_manifest(const char *folder, const char *binary_name);
 
 /* True if this app is already in the app slot (no copy needed). */
 bool extapp_is_cached(const extapp_t *app);

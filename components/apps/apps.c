@@ -8,6 +8,7 @@
 #include "core/settings.h"
 #include "ui/ui.h"
 #include "services/fw_update.h"
+#include "services/market.h"
 #include "services/alarm.h"
 
 #include "hardware/board.h"
@@ -32,11 +33,13 @@ static const app_t *const s_apps[] = {
     &usb_drive_app,
     &sdcard_app,
     &battery_app,
+    &market_app,
     &settings_app,
     /* hidden */
     &alarm_edit_app,
     &ring_app,
     &extapps_run_app,
+    &extapps_open_app,
     &settings_display_app,
     &settings_sound_app,
     &settings_wifi_app,
@@ -242,6 +245,7 @@ static void on_focus_changed(bool on)
 
 void apps_init(void)
 {
+    market_init();
     for (size_t i = 0; i < sizeof(s_apps) / sizeof(s_apps[0]); i++)
     {
         /* The USB drive lends the card to the PC: it needs both the ESP32's own USB port and a card slot. */

@@ -227,10 +227,8 @@ static void print_buf(const char *name, const lv_draw_buf_t *buf)
         print_base64(y, buf->data + y * h->stride, (size_t)h->w * bpp);
         fflush(stdout);
 
-        if (y % 4 == 3)
-        {
-            vTaskDelay(1);   /* let the PC keep up: the USB console drops what overflows */
-        }
+        /* USB CDC is non-blocking: pace each row so a snapshot is not silently truncated. */
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -372,8 +370,15 @@ static void navigation_button(void *arg)
     app_manager_button(BUTTON_BOOT, BUTTON_CLICK);
 }
 
+__attribute__((weak)) bool devcon_app_command(char *line)
+{
+    (void)line;
+    return false;
+}
+
 static void handle(char *line)
 {
+    if (devcon_app_command(line)) return;
     char *cmd = strtok(line, " ");
 
     if (cmd == NULL)

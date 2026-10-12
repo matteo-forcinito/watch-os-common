@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static const char *TAG = "web";
 
@@ -429,7 +430,17 @@ static esp_err_t handle_alarm_save(httpd_req_t *req)
 }
 
 /* Raw .bin upload: POST /api/upload?name=MyApp -> /sdcard/apps/MyApp/MyApp.bin */
+static esp_err_t handle_upload_exclusive(httpd_req_t *req);
+
 static esp_err_t handle_upload(httpd_req_t *req)
+{
+    if (!storage_files_acquire()) return send_ok(req, false, "Memoria file occupata");
+    esp_err_t result = handle_upload_exclusive(req);
+    storage_files_release();
+    return result;
+}
+
+static esp_err_t handle_upload_exclusive(httpd_req_t *req)
 {
     char query[64] = "";
     char name[32] = "";
@@ -503,6 +514,7 @@ static esp_err_t handle_upload(httpd_req_t *req)
 
     power_keep_screen_on(false);
     free(buffer);
+    ok = fflush(file) == 0 && fsync(fileno(file)) == 0 && ok;
     ok = fclose(file) == 0 && ok;
     if (ok)
     {
@@ -523,6 +535,18 @@ static esp_err_t handle_upload(httpd_req_t *req)
             if (!ok && existed)
             {
                 rename(previous, final_path);
+            }
+        }
+        if (ok)
+        {
+            char folder[96], leaf[40];
+            snprintf(folder, sizeof(folder), "%s/apps/%s", root, name);
+            snprintf(leaf, sizeof(leaf), "%s.bin", name);
+            ok = extapp_upload_manifest(folder, leaf) == ESP_OK;
+            if (!ok)
+            {
+                remove(final_path);
+                if (existed) rename(previous, final_path);
             }
         }
         if (ok)

@@ -8,6 +8,23 @@ static const char *TAG = "extapp_sdk";
 
 esp_err_t extapp_sdk_init(void)
 {
+    /* Confirm the running app before selecting the launcher. With rollback
+     * enabled, selecting another slot first loses the pending verification
+     * entry, and restarting this app can mark it aborted. The launcher is
+     * still selected below, so a later app crash returns to the main OS. */
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (running != NULL && esp_ota_get_state_partition(running, &state) == ESP_OK &&
+        state == ESP_OTA_IMG_PENDING_VERIFY)
+    {
+        esp_err_t validation = esp_ota_mark_app_valid_cancel_rollback();
+        if (validation != ESP_OK)
+        {
+            ESP_LOGE(TAG, "App slot validation failed: %s", esp_err_to_name(validation));
+            return validation;
+        }
+    }
+
     const esp_partition_t *launcher = esp_ota_get_next_update_partition(NULL);
 
     if (launcher == NULL)

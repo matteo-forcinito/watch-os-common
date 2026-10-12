@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static const char *TAG = "extapp";
 
@@ -36,37 +37,125 @@ static bool file_exists(const char *path)
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
-static void read_manifest(const char *dir, extapp_t *app)
+/* Manifest file names stay within the app folder. Older manually copied
+ * applications without a manifest retain their original naming convention. */
+static bool safe_leaf(const char *name)
 {
-    char path[EXTAPP_PATH_MAX + 16];
+    return name != NULL && name[0] != '\0' && strlen(name) < 64 &&
+           strchr(name, '/') == NULL && strchr(name, '\\') == NULL &&
+           strcmp(name, ".") != 0 && strcmp(name, "..") != 0;
+}
+
+static bool read_manifest(const char *dir, extapp_t *app)
+{
+    char path[EXTAPP_PATH_MAX + 24];
     snprintf(path, sizeof(path), "%s/manifest.json", dir);
-
     FILE *file = fopen(path, "r");
-
     if (file == NULL)
     {
-        return;
+        /* A reset between the two FAT renames leaves the previous manifest.
+         * Read it in place: scanning must not race a publication worker. */
+        snprintf(path, sizeof(path), "%s/.manifest.previous", dir);
+        file = fopen(path, "r");
     }
-
-    char text[512] = {0};
-    fread(text, 1, sizeof(text) - 1, file);
+    if (file == NULL) return true;
+    char text[1024] = {0};
+    size_t length = fread(text, 1, sizeof(text) - 1, file);
+    bool complete = !ferror(file) && fgetc(file) == EOF;
     fclose(file);
-
+    if (!complete || memchr(text, '\0', length) != NULL) return true;
     cJSON *root = cJSON_Parse(text);
+    if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "removed")))
+    {
+        cJSON_Delete(root);
+        return false;
+    }
     const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(root, "name"));
     const char *bin = cJSON_GetStringValue(cJSON_GetObjectItem(root, "bin"));
-
-    if (name != NULL)
-    {
-        snprintf(app->name, sizeof(app->name), "%s", name);
-    }
-
-    if (bin != NULL)
-    {
-        snprintf(app->bin, sizeof(app->bin), "%s/%s", dir, bin);
-    }
-
+    const char *icon = cJSON_GetStringValue(cJSON_GetObjectItem(root, "icon"));
+    const char *version = cJSON_GetStringValue(cJSON_GetObjectItem(root, "version"));
+    if (name != NULL) snprintf(app->name, sizeof(app->name), "%s", name);
+    if (safe_leaf(bin)) snprintf(app->bin, sizeof(app->bin), "%s/%s", dir, bin);
+    if (safe_leaf(icon)) snprintf(app->icon, sizeof(app->icon), "%s/%s", dir, icon);
+    if (version != NULL) snprintf(app->version, sizeof(app->version), "%s", version);
     cJSON_Delete(root);
+    return true;
+}
+
+/* Caller holds storage_files_acquire() while publishing an uploaded image. */
+esp_err_t extapp_upload_manifest(const char *folder, const char *binary_name)
+{
+    if (folder == NULL || !safe_leaf(binary_name)) return ESP_ERR_INVALID_ARG;
+    char path[EXTAPP_PATH_MAX + 32], pending[EXTAPP_PATH_MAX + 32];
+    char previous[EXTAPP_PATH_MAX + 32], image[EXTAPP_PATH_MAX + 32];
+    snprintf(path, sizeof(path), "%s/manifest.json", folder);
+    snprintf(previous, sizeof(previous), "%s/.manifest.previous", folder);
+    snprintf(pending, sizeof(pending), "%s/.upload-manifest", folder);
+    snprintf(image, sizeof(image), "%s/%s", folder, binary_name);
+    if (!file_exists(path) && file_exists(previous) && rename(previous, path) != 0) return ESP_FAIL;
+    cJSON *root = NULL;
+    FILE *file = fopen(path, "rb");
+    if (file != NULL)
+    {
+        char text[1024] = {0};
+        size_t length = fread(text, 1, sizeof(text) - 1, file);
+        bool complete = !ferror(file) && fgetc(file) == EOF && memchr(text, '\0', length) == NULL;
+        fclose(file);
+        if (!complete) return ESP_FAIL;
+        root = cJSON_Parse(text);
+        if (!cJSON_IsObject(root))
+        {
+            cJSON_Delete(root);
+            return ESP_FAIL;
+        }
+    }
+    else root = cJSON_CreateObject();
+    if (root == NULL) return ESP_ERR_NO_MEM;
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "bin");
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "version");
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "channel");
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "removed");
+    bool ok = cJSON_AddStringToObject(root, "bin", binary_name) != NULL;
+    uint8_t header[288] = {0};
+    file = fopen(image, "rb");
+    if (file != NULL)
+    {
+        size_t length = fread(header, 1, sizeof(header), file);
+        fclose(file);
+        uint32_t magic = 0;
+        memcpy(&magic, header + 32, sizeof(magic));
+        if (length == sizeof(header) && header[0] == 0xE9 &&
+            magic == ESP_APP_DESC_MAGIC_WORD && memchr(header + 48, '\0', 32) != NULL)
+            ok = cJSON_AddStringToObject(root, "version", (const char *)header + 48) != NULL && ok;
+    }
+    char *text = ok ? cJSON_PrintUnformatted(root) : NULL;
+    cJSON_Delete(root);
+    if (text == NULL) return ESP_ERR_NO_MEM;
+    file = fopen(pending, "wb");
+    ok = file != NULL;
+    if (ok)
+    {
+        ok = fwrite(text, 1, strlen(text), file) == strlen(text) &&
+             fflush(file) == 0 && fsync(fileno(file)) == 0;
+        if (fclose(file) != 0) ok = false;
+    }
+    free(text);
+    if (!ok)
+    {
+        remove(pending);
+        return ESP_FAIL;
+    }
+    if (file_exists(path))
+    {
+        if (file_exists(previous) && remove(previous) != 0) return ESP_FAIL;
+        if (rename(path, previous) != 0) return ESP_FAIL;
+    }
+    if (rename(pending, path) != 0)
+    {
+        if (file_exists(previous)) rename(previous, path);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }
 
 int extapp_scan(extapp_t *out, int max)
@@ -99,7 +188,7 @@ int extapp_scan(extapp_t *out, int max)
         char folder[64];
         snprintf(folder, sizeof(folder), "%.16s/%.40s", apps_dir, entry->d_name);
         snprintf(app->bin, sizeof(app->bin), "%s/%.40s.bin", folder, entry->d_name);
-        read_manifest(folder, app);
+        if (!read_manifest(folder, app)) continue;
 
         char previous[EXTAPP_PATH_MAX + 16];
         snprintf(previous, sizeof(previous), "%s/.previous", folder);
@@ -119,7 +208,9 @@ int extapp_scan(extapp_t *out, int max)
         app->size = (size_t)st.st_size;
 
         char icon[EXTAPP_PATH_MAX + 16];
-        snprintf(icon, sizeof(icon), "%s/icon.png", folder);
+        if (app->icon[0] != '\0') snprintf(icon, sizeof(icon), "%s", app->icon);
+        else snprintf(icon, sizeof(icon), "%s/icon.png", folder);
+        app->icon[0] = '\0';
 
         if (!file_exists(icon))
         {
@@ -236,7 +327,7 @@ void extapp_forget_cache(void)
     }
 }
 
-esp_err_t extapp_launch(const extapp_t *app, void (*progress)(int percent, void *ctx), void *ctx)
+static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int percent, void *ctx), void *ctx)
 {
     const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
 
@@ -388,4 +479,13 @@ esp_err_t extapp_launch(const extapp_t *app, void (*progress)(int percent, void 
 const char *extapp_last_error(void)
 {
     return s_error;
+}
+
+/* A launch cannot read an application while its files are being published. */
+esp_err_t extapp_launch(const extapp_t *app, void (*progress)(int, void *), void *ctx)
+{
+    if (!storage_files_acquire()) return fail("Memoria file occupata", ESP_ERR_INVALID_STATE);
+    esp_err_t result = launch_exclusive(app, progress, ctx);
+    storage_files_release();
+    return result;
 }

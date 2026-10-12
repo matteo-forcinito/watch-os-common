@@ -9,6 +9,7 @@ extern const app_t alarms_app;
 extern const app_t alarm_edit_app;      /* hidden: arg = alarm id (0 = new) */
 extern const app_t ring_app;            /* hidden: arg = alarm_t * (malloc, freed by it) */
 extern const app_t weather_app;
+extern const app_t market_app;
 extern const app_t settings_app;
 extern const app_t settings_display_app;
 extern const app_t settings_sound_app;
@@ -18,6 +19,7 @@ extern const app_t settings_time_app;
 extern const app_t settings_about_app;
 extern const app_t flashlight_app;
 extern const app_t web_app;
+extern const app_t extapps_open_app;
 extern const app_t extapps_run_app;     /* hidden: arg = extapp_t * (malloc, freed by it) */
 extern const app_t power_app;
 extern const app_t voice_memo_app;

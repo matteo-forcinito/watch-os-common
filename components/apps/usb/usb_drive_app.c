@@ -2,6 +2,7 @@
 
 #include "core/power.h"
 #include "hardware/sdcard.h"
+#include "services/storage.h"
 #include "ui/ui.h"
 
 #include "esp_log.h"
@@ -50,10 +51,12 @@ static void usb_event(tinyusb_event_t *event, void *arg)
 
 static const char *start_drive(void)
 {
+    if (!storage_files_acquire()) return "Memoria file occupata. Attendi il download.";
     sdmmc_card_t *card = NULL;
 
     if (sdcard_open_raw(&card) != ESP_OK)
     {
+        storage_files_release();
         return "Scheda SD non trovata";
     }
 

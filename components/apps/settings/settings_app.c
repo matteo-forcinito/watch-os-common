@@ -50,6 +50,7 @@ static void main_create(lv_obj_t *screen, void *arg)
 
     lv_obj_t *page = ui_page(screen, "Impostazioni");
     ui_row(page, LV_SYMBOL_LIST, UI_COLOR_GREEN, "Tutte le app", NULL, apps_open_cb, (void *)"launcher.all");
+    ui_row(page, LV_SYMBOL_DOWNLOAD, UI_COLOR_PURPLE, "Marketplace", NULL, apps_open_cb, (void *)"market");
     ui_row(page, LV_SYMBOL_IMAGE, UI_COLOR_BLUE, "Display", NULL, apps_open_cb, (void *)"settings.display");
     ui_row(page, LV_SYMBOL_VOLUME_MAX, UI_COLOR_PINK, "Suoni", NULL, apps_open_cb, (void *)"settings.sound");
     ui_row(page, LV_SYMBOL_WIFI, UI_COLOR_BLUE, "Wi-Fi", NULL, apps_open_cb, (void *)"settings.wifi");

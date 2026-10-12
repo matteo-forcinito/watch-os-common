@@ -134,7 +134,7 @@ static void on_start(lv_event_t *e)
     start();
 }
 
-static void run_create(lv_obj_t *screen, void *arg)
+static void run_create_impl(lv_obj_t *screen, void *arg, bool auto_start)
 {
     extapp_t *app = arg;
 
@@ -194,10 +194,20 @@ static void run_create(lv_obj_t *screen, void *arg)
         }
     }
 
-    if (cached)
+    if (cached || auto_start)
     {
         start();   /* nothing to copy: open right away */
     }
+}
+
+static void run_create(lv_obj_t *screen, void *arg)
+{
+    run_create_impl(screen, arg, false);
+}
+
+static void open_create(lv_obj_t *screen, void *arg)
+{
+    run_create_impl(screen, arg, true);
 }
 
 static void run_destroy(void)
@@ -219,6 +229,17 @@ const app_t extapps_run_app = {
     .color = UI_COLOR_PURPLE,
     .flags = APP_FLAG_HIDDEN | APP_FLAG_KEEP_SCREEN_ON,
     .create = run_create,
+    .destroy = run_destroy,
+    .back = run_back,
+};
+
+const app_t extapps_open_app = {
+    .id = "extapps.open",
+    .name = "Apri app",
+    .icon = LV_SYMBOL_DIRECTORY,
+    .color = UI_COLOR_PURPLE,
+    .flags = APP_FLAG_HIDDEN | APP_FLAG_KEEP_SCREEN_ON,
+    .create = open_create,
     .destroy = run_destroy,
     .back = run_back,
 };

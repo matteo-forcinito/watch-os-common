@@ -8,6 +8,7 @@
 #include "wear_levelling.h"
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -17,6 +18,23 @@ static const char *TAG = "storage";
 #define PARTITION_LABEL "storage"
 
 static wl_handle_t s_wl = WL_INVALID_HANDLE;
+static atomic_bool s_files_busy;
+
+bool storage_files_acquire(void)
+{
+    bool expected = false;
+    return atomic_compare_exchange_strong(&s_files_busy, &expected, true);
+}
+
+void storage_files_release(void)
+{
+    atomic_store(&s_files_busy, false);
+}
+
+bool storage_files_busy(void)
+{
+    return atomic_load(&s_files_busy);
+}
 
 /* Only a completely erased partition may be formatted automatically. */
 static bool partition_empty(const esp_partition_t *part)

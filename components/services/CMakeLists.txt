@@ -15,6 +15,8 @@ idf_component_register(
         "web/web_files.c"
         "web/captive_dns.c"
         "apps/extapp.c"
+        "apps/market.c"
+        "apps/market_catalog.c"
         "update/fw_update.c"
         "update/fw_version.c"
         "battery/battery_health.c"

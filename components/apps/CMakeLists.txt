@@ -15,6 +15,7 @@ idf_component_register(
         "misc/misc_apps.c"
         "web/web_app.c"
         "extapps/extapps_app.c"
+        "market/market_app.c"
         "timer/timer_app.c"
         "voice/voice_memo_app.c"
         "sensors/sensors_app.c"

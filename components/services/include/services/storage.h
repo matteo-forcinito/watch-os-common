@@ -39,4 +39,9 @@ bool storage_flash_mounted(void);
 /* Size and free space of the flash file system, in KB (0 if not mounted). */
 void storage_flash_space(size_t *total_kb, size_t *free_kb);
 
+/* Nonblocking lease for app transfers, launches and USB card handover. */
+bool storage_files_acquire(void);
+void storage_files_release(void);
+bool storage_files_busy(void);
+
 #endif

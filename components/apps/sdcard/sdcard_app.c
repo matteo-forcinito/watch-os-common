@@ -4,6 +4,7 @@
 #include "core/power.h"
 #include "core/sys.h"
 #include "hardware/sdcard.h"
+#include "services/storage.h"
 #include "ui/ui.h"
 
 #include "esp_heap_caps.h"
@@ -275,6 +276,7 @@ static void job_task(void *arg)
             break;
     }
 
+    storage_files_release();
     ESP_LOGI(TAG, "Job %d: %s", (int)job, s_result);
 
     if (!ui_async(job_done, NULL))
@@ -292,6 +294,11 @@ static void start_job(job_t job)
         return;
     }
 
+    if (!storage_files_acquire())
+    {
+        ui_toast("Memoria file occupata. Attendi il download.");
+        return;
+    }
     s_job = job;
     s_result[0] = '\0';
     power_keep_screen_on(true);
@@ -300,6 +307,7 @@ static void start_job(job_t job)
     {
         s_job = JOB_NONE;
         power_keep_screen_on(false);
+        storage_files_release();
         ui_toast("Memoria insufficiente");
         return;
     }
@@ -350,7 +358,13 @@ static void on_eject(lv_event_t *e)
 {
     (void)e;
 
+    if (!storage_files_acquire())
+    {
+        ui_toast("Memoria file occupata. Attendi il download.");
+        return;
+    }
     sdcard_unmount();
+    storage_files_release();
     s_ejected = true;
     s_shown = -1;
     ui_toast("Puoi rimuovere la scheda");
