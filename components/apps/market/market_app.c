@@ -235,8 +235,10 @@ static void download(lv_event_t *event)
 static void install_and_open(lv_event_t *event)
 {
     market_ui_t *ui = lv_event_get_user_data(event);
+    /* An unknown legacy version still means Open, matching the button label. */
     if (ui->selected.installed &&
-        fw_version_compare(ui->selected.version, ui->selected.installed_version) <= 0)
+        (ui->selected.installed_version[0] == '\0' ||
+         fw_version_compare(ui->selected.version, ui->selected.installed_version) <= 0))
     {
         if (lv_tick_elaps(ui->action_ready_at) >= 180) launch_selected(ui);
         return;
