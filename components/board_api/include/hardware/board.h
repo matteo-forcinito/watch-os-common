@@ -39,6 +39,7 @@ typedef struct
     bool has_audio;
     bool has_sdcard;
     bool has_usb_otg;     /* ESP32 native USB on a connector: USB drive, USB keyboard */
+    bool has_buttons;     /* At least one physical navigation button, not just a dial. */
     uint16_t display_corner_radius; /* Visible rectangular panel corner, pixels; 0 = square. */
 } board_info_t;
 

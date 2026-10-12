@@ -1,5 +1,13 @@
 menu "Watch OS services"
 
+    config WATCH_VOICE_MEMOS
+        bool "Experimental local voice memos"
+        default n
+        help
+            Enable only while validating microphone capture, playback and alarm
+            handover on supported hardware. Disabled in production by default.
+
+
     config WATCH_UPDATE_MANIFEST_URL
         string "Online update: default manifest URL"
         default ""

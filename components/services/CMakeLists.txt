@@ -6,6 +6,7 @@ idf_component_register(
         "wifi/wifi.c"
         "time/time_sync.c"
         "sound/sound.c"
+        "sound/voice_memo.c"
         "alarm/alarm.c"
         "notify/notify.c"
         "weather/weather.c"

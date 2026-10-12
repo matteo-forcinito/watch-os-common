@@ -16,6 +16,7 @@ idf_component_register(
         "web/web_app.c"
         "extapps/extapps_app.c"
         "timer/timer_app.c"
+        "voice/voice_memo_app.c"
         "usb/usb_drive_app.c"
         "sdcard/sdcard_app.c"
         "battery/battery_app.c"

@@ -49,6 +49,11 @@ static const char *TAG = "devcon";
 #endif
 
 #include <stdio.h>
+#include <dirent.h>
+#include <math.h>
+#include <time.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -124,6 +129,49 @@ static void print_base64(uint32_t row, const uint8_t *data, size_t length)
         data += n;
         length -= n;
     }
+}
+
+/* WAV-only file inspection for local hardware validation. Never dumps
+ * settings, credentials or arbitrary files; absent from production builds. */
+static void cmd_wav(const char *path)
+{
+    size_t length = strlen(path);
+    if ((strncmp(path, "/sdcard/", 8) != 0 && strncmp(path, "/data/", 6) != 0) ||
+        strstr(path, "..") != NULL || strchr(path, '\\') != NULL ||
+        length < 12 || length > 100 || strcmp(path + length - 4, ".wav") != 0)
+    {
+        printf("@ERR WAV path required\n");
+        return;
+    }
+    FILE *file = fopen(path, "rb");
+    if (file == NULL || fseek(file, 0, SEEK_END) != 0)
+    {
+        if (file != NULL)
+        {
+            fclose(file);
+        }
+        printf("@ERR WAV not readable\n");
+        return;
+    }
+    long size = ftell(file);
+    if (size < 44 || size > 2000000 || fseek(file, 0, SEEK_SET) != 0)
+    {
+        fclose(file);
+        printf("@ERR WAV size\n");
+        return;
+    }
+    printf("@WAV %ld\n", size);
+    uint8_t buffer[B64_CHUNK];
+    uint32_t offset = 0;
+    size_t count;
+    while ((count = fread(buffer, 1, sizeof(buffer), file)) > 0)
+    {
+        print_base64(offset, buffer, count);
+        offset += count;
+    }
+    fclose(file);
+    printf("@ENDWAV %u\n", (unsigned)offset);
+    fflush(stdout);
 }
 
 /* ----------------------------------------------------------- screenshot */
@@ -264,6 +312,61 @@ static void cmd_pmu(void)
            pmu_battery_present());
 }
 
+/* Development-only, synthetic 16 kHz PCM. Never overwrite a saved memo. */
+static void wav_tone(void)
+{
+    char path[96];
+    snprintf(path, sizeof(path), "/sdcard/memos/memo-%08lx-999.wav", (unsigned long)time(NULL));
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    FILE *file = fd < 0 ? NULL : fdopen(fd, "wb");
+    if (file == NULL)
+    {
+        if (fd >= 0)
+        {
+            close(fd);
+            remove(path);
+        }
+        printf("@ERR test WAV could not be created\n");
+        return;
+    }
+    const uint8_t header[44] = {
+        'R','I','F','F', 0xA4,0xBB,0,0, 'W','A','V','E',
+        'f','m','t',' ', 16,0,0,0, 1,0,1,0, 0x80,0x3E,0,0,
+        0,0x7D,0,0, 2,0,16,0, 'd','a','t','a',0x80,0xBB,0,0
+    };
+    bool ok = fwrite(header, 1, 44, file) == 44;
+    int16_t samples[256];
+    for (int offset = 0; ok && offset < 24000; offset += 256)
+    {
+        int count = 24000 - offset < 256 ? 24000 - offset : 256;
+        for (int i = 0; i < count; i++)
+        {
+            int pos = offset + i;
+            float envelope = pos < 800 ? pos / 800.0f : pos >= 23200 ? (23999 - pos) / 800.0f : 1.0f;
+            samples[i] = (int16_t)(12000.0f * envelope * sinf(2.0f * 3.14159265f * 880.0f * pos / 16000.0f));
+        }
+        ok = fwrite(samples, sizeof(int16_t), count, file) == (size_t)count;
+    }
+    ok = fflush(file) == 0 && ok;
+    ok = fsync(fileno(file)) == 0 && ok;
+    ok = fclose(file) == 0 && ok;
+    if (!ok)
+    {
+        remove(path);
+        printf("@ERR test WAV write failed\n");
+    }
+    else
+    {
+        printf("@TESTWAV %s\n", path + strlen("/sdcard/memos/"));
+    }
+}
+
+static void navigation_button(void *arg)
+{
+    (void)arg;
+    app_manager_button(BUTTON_BOOT, BUTTON_CLICK);
+}
+
 static void handle(char *line)
 {
     char *cmd = strtok(line, " ");
@@ -310,6 +413,66 @@ static void handle(char *line)
     {
         swipe(atoi(a1), atoi(a2), atoi(a3), atoi(a4));
     }
+    else if (strcmp(cmd, "press") == 0 && a3 != NULL)
+    {
+        int ms = atoi(a3);
+        if (ms < 50 || ms > 61000)
+        {
+            printf("@ERR press duration 50..61000 ms\n");
+            return;
+        }
+        power_wake(POWER_WAKE_OTHER);
+        lv_port_fake_touch(true, atoi(a1), atoi(a2));
+        vTaskDelay(pdMS_TO_TICKS(ms));
+        lv_port_fake_touch(false, atoi(a1), atoi(a2));
+    }
+    else if (strcmp(cmd, "touch") == 0 && a3 != NULL)
+    {
+        power_wake(POWER_WAKE_OTHER);
+        lv_port_fake_touch(atoi(a3) != 0, atoi(a1), atoi(a2));
+    }
+    else if (strcmp(cmd, "button") == 0)
+    {
+        run_in_ui(navigation_button, NULL);
+    }
+    else if (strcmp(cmd, "loglevel") == 0 && a1 != NULL)
+    {
+        int level = atoi(a1);
+        if (level < ESP_LOG_NONE || level > ESP_LOG_VERBOSE)
+        {
+            printf("@ERR loglevel 0..5\n");
+            return;
+        }
+        esp_log_level_set("*", (esp_log_level_t)level);
+    }
+    else if (strcmp(cmd, "wavtone") == 0)
+    {
+        wav_tone();
+    }
+    else if (strcmp(cmd, "wavlist") == 0)
+    {
+        DIR *dir = opendir("/sdcard/memos");
+        if (dir != NULL)
+        {
+            struct dirent *entry;
+            int count = 0;
+            while ((entry = readdir(dir)) != NULL && count++ < 256)
+            {
+                size_t length = strlen(entry->d_name);
+                if (length > 9 && length < 48 && strncmp(entry->d_name, "memo-", 5) == 0 &&
+                    strcmp(entry->d_name + length - 4, ".wav") == 0)
+                {
+                    printf("@MEMO %s\n", entry->d_name);
+                }
+            }
+            closedir(dir);
+        }
+    }
+    else if (strcmp(cmd, "wav") == 0 && a1 != NULL)
+    {
+        cmd_wav(a1);
+        return;
+    }
     else if (strcmp(cmd, "wake") == 0)
     {
         power_wake(POWER_WAKE_OTHER);
@@ -333,7 +496,7 @@ static void handle(char *line)
     }
     else if (strcmp(cmd, "help") == 0)
     {
-        printf("@HELP shot apps open back home knob swipe wake sleep gpio pmu health\n");
+        printf("@HELP shot apps open back home knob swipe press touch wav wavlist wavtone button loglevel wake sleep gpio pmu health\n");
     }
     else
     {
