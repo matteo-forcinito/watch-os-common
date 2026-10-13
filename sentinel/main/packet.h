@@ -8,4 +8,5 @@ bool sn_arp_reply(const void *frame, size_t length, uint32_t own_ip,
                   uint32_t *sender_ip, uint8_t sender_mac[6]);
 bool sn_text_valid(const char *text, size_t maximum);
 bool sn_json_safe(const char *json, size_t length);
+bool sn_proxy_arp(uint32_t sender_ip, uint32_t gateway_ip, const uint8_t *sender_mac, const uint8_t *gateway_mac);
 #endif

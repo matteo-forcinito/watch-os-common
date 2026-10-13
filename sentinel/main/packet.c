@@ -2,6 +2,12 @@
 #include "packet.h"
 #include <string.h>
 
+bool sn_proxy_arp(uint32_t sender_ip, uint32_t gateway_ip, const uint8_t *sender_mac, const uint8_t *gateway_mac)
+{
+    return sender_ip != gateway_ip && sender_mac != NULL && gateway_mac != NULL &&
+           memcmp(gateway_mac,"\0\0\0\0\0\0",6) != 0 && memcmp(sender_mac,gateway_mac,6) == 0;
+}
+
 bool sn_arp_reply(const void *frame, size_t length, uint32_t own_ip,
                   uint32_t *sender_ip, uint8_t sender_mac[6])
 {

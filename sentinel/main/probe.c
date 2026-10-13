@@ -135,11 +135,12 @@ static void observe(uint32_t address, const uint8_t *mac, uint32_t source,
                     int rtt, const char *hostname, const char *service)
 {
     if (!local_ip(address) || address == s_info.ip.addr || s_current_network[0] == 0) return;
-    char ip[16], mac_text[18] = "";
+    char ip[16], mac_text[18] = "", gateway_mac[18] = "";
     struct in_addr a = {.s_addr=address};
     inet_ntop(AF_INET,&a,ip,sizeof(ip));
-    if (mac != NULL) format_mac(mac,mac_text);
-    bool proxy = mac != NULL && address != s_info.gw.addr && memcmp(mac,s_gateway_mac,6) == 0;
+    bool proxy = sn_proxy_arp(address,s_info.gw.addr,mac,s_gateway_mac);
+    if (mac != NULL && !proxy) format_mac(mac,mac_text);
+    if (memcmp(s_gateway_mac,"\0\0\0\0\0\0",6) != 0) format_mac(s_gateway_mac,gateway_mac);
     xSemaphoreTake(sn_mutex,portMAX_DELAY);
     sn_device_t *device = NULL;
     for (int i = 0; i < sn_model->device_count; i++)
@@ -165,6 +166,8 @@ static void observe(uint32_t address, const uint8_t *mac, uint32_t source,
     {
         snprintf(device->ip,sizeof(device->ip),"%s",ip);
         if (mac_text[0]) snprintf(device->mac,sizeof(device->mac),"%s",mac_text);
+        else if (address != s_info.gw.addr && gateway_mac[0] && strcmp(device->mac,gateway_mac) == 0)
+            device->mac[0] = 0; /* Repair an older proxy MAC without changing identity or metadata. */
         if (device->seen_cycle != sn_model->cycle)
         {
             device->sources = 0;
@@ -298,7 +301,7 @@ static bool save(void)
 
 static bool connect_network(void)
 {
-    if (!wifi_is_connected())
+    if (!s_wifi_held || !wifi_is_connected())
     {
         message("Connessione alla rete salvata...",0);
         if (s_wifi_held) { wifi_release(); s_wifi_held = false; }
@@ -313,6 +316,14 @@ static bool connect_network(void)
     xSemaphoreTake(sn_mutex,portMAX_DELAY);
     wifi_get_ip(s_status.ip,sizeof(s_status.ip));
     wifi_current_ssid(s_status.ssid,sizeof(s_status.ssid));
+    struct in_addr gateway = {.s_addr=s_info.gw.addr};
+    inet_ntop(AF_INET,&gateway,s_status.gateway,sizeof(s_status.gateway));
+    esp_netif_dns_info_t dns;
+    if (esp_netif_get_dns_info(station,ESP_NETIF_DNS_MAIN,&dns) == ESP_OK && dns.ip.type == ESP_IPADDR_TYPE_V4)
+    {
+        struct in_addr server = {.s_addr=dns.ip.u_addr.ip4.addr};
+        inet_ntop(AF_INET,&server,s_status.dns,sizeof(s_status.dns));
+    }
     s_status.rssi = wifi_rssi();
     wifi_ap_record_t ap;
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
@@ -688,7 +699,7 @@ static void worker(void *unused)
     xSemaphoreGive(sn_mutex);
     bool connected = connect_network();
     if (sn_store_corrupt()) message("Archivio SD danneggiato: esporta i file e ripristina un backup. Scrittura bloccata.",0);
-    else if (connected) message("Pronto. Tocca Scansiona per rilevare la rete.",0);
+    else if (connected) scan(""); /* First observation runs in this worker, never in LVGL. */
     atomic_store(&s_busy,false);
     for (;;)
     {

@@ -10,8 +10,9 @@
 
 typedef struct
 {
-    lv_obj_t *screen, *content, *border, *headline, *caption, *sweep;
+    lv_obj_t *screen, *content, *border, *headline, *caption, *sweep, *legend;
     lv_obj_t *dots[24];
+    lv_obj_t *network_text;
     lv_point_precise_t line[2];
     lv_timer_t *timer;
     int page, offset, selected, angle, field;
@@ -125,10 +126,11 @@ static void scene(sentinel_ui_t *ui)
     }
     lv_obj_t *title = text_at(ui->content,"SENTINEL",h*12/100,ui_font_title,0xB8EBE1);
     lv_obj_set_style_text_letter_space(title,2,0);
-    ui->headline = text_at(ui->content,"0",center_y-(h >= 320 ? 72 : 36),h >= 320 ? ui_font_clock : ui_font_big,0xE9FFF8);
-    text_at(ui->content,"rilevati nella scansione",center_y+(h >= 320 ? 76 : 38),UI_FONT_SMALL,0x90C7BC);
-    ui->caption = text_at(ui->content,"La tua rete, osservata da vicino",h*76/100,UI_FONT_SMALL,0x92AEB5);
-    text_at(ui->content,"Tocca o scorri per esplorare",h*86/100,UI_FONT_SMALL,0x4DE2BB);
+    char count[16]; snprintf(count,sizeof(count),"%d",ui->status.cycle ? ui->status.observed : ui->status.devices);
+    ui->headline = text_at(ui->content,count,center_y-(h >= 320 ? 72 : 36),h >= 320 ? ui_font_clock : ui_font_big,0xE9FFF8);
+    ui->legend = text_at(ui->content,"dispositivi in archivio",center_y+(h >= 320 ? 76 : 38),UI_FONT_SMALL,0x90C7BC);
+    ui->caption = text_at(ui->content,"Connessione...",h*74/100,UI_FONT_SMALL,0x92AEB5);
+    text_at(ui->content,h >= 320 ? "Tocca per esplorare" : "Esplora",h*89/100,UI_FONT_SMALL,0x4DE2BB);
     lv_obj_set_clickable(ui->content,true);
     lv_obj_set_gesture_bubble(ui->content,false);
     lv_obj_add_event_cb(ui->content,enter,LV_EVENT_CLICKED,NULL);
@@ -191,14 +193,17 @@ static void render(sentinel_ui_t *ui)
     lv_obj_set_size(ui->content,LV_PCT(100),LV_PCT(100));
     lv_obj_set_scrollable(ui->content,false);
     lv_obj_move_to_index(ui->content,0);
-    ui->headline = ui->caption = ui->sweep = NULL;
+    ui->headline = ui->caption = ui->sweep = ui->legend = ui->network_text = NULL;
     memset(ui->dots,0,sizeof(ui->dots));
-    if (ui->page == 0) { scene(ui); return; }
+    if (ui->page == 0) { scene(ui); ui->rendered_revision = UINT32_MAX; return; }
     lv_obj_t *page = ui_page(ui->content,NULL);
     if (ui->page == 1)
     {
         ui_title(page,"Sentinel");
-        ui_text(page,ui->status.connected ? ui->status.ssid : "Wi-Fi non connesso",true);
+        char network[200];
+        snprintf(network,sizeof(network),"%s\nIP: %s\nGateway: %s · canale %d\n%s",ui->status.connected ? ui->status.ssid : "Wi-Fi non connesso",
+            ui->status.ip[0] ? ui->status.ip : "non disponibile",ui->status.gateway,ui->status.channel,ui->status.security);
+        ui->network_text = ui_text(page,network,true);
         ui->caption = ui_text(page,ui->status.message,true);
         ui_button(page,"Scansiona rete",UI_COLOR_TEAL,action,(void *)1);
         ui_button(page,"Arresta scansione",UI_COLOR_ORANGE,action,(void *)4);
@@ -268,6 +273,13 @@ static void tick(lv_timer_t *timer)
     if (ui->page != 0)
     {
         if (ui->caption) lv_label_set_text(ui->caption,status.message);
+        if (changed && ui->network_text)
+        {
+            char network[200];
+            snprintf(network,sizeof(network),"%s\nIP: %s\nGateway: %s · canale %d\nDNS: %s\n%s",status.connected ? status.ssid : "Wi-Fi non connesso",
+                status.ip[0] ? status.ip : "non disponibile",status.gateway,status.channel,status.dns,status.security);
+            lv_label_set_text(ui->network_text,network);
+        }
         if (changed && !status.busy && (ui->page == 4 || ui->page == 5)) render(ui);
         return;
     }
@@ -278,9 +290,12 @@ static void tick(lv_timer_t *timer)
     ui->line[1] = (lv_point_precise_t){w/2+lv_trigo_cos(ui->angle)*r/32768,h*46/100+lv_trigo_sin(ui->angle)*r/32768};
     lv_line_set_points(ui->sweep,ui->line,2);
     if (!changed) return;
-    char count[16]; snprintf(count,sizeof(count),"%d",status.observed);
+    char count[16]; snprintf(count,sizeof(count),"%d",status.cycle ? status.observed : status.devices);
     lv_label_set_text(ui->headline,count);
-    char caption[96]; snprintf(caption,sizeof(caption),"%d in archivio  ·  %s",status.devices,status.connected ? status.ssid : "Wi-Fi assente");
+    lv_label_set_text(ui->legend,status.cycle ? status.busy ? "rilevati finora" : "rilevati nella scansione" : "dispositivi in archivio");
+    char caption[96];
+    if (h >= 320) snprintf(caption,sizeof(caption),"%d in archivio · IP %s\n%s",status.devices,status.ip[0] ? status.ip : "non disponibile",status.connected ? status.ssid : "Wi-Fi assente");
+    else snprintf(caption,sizeof(caption),"IP %s",status.ip[0] ? status.ip : "non disponibile");
     lv_label_set_text(ui->caption,caption);
     int shown = 0;
     sn_device_t device;

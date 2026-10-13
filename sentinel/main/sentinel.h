@@ -53,6 +53,7 @@ typedef struct
     char ip[16], ssid[33], subnet[24], range[24], network[33], message[128], code[9];
     char diagnostic[384];
     char security[40];
+    char gateway[16], dns[16];
 } sn_status_t;
 
 extern SemaphoreHandle_t sn_mutex;

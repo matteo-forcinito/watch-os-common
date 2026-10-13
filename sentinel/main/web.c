@@ -127,6 +127,7 @@ static esp_err_t status(httpd_req_t *request)
     cJSON_AddStringToObject(out,"subnet",s.subnet); cJSON_AddStringToObject(out,"range",s.range);
     cJSON_AddStringToObject(out,"network",s.network); cJSON_AddStringToObject(out,"message",s.message);
     cJSON_AddStringToObject(out,"diagnostic",s.diagnostic);
+    cJSON_AddStringToObject(out,"gateway",s.gateway); cJSON_AddStringToObject(out,"dns",s.dns);
     cJSON_AddNumberToObject(out,"devices",s.devices); cJSON_AddNumberToObject(out,"observed",s.observed);
     cJSON_AddNumberToObject(out,"new_devices",s.new_devices); cJSON_AddNumberToObject(out,"percent",s.percent);
     cJSON_AddNumberToObject(out,"rssi",s.rssi); cJSON_AddNumberToObject(out,"cycle",s.cycle);

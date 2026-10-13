@@ -11,6 +11,12 @@ int test_packet(void)
     uint8_t frame[42]={0};
     uint32_t own=0x0101a8c0, sender=0x0201a8c0, result=0;
     uint8_t mac[6]={2,3,4,5,6,7}, found[6];
+    uint8_t other[6]={2,3,4,5,6,8}, unknown[6]={0};
+    CHECK(sn_proxy_arp(sender,own,mac,mac));
+    CHECK(!sn_proxy_arp(own,own,mac,mac));
+    CHECK(!sn_proxy_arp(sender,own,other,mac));
+    CHECK(!sn_proxy_arp(sender,own,mac,unknown));
+    CHECK(!sn_proxy_arp(sender,own,NULL,mac));
     memcpy(frame+6,mac,6); frame[12]=8; frame[13]=6;
     frame[15]=1; frame[16]=8; frame[18]=6; frame[19]=4; frame[21]=2;
     memcpy(frame+22,mac,6); memcpy(frame+28,&sender,4); memcpy(frame+38,&own,4);
