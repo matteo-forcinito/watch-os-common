@@ -1,0 +1,26 @@
+name: Sentinel validators
+permissions:
+  contents: read
+on:
+  push:
+    paths:
+      - 'sentinel/**'
+      - '.github/workflows/sentinel-tests.yml'
+  pull_request:
+    paths:
+      - 'sentinel/**'
+      - '.github/workflows/sentinel-tests.yml'
+jobs:
+  validators:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile actual C validators with sanitizers
+        run: >-
+          gcc -std=c11 -Wall -Wextra -Werror -g -O1
+          -fsanitize=address,undefined -fno-omit-frame-pointer
+          -I sentinel/main sentinel/main/packet.c
+          sentinel/main/tests/test_packet.c -o /tmp/sentinel-packet-tests
+      - name: Run malformed packet and JSON tests
+        run: /tmp/sentinel-packet-tests
