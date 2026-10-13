@@ -1,0 +1,26 @@
+name: Vault validators
+permissions:
+  contents: read
+on:
+  push:
+    paths:
+      - 'vault/**'
+      - '.github/workflows/vault-tests.yml'
+  pull_request:
+    paths:
+      - 'vault/**'
+      - '.github/workflows/vault-tests.yml'
+jobs:
+  validators:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile actual C header, Base32, UTF-8 and wipe code with sanitizers
+        run: >-
+          gcc -std=c11 -Wall -Wextra -Werror -g -O1
+          -fsanitize=address,undefined -fno-omit-frame-pointer
+          -I vault/main vault/main/format.c
+          vault/main/tests/test_format.c -o /tmp/vault-format-tests
+      - name: Run malformed header and encoding tests
+        run: /tmp/vault-format-tests

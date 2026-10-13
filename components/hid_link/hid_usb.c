@@ -60,6 +60,12 @@ static void release_power_locks(void)
     }
 }
 
+/* Default LED hook: apps that care (Vault, for Caps Lock) define their own. */
+__attribute__((weak)) void hid_usb_keyboard_leds(uint8_t leds)
+{
+    (void)leds;
+}
+
 /* --- TinyUSB callbacks (called by the TinyUSB task) */
 
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
@@ -83,10 +89,13 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
                            uint16_t bufsize)
 {
     (void)instance;
-    (void)report_id;
-    (void)report_type;
-    (void)buffer;
-    (void)bufsize; /* keyboard LEDs: not used */
+
+    /* Keyboard LED output report (bit 1 = Caps Lock): forwarded to an optional hook. */
+    if (report_type == HID_REPORT_TYPE_OUTPUT && buffer != NULL && bufsize >= 1 &&
+        (report_id == HID_REPORT_KEYBOARD || report_id == 0))
+    {
+        hid_usb_keyboard_leds(buffer[0]);
+    }
 }
 
 static void usb_event(tinyusb_event_t *event, void *arg)

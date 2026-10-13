@@ -15,6 +15,7 @@
 #include "esp_heap_caps.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 void app_main(void)
 {
@@ -60,6 +61,41 @@ bool devcon_app_command(char *line)
     else if (operation && strcmp(operation,"selftest") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_selftest()));
     else if (operation && strcmp(operation,"cancel") == 0) sn_cancel();
     else if (operation && strcmp(operation,"diag") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_diagnose(strtok(NULL," "))));
+    else if (operation && strcmp(operation,"identify") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_identify(strtok(NULL," "))));
+    else if (operation && strcmp(operation,"quality") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_quality_start(15)));
+    else if (operation && strcmp(operation,"speed") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_speed_start(2,false)));
+    else if (operation && strcmp(operation,"wifiscan") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_wifi_scan()));
+    else if (operation && strcmp(operation,"join") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_wifi_join(strtok(NULL,""),NULL)));
+    else if (operation && strcmp(operation,"report") == 0)
+    {
+        sn_status_t state;
+        sn_quality_t q;
+        if (sn_status(&state)) printf("@NETREPORT %s\n",state.diagnostic);
+        printf("@NETTIME valid=%d epoch=%lld\n",clock_is_valid(),(long long)time(NULL));
+        if (sn_quality(&q)) printf("@NETQUALITY %s | %s\n",q.verdict,q.speed_text);
+        sn_ap_t *aps = malloc(sizeof(sn_ap_t)*SN_APS);
+        int count = aps ? sn_wifi_list(aps,SN_APS) : 0;
+        for (int i = 0; i < count; i++)
+            printf("@NETAP %s ch=%d rssi=%d %s%s%s\n",aps[i].ssid,aps[i].channel,aps[i].rssi,aps[i].security,
+                   aps[i].known ? " known" : "",aps[i].current ? " current" : "");
+        free(aps);
+    }
+    else if (operation && strcmp(operation,"devices") == 0)
+    {
+        sn_status_t state;
+        sn_device_t d;
+        if (sn_status(&state))
+            for (int i = 0; i < state.devices; i++)
+            {
+                if (!sn_device_at(i,&d) || strcmp(d.network,state.network) != 0) continue;
+                char vendor[48], type[64], reasons[160];
+                sn_vendor(&d,vendor,sizeof(vendor));
+                sn_guess(&d,strcmp(d.ip,state.gateway) == 0,type,sizeof(type),reasons,sizeof(reasons));
+                printf("@NETDEV %s %s | %s | mdns=%s dns=%s nb=%s | %s | %s | guess=%s (%s)\n",d.ip,d.mac,vendor,d.hostname,
+                       d.dns,d.netbios,d.model,d.services,type,reasons);
+                fflush(stdout);
+            }
+    }
     else if (operation && strcmp(operation,"cache-clear") == 0)
     {
         /* Manual QA flashing replaces OTA1 without the launcher's SD stamp. */

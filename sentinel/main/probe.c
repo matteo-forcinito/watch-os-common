@@ -1,5 +1,5 @@
 /* Network worker: fresh ARP replies, ICMP, mDNS and SSDP; bounded local scopes. */
-#include "sentinel.h"
+#include "internal.h"
 #include "packet.h"
 #include "core/clock.h"
 #include "core/sys.h"
@@ -42,15 +42,17 @@ static uint32_t s_ping_nonce;
 static int64_t s_next_scan;
 
 typedef struct { uint32_t ip; uint8_t mac[6]; } reply_t;
-typedef enum { SCAN, DIAGNOSE, EDIT, SETTINGS, IMPORT, EXIT, SELFTEST } command_kind_t;
+typedef enum { SCAN, DIAGNOSE, EDIT, SETTINGS, IMPORT, EXIT, SELFTEST,
+               IDENTIFY, FIND, QUALITY, SPEED, WIFI_SCAN, WIFI_JOIN } command_kind_t;
 typedef struct
 {
     command_kind_t kind;
-    char target[24];
+    char target[40];      /* range, IP, device id or SSID */
     sn_device_t *device;
     sn_model_t *incoming;
-    uint32_t interval;
-    bool discard;
+    char *secret;         /* Wi-Fi password: heap copy, wiped after use */
+    uint32_t interval;    /* also seconds (QUALITY) or megabytes (SPEED) */
+    bool discard;         /* also upload (SPEED) or saved password (WIFI_JOIN) */
 } command_t;
 
 /* Linker wrapping is local to this external firmware. Always forward the
@@ -93,6 +95,9 @@ bool sn_status(sn_status_t *out)
     for (int i = 0; i < sn_model->device_count; i++)
         if (sn_model->cycle && sn_model->devices[i].seen_cycle == sn_model->cycle &&
             sn_confirmed(&sn_model->devices[i])) out->observed++;
+    out->here = 0;
+    for (int i = 0; i < sn_model->device_count; i++)
+        if (s_status.network[0] && strcmp(sn_model->devices[i].network,s_status.network) == 0) out->here++;
     out->networks = sn_model->network_count;
     out->interval = sn_model->interval;
     out->dropped = atomic_load(&s_dropped);
@@ -106,6 +111,21 @@ bool sn_device_at(int index, sn_device_t *out)
     if (sn_mutex == NULL || xSemaphoreTake(sn_mutex, 0) != pdTRUE) return false;
     bool ok = index >= 0 && index < sn_model->device_count;
     if (ok) *out = sn_model->devices[index];
+    xSemaphoreGive(sn_mutex);
+    return ok;
+}
+
+bool sn_network_at(int index, sn_network_t *out, int *devices)
+{
+    if (sn_mutex == NULL || xSemaphoreTake(sn_mutex, 0) != pdTRUE) return false;
+    bool ok = index >= 0 && index < sn_model->network_count;
+    if (ok)
+    {
+        *out = sn_model->networks[index];
+        *devices = 0;
+        for (int i = 0; i < sn_model->device_count; i++)
+            if (strcmp(sn_model->devices[i].network,out->id) == 0) (*devices)++;
+    }
     xSemaphoreGive(sn_mutex);
     return ok;
 }
@@ -130,6 +150,46 @@ static void format_mac(const uint8_t mac[6], char out[18])
 {
     snprintf(out,18,"%02x:%02x:%02x:%02x:%02x:%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
 }
+
+void sn_message(const char *text, int percent) { message(text,percent); }
+bool sn_cancelled(void) { return atomic_load(&s_cancel); }
+const esp_netif_ip_info_t *sn_ip_info(void) { return &s_info; }
+bool sn_local(uint32_t address) { return local_ip(address); }
+
+uint32_t sn_dns_server(void)
+{
+    struct in_addr server = {0};
+    char text[16];
+    xSemaphoreTake(sn_mutex,portMAX_DELAY);
+    snprintf(text,sizeof(text),"%s",s_status.dns);
+    xSemaphoreGive(sn_mutex);
+    return text[0] && inet_pton(AF_INET,text,&server) == 1 ? server.s_addr : 0;
+}
+
+sn_device_t *sn_device_by_ip_locked(uint32_t ip)
+{
+    char text[16];
+    struct in_addr a = {.s_addr=ip};
+    inet_ntop(AF_INET,&a,text,sizeof(text));
+    for (int i = 0; i < sn_model->device_count; i++)
+        if (strcmp(sn_model->devices[i].network,s_current_network) == 0 && strcmp(sn_model->devices[i].ip,text) == 0)
+            return &sn_model->devices[i];
+    return NULL;
+}
+
+void sn_touch_locked(void) { s_status.dirty = true; s_status.revision++; }
+
+void sn_report(const char *text)
+{
+    xSemaphoreTake(sn_mutex,portMAX_DELAY);
+    snprintf(s_status.diagnostic,sizeof(s_status.diagnostic),"%s",text);
+    s_status.revision++;
+    xSemaphoreGive(sn_mutex);
+}
+
+static void observe(uint32_t address, const uint8_t *mac, uint32_t source,
+                    int rtt, const char *hostname, const char *service);
+void sn_observe(uint32_t ip, uint32_t source, int rtt, const char *service) { observe(ip,NULL,source,rtt,NULL,service); }
 
 static void observe(uint32_t address, const uint8_t *mac, uint32_t source,
                     int rtt, const char *hostname, const char *service)
@@ -280,6 +340,26 @@ static int echo_read(int socket_fd, uint32_t expected_ip, int sequence, bool inv
     return found;
 }
 
+int sn_ping(uint32_t ip, int timeout_ms)
+{
+    static uint16_t sequence;
+    int fd = socket(AF_INET,SOCK_RAW,IPPROTO_ICMP), rtt = -1;
+    if (fd < 0) return -1;
+    if (s_ping_id == 0) { s_ping_id = (uint16_t)esp_random(); s_ping_nonce = esp_random(); }
+    uint16_t number = ++sequence;
+    if (echo_send(fd,ip,number))
+    {
+        int64_t until = esp_timer_get_time()+(int64_t)timeout_ms*1000;
+        while (rtt < 0 && esp_timer_get_time() < until)
+        {
+            rtt = echo_read(fd,ip,number,false);
+            if (rtt < 0) vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+    close(fd);
+    return rtt;
+}
+
 static bool save(void)
 {
     sn_model_t *copy = heap_caps_malloc(sizeof(*copy),MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -298,6 +378,8 @@ static bool save(void)
     free(copy);
     return ok;
 }
+
+bool sn_save(void) { return save(); }
 
 static bool connect_network(void)
 {
@@ -350,6 +432,20 @@ static bool connect_network(void)
     { s_mdns = true; mdns_hostname_set("sentinel"); }
     if (sn_web_start() != ESP_OK) message("Rete connessa; dashboard non disponibile",-1);
     return true;
+}
+
+bool sn_connect(void) { return connect_network(); }
+
+void sn_wifi_adopt(void)
+{
+    /* wifi_connect_new() took its own reference: drop the old one, keep the new. */
+    if (s_wifi_held) wifi_release();
+    s_wifi_held = true;
+    s_current_network[0] = 0;
+    xSemaphoreTake(sn_mutex,portMAX_DELAY);
+    s_status.network[0] = 0;
+    s_status.revision++;
+    xSemaphoreGive(sn_mutex);
 }
 
 static bool prepare_profile(void)
@@ -450,11 +546,14 @@ static bool scope(const char *cidr, uint32_t *first, uint32_t *count)
 static void discover_mdns(void)
 {
     if (!s_mdns) return;
-    static const char *types[] = {"_http","_https","_ipp","_smb","_googlecast","_hap","_mqtt","_workstation"};
+    static const char *types[] = {"_http","_https","_ipp","_printer","_pdl-datastream","_smb","_afpovertcp","_ssh",
+                                  "_googlecast","_airplay","_raop","_hap","_sonos","_spotify-connect","_amzn-wplay",
+                                  "_androidtvremote2","_home-assistant","_esphomelib","_mqtt","_rtsp","_workstation",
+                                  "_device-info","_companion-link"};
     for (unsigned i = 0; i < sizeof(types)/sizeof(types[0]) && !atomic_load(&s_cancel); i++)
     {
         mdns_result_t *results = NULL;
-        if (mdns_query_ptr(types[i],"_tcp",400,16,&results) != ESP_OK) continue;
+        if (mdns_query_ptr(types[i],"_tcp",300,16,&results) != ESP_OK) continue;
         for (mdns_result_t *r = results; r != NULL; r = r->next)
         {
             if (r->esp_netif != atomic_load(&s_station)) continue;
@@ -482,7 +581,8 @@ static void discover_ssdp(void)
     const char query[] = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n";
     sendto(fd,query,sizeof(query)-1,0,(struct sockaddr *)&target,sizeof(target));
     int64_t until = esp_timer_get_time()+1500000;
-    int responses = 0;
+    int responses = 0, described = 0;
+    sn_upnp_t *upnp = heap_caps_calloc(16,sizeof(sn_upnp_t),MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     while (esp_timer_get_time() < until && responses < 128 && !atomic_load(&s_cancel))
     {
         char buffer[1200]; struct sockaddr_in source; socklen_t size = sizeof(source);
@@ -492,9 +592,21 @@ static void discover_ssdp(void)
         if (strncmp(buffer,"HTTP/1.1 200",12) != 0 && strncmp(buffer,"HTTP/1.0 200",12) != 0) continue;
         observe(source.sin_addr.s_addr,NULL,SN_SSDP,-1,NULL,"SSDP/UPnP");
         responses++;
+        /* One description per host, only from the host that answered and only on the LAN. */
+        bool known = !local_ip(source.sin_addr.s_addr);
+        for (int i = 0; i < described && !known; i++) known = upnp[i].ip == source.sin_addr.s_addr;
+        if (upnp != NULL && !known && described < 16 &&
+            sn_location(buffer,source.sin_addr.s_addr,&upnp[described].port,upnp[described].path,sizeof(upnp[described].path)))
+            upnp[described++].ip = source.sin_addr.s_addr;
     }
     close(fd);
     drain_arp();
+    if (upnp != NULL && described && !atomic_load(&s_cancel))
+    {
+        message("Leggo le descrizioni UPnP...",92);
+        sn_upnp_describe(upnp,described);
+    }
+    free(upnp);
 }
 
 static void scan(const char *cidr)
@@ -539,8 +651,9 @@ static void scan(const char *cidr)
     if (fd >= 0) { echo_read(fd,0,-1,true); close(fd); }
     if (!atomic_load(&s_cancel))
     {
-        message("Cerco servizi mDNS...",82); discover_mdns();
-        message("Cerco annunci SSDP...",94); discover_ssdp();
+        message("Cerco servizi mDNS...",80); discover_mdns();
+        message("Cerco annunci SSDP...",88); discover_ssdp();
+        message("Chiedo i nomi: DNS, NetBIOS, mDNS...",95); sn_lookup_names();
     }
     drain_arp();
     atomic_store(&s_capture,false);
@@ -743,6 +856,16 @@ static void worker(void *unused)
             if (save()) message(command.interval ? "Monitoraggio periodico attivo" : "Scansione manuale",100);
         }
         else if (command.kind == IMPORT) merge(command.incoming);
+        else if (command.kind == IDENTIFY) sn_run_identify(command.target);
+        else if (command.kind == FIND) sn_run_find(command.target);
+        else if (command.kind == QUALITY) sn_run_quality((int)command.interval);
+        else if (command.kind == SPEED) sn_run_speed(command.interval,command.discard);
+        else if (command.kind == WIFI_SCAN) sn_run_wifi_scan();
+        else if (command.kind == WIFI_JOIN)
+        {
+            bool joined = sn_run_wifi_join(command.target,command.secret,command.discard);
+            if (joined && connect_network() && !sn_store_corrupt()) { atomic_store(&s_cancel,false); scan(""); }
+        }
 #if CONFIG_WATCH_DEV_CONSOLE
         else if (command.kind == SELFTEST)
         {
@@ -766,6 +889,7 @@ static void worker(void *unused)
         }
         free(command.device);
         free(command.incoming);
+        if (command.secret) { memset(command.secret,0,strlen(command.secret)); free(command.secret); }
         atomic_store(&s_busy,false);
         xSemaphoreTake(sn_mutex,portMAX_DELAY);
         s_status.revision++;
@@ -826,6 +950,40 @@ esp_err_t sn_exit(bool discard)
 }
 void sn_cancel(void) { atomic_store(&s_cancel,true); }
 
+static esp_err_t target_command(command_kind_t kind, const char *target, size_t maximum)
+{
+    if (target == NULL || !*target || strlen(target) > maximum) return ESP_ERR_INVALID_ARG;
+    command_t command = {.kind=kind};
+    snprintf(command.target,sizeof(command.target),"%s",target);
+    return submit(&command);
+}
+esp_err_t sn_identify(const char *ip) { return target_command(IDENTIFY,ip,15); }
+esp_err_t sn_find(const char *device_id) { return target_command(FIND,device_id,32); }
+esp_err_t sn_quality_start(int seconds)
+{
+    if (seconds < 10 || seconds > 120) return ESP_ERR_INVALID_ARG;
+    command_t command = {.kind=QUALITY,.interval=(uint32_t)seconds};
+    return submit(&command);
+}
+esp_err_t sn_speed_start(unsigned megabytes, bool upload)
+{
+    if (megabytes < 1 || megabytes > (upload ? 10u : 25u)) return ESP_ERR_INVALID_ARG;
+    command_t command = {.kind=SPEED,.interval=megabytes,.discard=upload};
+    return submit(&command);
+}
+esp_err_t sn_wifi_scan(void) { command_t command = {.kind=WIFI_SCAN}; return submit(&command); }
+esp_err_t sn_wifi_join(const char *ssid, const char *password)
+{
+    if (ssid == NULL || !*ssid || !sn_text_valid(ssid,32) ||
+        (password != NULL && (strlen(password) > 64 || (*password && strlen(password) < 8)))) return ESP_ERR_INVALID_ARG;
+    command_t command = {.kind=WIFI_JOIN,.discard=password == NULL};
+    snprintf(command.target,sizeof(command.target),"%s",ssid);
+    if (password != NULL && (command.secret = strdup(password)) == NULL) return ESP_ERR_NO_MEM;
+    esp_err_t result = submit(&command);
+    if (result != ESP_OK && command.secret) { memset(command.secret,0,strlen(command.secret)); free(command.secret); }
+    return result;
+}
+
 #if CONFIG_WATCH_DEV_CONSOLE
 esp_err_t sn_selftest(void)
 {
@@ -842,6 +1000,7 @@ esp_err_t sn_init(void)
     cJSON_InitHooks(&hooks);
     sn_mutex = xSemaphoreCreateMutex();
     s_commands = xQueueCreate(3,sizeof(command_t)); s_replies = xQueueCreate(128,sizeof(reply_t));
+    sn_radio_init();
     sn_model = heap_caps_calloc(1,sizeof(*sn_model),MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!sn_mutex || !s_commands || !s_replies || !sn_model) return ESP_ERR_NO_MEM;
     snprintf(s_status.code,sizeof(s_status.code),"%08lu",(unsigned long)(esp_random()%100000000));

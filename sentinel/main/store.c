@@ -35,6 +35,12 @@ static bool text_field(cJSON *object, const char *key, char *out, size_t capacit
     return true;
 }
 
+static bool optional_text(cJSON *object, const char *key, char *out, size_t capacity)
+{
+    out[0] = 0;
+    return cJSON_GetObjectItemCaseSensitive(object, key) == NULL || text_field(object, key, out, capacity);
+}
+
 static bool number(cJSON *object, const char *key, uint64_t maximum, uint64_t *out)
 {
     cJSON *value = cJSON_GetObjectItemCaseSensitive(object, key);
@@ -71,6 +77,7 @@ cJSON *sn_device_json(const sn_device_t *d)
 #define S(key, member) if (!cJSON_AddStringToObject(o, key, d->member)) goto failure
     S("id", id); S("network", network); S("ip", ip); S("mac", mac); S("hostname", hostname);
     S("services", services); S("label", label); S("category", category); S("note", note);
+    S("dns", dns); S("netbios", netbios); S("model", model);
 #undef S
     if (!cJSON_AddNumberToObject(o, "first_seen", d->first_seen) ||
         !cJSON_AddNumberToObject(o, "last_seen", d->last_seen) ||
@@ -198,6 +205,10 @@ sn_model_t *sn_parse(const char *json, size_t length, char *error, size_t capaci
         if (!cJSON_IsNumber(rtt) || rtt->valuedouble < -1 || rtt->valuedouble > 60000 ||
             floor(rtt->valuedouble) != rtt->valuedouble) goto failure;
         d->rtt_ms = (int)rtt->valuedouble;
+        /* Identification fields arrived with Sentinel 0.2: optional for older archives. */
+        if (!optional_text(item,"dns",d->dns,sizeof(d->dns)) ||
+            !optional_text(item,"netbios",d->netbios,sizeof(d->netbios)) ||
+            !optional_text(item,"model",d->model,sizeof(d->model))) goto failure;
         /* Online observations never survive restart/import as current presence. */
         d->seen_cycle = 0;
         model->device_count++;

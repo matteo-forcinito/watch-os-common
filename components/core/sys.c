@@ -4,7 +4,9 @@
 
 #include "hardware/pmu.h"
 
+#if !CONFIG_ESP_COREDUMP_ENABLE_TO_NONE
 #include "esp_core_dump.h"
+#endif
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "esp_log.h"
@@ -97,6 +99,7 @@ void sys_check_last_reset(void)
     }
 
     const char *kind = reason == ESP_RST_PANIC ? "crash" : "watchdog";
+    #if !CONFIG_ESP_COREDUMP_ENABLE_TO_NONE
     esp_core_dump_summary_t *summary = calloc(1, sizeof(esp_core_dump_summary_t));
 
     if (summary != NULL && esp_core_dump_image_check() == ESP_OK && esp_core_dump_get_summary(summary) == ESP_OK)
@@ -112,6 +115,10 @@ void sys_check_last_reset(void)
     }
 
     free(summary);
+    #else
+    snprintf(s_reset_text, sizeof(s_reset_text), "Errore (%s)", kind);
+    ESP_LOGE(TAG, "PREVIOUS RUN CRASHED (%s), core dump disabled", kind);
+    #endif
 }
 
 const char *sys_last_reset_text(void)

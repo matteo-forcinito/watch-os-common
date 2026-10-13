@@ -133,7 +133,7 @@ static esp_err_t status(httpd_req_t *request)
     cJSON_AddNumberToObject(out,"rssi",s.rssi); cJSON_AddNumberToObject(out,"cycle",s.cycle);
     cJSON_AddNumberToObject(out,"channel",s.channel); cJSON_AddStringToObject(out,"security",s.security);
     cJSON_AddNumberToObject(out,"revision",s.revision); cJSON_AddNumberToObject(out,"interval",s.interval);
-    cJSON_AddNumberToObject(out,"dropped",s.dropped);
+    cJSON_AddNumberToObject(out,"dropped",s.dropped); cJSON_AddNumberToObject(out,"here",s.here); cJSON_AddNumberToObject(out,"networks",s.networks);
     cJSON_AddBoolToObject(out,"busy",s.busy); cJSON_AddBoolToObject(out,"persistent",s.persistent);
     cJSON_AddBoolToObject(out,"dirty",s.dirty); cJSON_AddBoolToObject(out,"connected",s.connected);
     return json_response(request,out);
@@ -198,6 +198,9 @@ static esp_err_t devices(httpd_req_t *request)
     httpd_query_key_value(query,"network",network,sizeof(network));
     if (httpd_query_key_value(query,"q",encoded,sizeof(encoded)) == ESP_OK && !decode_query(encoded,search))
         return error(request,"400 Bad Request","Ricerca non valida (massimo 48 byte)");
+    sn_status_t now;
+    char gateway[16] = "", current[33] = "";
+    if (sn_status(&now)) { snprintf(gateway,sizeof(gateway),"%s",now.gateway); snprintf(current,sizeof(current),"%s",now.network); }
     sn_model_t *copy = snapshot();
     cJSON *root = cJSON_CreateObject();
     cJSON *items = root ? cJSON_AddArrayToObject(root,"devices") : NULL;
@@ -209,13 +212,22 @@ static esp_err_t devices(httpd_req_t *request)
         sn_device_t *d = &copy->devices[i];
         if (*network && strcmp(network,d->network) != 0) continue;
         if (!contains(d->label,search) && !contains(d->hostname,search) && !contains(d->ip,search) &&
-            !contains(d->mac,search) && !contains(d->category,search) && !contains(d->services,search)) continue;
+            !contains(d->mac,search) && !contains(d->category,search) && !contains(d->services,search) &&
+            !contains(d->dns,search) && !contains(d->netbios,search) && !contains(d->model,search)) continue;
         if (matched++ < offset || included >= limit) continue;
         cJSON *item = sn_device_json(d);
         if (item == NULL) { free(copy); cJSON_Delete(root); return json_response(request,NULL); }
         cJSON_AddBoolToObject(item,"observed",copy->cycle != 0 && d->seen_cycle == copy->cycle);
         cJSON_AddBoolToObject(item,"confirmed",sn_confirmed(d));
         cJSON_AddBoolToObject(item,"new_device",copy->cycle != 0 && d->new_cycle == copy->cycle);
+        /* Evidence-derived extras: vendor from the MAC, deduction shown as such. */
+        char vendor[48], type[64], reasons[160];
+        sn_vendor(d,vendor,sizeof(vendor));
+        sn_guess(d,strcmp(d->ip,gateway) == 0 && strcmp(d->network,current) == 0,type,sizeof(type),reasons,sizeof(reasons));
+        cJSON_AddStringToObject(item,"vendor",vendor);
+        cJSON_AddBoolToObject(item,"private_mac",sn_private_mac(d));
+        cJSON_AddStringToObject(item,"guess",type);
+        cJSON_AddStringToObject(item,"reasons",reasons);
         cJSON_AddItemToArray(items,item); included++;
     }
     for (int i = 0; i < copy->network_count; i++) cJSON_AddItemToArray(networks,sn_network_json(&copy->networks[i]));
@@ -244,6 +256,24 @@ static esp_err_t action(httpd_req_t *request)
         cJSON *ip = cJSON_GetObjectItemCaseSensitive(root,"ip");
         if (cJSON_IsString(ip)) result = sn_diagnose(ip->valuestring);
     }
+    else if (strcmp(request->uri,"/api/identify") == 0)
+    {
+        cJSON *ip = cJSON_GetObjectItemCaseSensitive(root,"ip");
+        if (cJSON_IsString(ip)) result = sn_identify(ip->valuestring);
+    }
+    else if (strcmp(request->uri,"/api/quality") == 0)
+    {
+        cJSON *seconds = cJSON_GetObjectItemCaseSensitive(root,"seconds");
+        if (cJSON_IsNumber(seconds) && seconds->valuedouble == seconds->valueint) result = sn_quality_start(seconds->valueint);
+    }
+    else if (strcmp(request->uri,"/api/speed") == 0)
+    {
+        cJSON *megabytes = cJSON_GetObjectItemCaseSensitive(root,"megabytes");
+        cJSON *upload = cJSON_GetObjectItemCaseSensitive(root,"upload");
+        if (cJSON_IsNumber(megabytes) && megabytes->valuedouble == megabytes->valueint && megabytes->valueint > 0 && cJSON_IsBool(upload))
+            result = sn_speed_start((unsigned)megabytes->valueint,cJSON_IsTrue(upload));
+    }
+    else if (strcmp(request->uri,"/api/wifi/scan") == 0) result = sn_wifi_scan();
     else if (strcmp(request->uri,"/api/settings") == 0)
     {
         cJSON *interval = cJSON_GetObjectItemCaseSensitive(root,"interval");
@@ -317,6 +347,89 @@ static esp_err_t export_csv(httpd_req_t *request)
     free(copy);
     if (result == ESP_OK) result = httpd_resp_send_chunk(request,NULL,0);
     return result;
+}
+
+static esp_err_t quality(httpd_req_t *request)
+{
+    if (!authorized(request)) return error(request,"401 Unauthorized","Abbina il dispositivo");
+    sn_quality_t q;
+    if (!sn_quality(&q)) return error(request,"503 Service Unavailable","Riprova");
+    cJSON *out = cJSON_CreateObject();
+    if (out == NULL) return json_response(request,NULL);
+#define N(name) cJSON_AddNumberToObject(out,#name,q.name)
+    N(seconds); N(duration); N(rssi); N(rssi_min); N(rssi_max); N(gateway_sent); N(gateway_lost); N(gateway_avg);
+    N(gateway_min); N(gateway_max); N(gateway_jitter); N(internet_sent); N(internet_lost); N(internet_avg); N(dns_ms);
+    N(speed_percent); N(download_kbps); N(upload_kbps);
+#undef N
+    cJSON_AddBoolToObject(out,"running",q.running); cJSON_AddBoolToObject(out,"speed_running",q.speed_running);
+    cJSON_AddStringToObject(out,"verdict",q.verdict); cJSON_AddStringToObject(out,"speed_text",q.speed_text);
+    cJSON *history = cJSON_AddArrayToObject(out,"rtt");
+    for (int i = 0; history && i < q.history; i++) cJSON_AddItemToArray(history,cJSON_CreateNumber(q.rtt_history[i]));
+    return json_response(request,out);
+}
+
+static esp_err_t wifi_list(httpd_req_t *request)
+{
+    if (!authorized(request)) return error(request,"401 Unauthorized","Abbina il dispositivo");
+    sn_ap_t *aps = malloc(sizeof(sn_ap_t)*SN_APS);
+    int count = aps ? sn_wifi_list(aps,SN_APS) : -1;
+    cJSON *out = cJSON_CreateObject();
+    cJSON *items = out ? cJSON_AddArrayToObject(out,"aps") : NULL;
+    for (int i = 0; items && i < count; i++)
+    {
+        cJSON *item = cJSON_CreateObject();
+        if (item == NULL) break;
+        char bssid[18];
+        snprintf(bssid,sizeof(bssid),"%02x:%02x:%02x:%02x:%02x:%02x",aps[i].bssid[0],aps[i].bssid[1],aps[i].bssid[2],
+                 aps[i].bssid[3],aps[i].bssid[4],aps[i].bssid[5]);
+        cJSON_AddStringToObject(item,"ssid",aps[i].ssid); cJSON_AddStringToObject(item,"bssid",bssid);
+        cJSON_AddStringToObject(item,"security",aps[i].security);
+        cJSON_AddNumberToObject(item,"rssi",aps[i].rssi); cJSON_AddNumberToObject(item,"channel",aps[i].channel);
+        cJSON_AddBoolToObject(item,"known",aps[i].known); cJSON_AddBoolToObject(item,"current",aps[i].current);
+        cJSON_AddItemToArray(items,item);
+    }
+    free(aps);
+    return json_response(request,out);
+}
+
+/* LAN throughput between the PC browser and the watch: no Internet involved. */
+static esp_err_t lan_download(httpd_req_t *request)
+{
+    if (!authorized(request)) return error(request,"401 Unauthorized","Abbina il dispositivo");
+    char query[64] = "", value[16] = "";
+    httpd_req_get_url_query_str(request,query,sizeof(query));
+    long bytes = httpd_query_key_value(query,"bytes",value,sizeof(value)) == ESP_OK ? strtol(value,NULL,10) : 0;
+    if (bytes < 65536 || bytes > 20000000) return error(request,"400 Bad Request","Da 64 KB a 20 MB");
+    char *chunk = calloc(1,4096);
+    if (chunk == NULL) return error(request,"503 Service Unavailable","Memoria occupata");
+    httpd_resp_set_type(request,"application/octet-stream");
+    httpd_resp_set_hdr(request,"Cache-Control","no-store");
+    esp_err_t result = ESP_OK;
+    for (long sent = 0; sent < bytes && result == ESP_OK; sent += 4096)
+        result = httpd_resp_send_chunk(request,chunk,bytes-sent < 4096 ? bytes-sent : 4096);
+    if (result == ESP_OK) result = httpd_resp_send_chunk(request,NULL,0);
+    free(chunk);
+    return result;
+}
+
+static esp_err_t lan_upload(httpd_req_t *request)
+{
+    if (!authorized(request)) return error(request,"401 Unauthorized","Abbina il dispositivo");
+    if (request->content_len < 65536 || request->content_len > 20000000) return error(request,"400 Bad Request","Da 64 KB a 20 MB");
+    char *chunk = malloc(4096);
+    if (chunk == NULL) return error(request,"503 Service Unavailable","Memoria occupata");
+    size_t got = 0;
+    int timeouts = 0;
+    while (got < request->content_len)
+    {
+        int received = httpd_req_recv(request,chunk,4096);
+        if (received == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 3) continue;
+        if (received <= 0) break;
+        got += received;
+    }
+    free(chunk);
+    if (got != request->content_len) return error(request,"400 Bad Request","Trasferimento interrotto");
+    return httpd_resp_sendstr(request,"OK");
 }
 
 static bool hash(const char *text, char out[65])
@@ -404,7 +517,7 @@ esp_err_t sn_web_start(void)
     uint8_t bytes[16]; esp_fill_random(bytes,sizeof(bytes));
     for (int i = 0; i < 16; i++) snprintf(s_token+i*2,3,"%02x",bytes[i]);
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.stack_size = 8192; config.max_uri_handlers = 16; config.max_open_sockets = 4;
+    config.stack_size = 8192; config.max_uri_handlers = 26; config.max_open_sockets = 4;
     config.lru_purge_enable = true; config.recv_wait_timeout = 5; config.send_wait_timeout = 5;
     esp_err_t result = httpd_start(&s_server,&config);
     if (result != ESP_OK) return result;
@@ -421,7 +534,15 @@ esp_err_t sn_web_start(void)
         {.uri="/api/edit",.method=HTTP_POST,.handler=action},
         {.uri="/api/settings",.method=HTTP_POST,.handler=action},
         {.uri="/api/import/preview",.method=HTTP_POST,.handler=import_json},
-        {.uri="/api/import",.method=HTTP_POST,.handler=import_json}
+        {.uri="/api/import",.method=HTTP_POST,.handler=import_json},
+        {.uri="/api/identify",.method=HTTP_POST,.handler=action},
+        {.uri="/api/quality",.method=HTTP_GET,.handler=quality},
+        {.uri="/api/quality",.method=HTTP_POST,.handler=action},
+        {.uri="/api/speed",.method=HTTP_POST,.handler=action},
+        {.uri="/api/wifi",.method=HTTP_GET,.handler=wifi_list},
+        {.uri="/api/wifi/scan",.method=HTTP_POST,.handler=action},
+        {.uri="/api/lan",.method=HTTP_GET,.handler=lan_download},
+        {.uri="/api/lan",.method=HTTP_POST,.handler=lan_upload}
 #if CONFIG_WATCH_DEV_CONSOLE
         ,{.uri="/api/qa/screen",.method=HTTP_GET,.handler=qa_screen}
 #endif

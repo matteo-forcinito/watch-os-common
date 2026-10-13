@@ -35,6 +35,9 @@ void hid_ble_forget(void);
 esp_err_t hid_usb_start(const char *name);
 esp_err_t hid_usb_send(uint8_t report_id, const uint8_t *data, uint16_t length);
 
+/* Host keyboard LEDs (USB output report); weak no-op unless an app overrides it. */
+void hid_usb_keyboard_leds(uint8_t leds);
+
 /* Character -> (modifiers, key code) for the host layout. False if not typeable. */
 bool hid_keymap_lookup(hid_host_layout_t layout, uint32_t codepoint, uint8_t *modifiers, uint8_t *keycode);
 
