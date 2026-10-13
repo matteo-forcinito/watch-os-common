@@ -49,6 +49,8 @@ void app_main(void)
 }
 
 #if CONFIG_WATCH_DEV_CONSOLE
+#include "services/extapp.h"
+#include "services/market.h"
 bool devcon_app_command(char *line)
 {
     if (strncmp(line,"net",3) != 0 || (line[3] && line[3] != ' ')) return false;
@@ -58,7 +60,39 @@ bool devcon_app_command(char *line)
     else if (operation && strcmp(operation,"selftest") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_selftest()));
     else if (operation && strcmp(operation,"cancel") == 0) sn_cancel();
     else if (operation && strcmp(operation,"diag") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_diagnose(strtok(NULL," "))));
-    else if (operation && strcmp(operation,"exit") == 0) printf("@NETREQUEST %s\n",esp_err_to_name(sn_exit(false)));
+    else if (operation && strcmp(operation,"cache-clear") == 0)
+    {
+        /* Manual QA flashing replaces OTA1 without the launcher's SD stamp. */
+        extapp_forget_cache();
+        printf("@NETCACHE cleared\n");
+    }
+    else if (operation && strcmp(operation,"marketfetch") == 0)
+    {
+        esp_err_t error = market_init();
+        if (error == ESP_OK) error = market_refresh();
+        printf("@NETMARKETREQUEST %s\n",esp_err_to_name(error));
+    }
+    else if (operation && strcmp(operation,"marketdownload") == 0)
+    {
+        /* Downloads files only; never call extapp_launch from an app slot. */
+        printf("@NETMARKETREQUEST %s\n",esp_err_to_name(market_install("Sentinel")));
+    }
+    else if (operation && strcmp(operation,"marketstatus") == 0)
+    {
+        market_status_t state;
+        market_status(&state);
+        printf("@NETMARKET busy=%d phase=%d percent=%d message=%s\n",state.busy,state.phase,state.percent,state.message);
+        for (int i = 0; i < market_count(); i++)
+        {
+            market_entry_t entry;
+            if (market_entry(i,&entry)) printf("@NETPACKAGE %s %s installed=%d size=%u\n",entry.id,entry.version,entry.installed,(unsigned)entry.binary_size);
+        }
+    }
+    else if (operation && strcmp(operation,"exit") == 0)
+    {
+        extapp_forget_cache();
+        printf("@NETREQUEST %s\n",esp_err_to_name(sn_exit(false)));
+    }
     sn_status_t status;
     if (sn_status(&status))
         printf("@NET busy=%d connected=%d ip=%s pair=%s devices=%d observed=%d new=%d progress=%d saved=%d dirty=%d msg=%s\n",
