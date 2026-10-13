@@ -257,11 +257,33 @@ void hid_link_set_state(hid_link_state_t state)
     }
 }
 
+static _Atomic(hid_link_router_t) s_router;
+
+void hid_link_set_router(hid_link_router_t router)
+{
+    atomic_store(&s_router, router);
+}
+
+esp_err_t hid_link_transport_send(uint8_t report_id, const uint8_t *data, uint16_t length)
+{
+    return s_transport == HID_LINK_BLE   ? hid_ble_send(report_id, data, length)
+           : s_transport == HID_LINK_USB ? hid_usb_send(report_id, data, length)
+                                         : ESP_ERR_INVALID_STATE;
+}
+
+void hid_link_satellite_state(hid_link_state_t state)
+{
+    if (s_transport == HID_LINK_SATELLITE)
+    {
+        hid_link_set_state(state);
+    }
+}
+
 static esp_err_t send_now(const report_t *r)
 {
-    return s_transport == HID_LINK_BLE   ? hid_ble_send(r->report_id, r->data, r->length)
-           : s_transport == HID_LINK_USB ? hid_usb_send(r->report_id, r->data, r->length)
-                                         : ESP_ERR_INVALID_STATE;
+    hid_link_router_t router = atomic_load(&s_router);
+    return router != NULL ? router(r->report_id, r->data, r->length)
+                          : hid_link_transport_send(r->report_id, r->data, r->length);
 }
 
 static bool send_retried(const report_t *r)
@@ -375,7 +397,7 @@ static bool push(uint8_t id, const uint8_t *data, uint8_t length, bool release)
 
 esp_err_t hid_link_start(hid_link_transport_t transport, const char *name)
 {
-    if (transport != HID_LINK_BLE && transport != HID_LINK_USB)
+    if (transport != HID_LINK_BLE && transport != HID_LINK_USB && transport != HID_LINK_SATELLITE)
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -406,7 +428,9 @@ esp_err_t hid_link_start(hid_link_transport_t transport, const char *name)
     hid_link_stop();
     s_transport = transport;
     hid_link_set_state(HID_LINK_WAITING); /* before asynchronous transport callbacks */
-    esp_err_t err = transport == HID_LINK_BLE ? hid_ble_start(name) : hid_usb_start(name);
+    esp_err_t err = transport == HID_LINK_BLE   ? hid_ble_start(name)
+                    : transport == HID_LINK_USB ? hid_usb_start(name)
+                                                : ESP_OK; /* satellite: the radio link reports the state */
     if (err != ESP_OK)
     {
         s_transport = HID_LINK_NONE;

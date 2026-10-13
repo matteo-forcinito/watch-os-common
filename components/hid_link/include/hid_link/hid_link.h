@@ -28,6 +28,7 @@ typedef enum
     HID_LINK_NONE,
     HID_LINK_BLE,
     HID_LINK_USB,
+    HID_LINK_SATELLITE, /* Remote Hub: reports go by radio to another watch (hid_hub.h) */
 } hid_link_transport_t;
 
 typedef enum
@@ -122,5 +123,16 @@ bool hid_link_click(uint8_t buttons, int count);
 
 /* Forget every paired host (Bluetooth). */
 void hid_link_forget_hosts(void);
+
+/*
+ * Remote Hub hooks. A router receives every report the "hid_tx" task would send
+ * (on a hub: merged with the satellites; on a satellite: sent by radio).
+ * hid_link_transport_send() writes one report directly to Bluetooth / USB.
+ */
+typedef esp_err_t (*hid_link_router_t)(uint8_t report_id, const uint8_t *data, uint16_t length);
+void hid_link_set_router(hid_link_router_t router);
+esp_err_t hid_link_transport_send(uint8_t report_id, const uint8_t *data, uint16_t length);
+/* Satellite transport: connection state is driven by the hub link. */
+void hid_link_satellite_state(hid_link_state_t state);
 
 #endif

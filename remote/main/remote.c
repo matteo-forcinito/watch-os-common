@@ -1,4 +1,5 @@
 #include "remote.h"
+#include "hid_link/hid_hub.h"
 
 #include "esp_log.h"
 #include "hardware/board.h"
@@ -72,6 +73,7 @@ void remote_settings_load(void)
         s_settings.meeting = 0;
     if (s_settings.pointer_speed < 1 || s_settings.pointer_speed > 3)
         s_settings.pointer_speed = 2;
+    s_settings.air_flags &= 7;
 
     hid_link_set_host_layout((hid_host_layout_t)s_settings.host_layout);
 }
@@ -128,11 +130,19 @@ void remote_dictionary_select(remote_dict_t dict)
 
 void remote_connect(void)
 {
-    esp_err_t err = hid_link_start((hid_link_transport_t)s_settings.transport, remote_device_name());
+    /* A satellite talks only to its hub; a hub keeps the normal PC link and adds the radio. */
+    hid_hub_role_t role = hid_hub_role();
+    hid_link_transport_t transport =
+        role == HID_HUB_SATELLITE ? HID_LINK_SATELLITE : (hid_link_transport_t)s_settings.transport;
+    esp_err_t err = hid_link_start(transport, remote_device_name());
 
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "Connection start: %s", esp_err_to_name(err));
+    }
+    if (role != HID_HUB_OFF && (err = hid_hub_start(remote_device_name())) != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Hub radio: %s", esp_err_to_name(err));
     }
 }
 
@@ -162,10 +172,17 @@ const char *remote_status_text(void)
         return "Non attivo";
     }
 
-    if (transport == HID_LINK_BLE)
+    if (transport == HID_LINK_SATELLITE)
     {
-        return state == HID_LINK_CONNECTED ? "Bluetooth: connesso" : "Bluetooth: in attesa di associazione";
+        return state == HID_LINK_CONNECTED ? "Satellite: collegato all'hub" : "Satellite: cerco l'hub...";
     }
 
-    return state == HID_LINK_CONNECTED ? "USB: connesso" : "USB: collega il cavo";
+    bool hub = hid_hub_role() == HID_HUB_HUB;
+    if (transport == HID_LINK_BLE)
+    {
+        return state == HID_LINK_CONNECTED ? (hub ? "Hub Bluetooth: connesso" : "Bluetooth: connesso")
+                                           : "Bluetooth: in attesa di associazione";
+    }
+
+    return state == HID_LINK_CONNECTED ? (hub ? "Hub USB: connesso" : "USB: connesso") : "USB: collega il cavo";
 }

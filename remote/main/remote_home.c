@@ -10,6 +10,7 @@
  */
 
 #include "remote.h"
+#include "hardware/imu.h"
 
 #include "extapp_sdk.h"
 #include "hardware/board.h"
@@ -29,6 +30,7 @@ static const remote_mode_t s_modes[] = {
     {"Tastiera", LV_SYMBOL_KEYBOARD, UI_COLOR_BLUE, &keyboard_app},
     {"Tastiera PC", LV_SYMBOL_KEYBOARD, UI_COLOR_TEAL, &remote_pc_keyboard_app},
     {"Mouse / touchpad", LV_SYMBOL_GPS, UI_COLOR_TEAL, &remote_mouse_app},
+    {"Air mouse", LV_SYMBOL_GPS, UI_COLOR_ORANGE, &remote_air_app},
     {"Controllo media", LV_SYMBOL_AUDIO, UI_COLOR_PINK, &remote_media_app},
     {"Presentazioni", LV_SYMBOL_IMAGE, UI_COLOR_ORANGE, &remote_presenter_app},
     {"Teams / Zoom", LV_SYMBOL_CALL, UI_COLOR_INDIGO, &remote_meeting_app},
@@ -95,6 +97,12 @@ static void change_transport(lv_event_t *e)
                (void *)(uintptr_t)(to_usb ? HID_LINK_USB : HID_LINK_BLE));
 }
 
+static void open_hub(lv_event_t *e)
+{
+    (void)e;
+    app_open_app(&remote_hub_app, NULL);
+}
+
 static void open_options(lv_event_t *e)
 {
     (void)e;
@@ -119,6 +127,8 @@ void remote_home_create(lv_obj_t *screen)
     for (size_t i = 0; i < sizeof(s_modes) / sizeof(s_modes[0]); i++)
     {
         const remote_mode_t *mode = &s_modes[i];
+        if (mode->app == &remote_air_app && !imu_supported())
+            continue; /* no gyroscope on this board */
         ui_row(page, mode->icon, mode->app ? mode->color : UI_COLOR_GRAY, mode->name, mode->app ? NULL : "presto",
                open_mode, (void *)mode);
     }
@@ -135,6 +145,7 @@ void remote_home_create(lv_obj_t *screen)
         ui_text(page, remote_device_name(), true);
     }
 
+    ui_row(page, LV_SYMBOL_SHUFFLE, UI_COLOR_PURPLE, "Hub multi-orologio", remote_hub_role_text(), open_hub, NULL);
     ui_row(page, LV_SYMBOL_SETTINGS, UI_COLOR_GRAY, "Opzioni", NULL, open_options, NULL);
     ui_row(page, LV_SYMBOL_LEFT, UI_COLOR_RED, "Esci", NULL, leave, NULL);
 

@@ -7,6 +7,8 @@
  *   remote_home.c     home screen: connection, control modes, options
  *   keyboard_app.c    the swipe keyboard
  *   swipe.c           swipe decoder (pure C, host-tested)
+ *   remote_air.c      air mouse (gyroscope), boards with an IMU
+ *   remote_hub_ui.c   Remote Hub role and pairing (radio in hid_link/hid_hub.c)
  *   main.c            start-up
  */
 
@@ -32,6 +34,7 @@ typedef struct
     uint8_t host_os;       /* 0 Windows/Linux, 1 macOS */
     uint8_t meeting;       /* 0 Teams, 1 Zoom */
     uint8_t pointer_speed; /* 1..3 */
+    uint8_t air_flags;     /* air mouse: 1 invert X, 2 invert Y, 4 always on */
 } remote_settings_t;
 
 /* Settings kept in NVS ("remote" namespace). */
@@ -58,7 +61,14 @@ extern const app_t remote_presenter_app;
 extern const app_t remote_meeting_app;
 extern const app_t remote_gamepad_app;
 extern const app_t remote_shortcuts_app;
+extern const app_t remote_air_app; /* only on boards with an IMU */
 void remote_modes_register(void);
+void remote_air_register(void);
+
+/* Remote Hub (remote_hub_ui.c): several watches as one HID set. */
+extern const app_t remote_hub_app;
+void remote_hub_register(void);
+const char *remote_hub_role_text(void);
 const char *remote_device_name(void);
 bool remote_send_ok(bool accepted);
 void remote_alarm_prepare(void);

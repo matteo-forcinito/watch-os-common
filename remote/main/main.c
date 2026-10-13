@@ -54,6 +54,8 @@ void app_main(void)
     app_register(&remote_pc_keyboard_app);
     app_register(&remote_options_app);
     remote_modes_register();
+    remote_air_register();
+    remote_hub_register();
 
     lv_obj_t *home = lv_obj_create(NULL);
     lv_obj_remove_style_all(home);
