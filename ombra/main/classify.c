@@ -103,9 +103,9 @@ const char *classify_tracker_name(ombra_tracker_t tracker)
     switch (tracker)
     {
     case OMBRA_TRACKER_AIRTAG: return "AirTag";
-    case OMBRA_TRACKER_FINDMY: return "Accessorio Dov'e";
-    case OMBRA_TRACKER_APPLE: return "Dispositivo Apple (Dov'e)";
-    case OMBRA_TRACKER_AIRPODS: return "AirPods (Dov'e)";
+    case OMBRA_TRACKER_FINDMY: return "Accessorio Dov'è";
+    case OMBRA_TRACKER_APPLE: return "Apple (Dov'è)";
+    case OMBRA_TRACKER_AIRPODS: return "AirPods (Dov'è)";
     case OMBRA_TRACKER_SMARTTAG: return "Galaxy SmartTag";
     case OMBRA_TRACKER_TILE: return "Tile";
     case OMBRA_TRACKER_CHIPOLO: return "Chipolo";
@@ -186,9 +186,9 @@ static void apple(ombra_adv_t *out, const uint8_t *d, size_t n)
             switch ((status >> 4) & 3)
             {
             case 1: set_tracker(out, OMBRA_TRACKER_AIRTAG, separated, separated ? "AirTag lontano dal proprietario" : "AirTag vicino al proprietario"); break;
-            case 2: set_tracker(out, OMBRA_TRACKER_FINDMY, separated, separated ? "Accessorio Dov'e separato" : "Accessorio Dov'e"); break;
-            case 3: set_tracker(out, OMBRA_TRACKER_AIRPODS, separated, "AirPods in rete Dov'e"); break;
-            default: set_tracker(out, OMBRA_TRACKER_APPLE, separated, "Apple in rete Dov'e"); break;
+            case 2: set_tracker(out, OMBRA_TRACKER_FINDMY, separated, separated ? "Accessorio Dov'è separato" : "Accessorio Dov'è"); break;
+            case 3: set_tracker(out, OMBRA_TRACKER_AIRPODS, separated, "AirPods in rete Dov'è"); break;
+            default: set_tracker(out, OMBRA_TRACKER_APPLE, separated, "Apple in rete Dov'è"); break;
             }
         }
         else if (type == 0x02 && length == 21)

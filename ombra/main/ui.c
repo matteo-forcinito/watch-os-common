@@ -23,6 +23,7 @@
 #include "extapp_sdk.h"
 #include "hardware/board.h"
 #include "ui/ui.h"
+#include "sdkconfig.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,7 +75,7 @@ typedef struct
     lv_obj_t *d_distance, *d_signal, *d_seen, *d_follow, *chart, *mine_button;
     lv_chart_series_t *series;
     /* find */
-    lv_obj_t *f_word, *f_distance, *f_trend, *f_arc, *f_name, *f_sound;
+    lv_obj_t *f_word, *f_distance, *f_unit, *f_trend, *f_arc, *f_name, *f_sound;
     int32_t f_shown;      /* displayed proximity x1000 (eased) */
     int32_t f_trend_ref;  /* proximity 2 s ago */
     uint32_t f_trend_at;
@@ -447,10 +448,10 @@ static void cards(ombra_ui_t *ui)
         lv_obj_align(k->bar, LV_ALIGN_LEFT_MID, -10, 0);
         k->title = label(k->card, UI_FONT_BODY, C_INK, "");
         lv_label_set_long_mode(k->title, LV_LABEL_LONG_MODE_DOTS);
-        lv_obj_set_width(k->title, LV_PCT(66));
+        lv_obj_set_size(k->title, LV_PCT(66), lv_font_get_line_height(UI_FONT_BODY));
         k->subtitle = label(k->card, UI_FONT_SMALL, C_MIST, "");
         lv_label_set_long_mode(k->subtitle, LV_LABEL_LONG_MODE_DOTS);
-        lv_obj_set_width(k->subtitle, LV_PCT(66));
+        lv_obj_set_size(k->subtitle, LV_PCT(66), lv_font_get_line_height(UI_FONT_SMALL));
         lv_obj_align(k->subtitle, LV_ALIGN_TOP_LEFT, 0, 26);
         k->distance = label(k->card, UI_FONT_LARGE, C_INK, "");
         lv_obj_align(k->distance, LV_ALIGN_TOP_RIGHT, 0, -2);
@@ -476,7 +477,7 @@ static void list_update(ombra_ui_t *ui)
         if (count == 0)
             snprintf(text, sizeof(text), ui->filter == OMBRA_KIND_TRACKER ? "Nessun tracker nei dintorni." : "Nessun segnale per ora.");
         else
-            snprintf(text, sizeof(text), "%d %s, dal piu vicino", count, count == 1 ? "segnale" : "segnali");
+            snprintf(text, sizeof(text), "%d %s, dal più vicino", count, count == 1 ? "segnale" : "segnali");
         lv_label_set_text(ui->list_caption, text);
     }
     uint32_t now = now_ms();
@@ -502,13 +503,13 @@ static void list_update(ombra_ui_t *ui)
         }
         else if (d->adv.kind == OMBRA_KIND_TRACKER)
             snprintf(text, sizeof(text), "%s%s", d->adv.separated ? "Lontano dal proprietario" : "Vicino al proprietario",
-                     d->mine ? " - mio" : "");
+                     d->mine ? " \u00B7 mio" : "");
         else
         {
             char seen[16];
             duration_text(now - d->first_ms, seen, sizeof(seen));
-            snprintf(text, sizeof(text), "%s%s%s - da %s", classify_kind_name((ombra_kind_t)d->adv.kind),
-                     company ? " " : "", company ? company : "", seen);
+            snprintf(text, sizeof(text), "%s%s%s \u00B7 %s", classify_kind_name((ombra_kind_t)d->adv.kind),
+                     company ? " \u00B7 " : "", company ? company : "", seen);
         }
         lv_label_set_text(k->subtitle, text);
         lv_obj_set_style_text_color(k->subtitle, ui_color(d->suspect ? C_EMBER : C_MIST), 0);
@@ -532,7 +533,7 @@ static void detail_action(lv_event_t *e)
     ombra_device_t d;
     if (!ombra_get(ui->selected, &d))
     {
-        ui_toast("Dispositivo non piu nei dintorni");
+        ui_toast("Dispositivo non più nei dintorni");
         return;
     }
     if (what == 1)
@@ -540,8 +541,8 @@ static void detail_action(lv_event_t *e)
     else
     {
         ombra_set_mine(d.id, !d.mine);
-        ui_toast(d.mine ? "Non piu segnato come tuo" : "Segnato come tuo: niente allarmi");
-        lv_label_set_text(lv_obj_get_child(ui->mine_button, 0), d.mine ? "E' mio" : "Non e' mio");
+        ui_toast(d.mine ? "Non più segnato come tuo" : "Segnato come tuo: niente allarmi");
+        lv_label_set_text(lv_obj_get_child(ui->mine_button, 0), d.mine ? "È mio" : "Non è mio");
     }
 }
 
@@ -564,7 +565,7 @@ static void detail(ombra_ui_t *ui)
     if (!ombra_get(ui->selected, &d))
     {
         ui_title(page, "Sparito");
-        ui_text(page, "Questo dispositivo non trasmette piu da un po'.", true);
+        ui_text(page, "Questo dispositivo non trasmette più da un po'.", true);
         return;
     }
     char text[200], name[48];
@@ -601,7 +602,7 @@ static void detail(ombra_ui_t *ui)
     lv_obj_set_flex_align(buttons, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(buttons, 8, 0);
     ui_button(buttons, "Trova - caldo / freddo", C_EMBER, detail_action, (void *)1);
-    ui->mine_button = ui_button(buttons, d.mine ? "Non e' mio" : "E' mio", 0x2A2936, detail_action, (void *)2);
+    ui->mine_button = ui_button(buttons, d.mine ? "Non è mio" : "È mio", 0x2A2936, detail_action, (void *)2);
 
     const char *company = classify_company(d.adv.company);
     if (company)
@@ -625,11 +626,11 @@ static void detail(ombra_ui_t *ui)
         ui->d_follow = ui_text(page, "", true);
         ui_text(page,
                 d.adv.separated
-                    ? "Lontano dal suo proprietario: se resta con te mentre ti sposti, puo essere usato per seguirti. Ombra lo riconosce anche quando cambia indirizzo."
-                    : "Vicino al suo proprietario: e' normale incontrarne in giro.",
+                    ? "Lontano dal suo proprietario: se resta con te mentre ti sposti, può essere usato per seguirti. Ombra lo riconosce anche quando cambia indirizzo."
+                    : "Vicino al suo proprietario: è normale incontrarne in giro.",
                 true);
     }
-    snprintf(text, sizeof(text), "Potenza attesa a 1 m: %d dBm%s. La distanza e' una stima: muri e corpi la allungano.",
+    snprintf(text, sizeof(text), "Potenza attesa a 1 m: %d dBm%s. La distanza è una stima: muri e corpi la allungano.",
              d.reference, d.adv.has_tx_power ? " (dichiarata)" : "");
     ui_text(page, text, true);
 }
@@ -706,11 +707,15 @@ static void find(ombra_ui_t *ui)
     lv_obj_align(ui->f_name, LV_ALIGN_TOP_MID, 0, h * (b->round ? 20 : 14) / 100);
     ui->f_word = label(c, ui_font_title, 0xFFFFFF, "In ascolto");
     lv_obj_align(ui->f_word, LV_ALIGN_TOP_MID, 0, h * (b->round ? 28 : 23) / 100);
-    ui->f_distance = label(c, h >= 360 ? ui_font_clock : ui_font_big, 0xFFFFFF, "--");
-    lv_obj_align(ui->f_distance, LV_ALIGN_CENTER, 0, 0);
+    const lv_font_t *digits = h >= 360 ? ui_font_clock : ui_font_big;
+    ui->f_distance = label(c, digits, 0xFFFFFF, "--");
+    lv_obj_align(ui->f_distance, LV_ALIGN_CENTER, 0, -8);
+    ui->f_unit = label(c, ui_font_title, 0xFFFFFF, "");
+    lv_obj_set_style_text_opa(ui->f_unit, 220, 0);
+    lv_obj_align(ui->f_unit, LV_ALIGN_CENTER, 0, lv_font_get_line_height(digits) / 2 + 4);
     ui->f_trend = label(c, UI_FONT_BODY, 0xFFFFFF, "");
     lv_obj_set_style_text_opa(ui->f_trend, 220, 0);
-    lv_obj_align(ui->f_trend, LV_ALIGN_CENTER, 0, h >= 360 ? 70 : 44);
+    lv_obj_align(ui->f_trend, LV_ALIGN_CENTER, 0, h >= 360 ? 118 : 74);
     ui->f_sound = label(c, UI_FONT_SMALL, 0xFFFFFF, "");
     lv_obj_set_style_text_opa(ui->f_sound, 200, 0);
     lv_obj_align(ui->f_sound, LV_ALIGN_BOTTOM_MID, 0, -h * (b->round ? 16 : 7) / 100);
@@ -767,13 +772,19 @@ static void find_update(ombra_ui_t *ui)
     {
         lv_label_set_text(ui->f_word, "Segnale perso");
         lv_label_set_text(ui->f_distance, "--");
+        lv_label_set_text(ui->f_unit, "");
         lv_label_set_text(ui->f_trend, "muoviti lentamente");
         return;
     }
     static const char *const words[] = {"Gelido", "Freddo", "Tiepido", "Caldo", "Bollente", "Ci sei!"};
     int level = ui->f_shown < 150 ? 0 : ui->f_shown < 350 ? 1 : ui->f_shown < 550 ? 2 : ui->f_shown < 750 ? 3 : ui->f_shown < 900 ? 4 : 5;
     lv_label_set_text(ui->f_word, words[level]);
+    /* "1,2 m" -> "1,2" big and "m" small. */
     distance_text(d.distance_cm, text, sizeof(text));
+    char *unit = strchr(text, ' ');
+    lv_label_set_text(ui->f_unit, unit ? unit + 1 : "");
+    if (unit)
+        *unit = 0;
     lv_label_set_text(ui->f_distance, text);
     /* Trend over the last two seconds of the eased value. */
     if (ui->f_trend_ref < 0)
@@ -898,7 +909,7 @@ static void mix(ombra_ui_t *ui)
         char nearest[48], line[120], distance[16];
         ombra_display_name(&ui->snapshot[0], nearest, sizeof(nearest));
         distance_text(ui->snapshot[0].distance_cm, distance, sizeof(distance));
-        snprintf(line, sizeof(line), "Il piu vicino: %s, circa %s.", nearest, distance);
+        snprintf(line, sizeof(line), "Il più vicino: %s, circa %s.", nearest, distance);
         ui_text(page, line, false);
     }
     else
@@ -1041,7 +1052,7 @@ static void tick(lv_timer_t *timer)
             char name[48], text[160], follow[16];
             ombra_display_name(&d, name, sizeof(name));
             duration_text(d.follow_ms, follow, sizeof(follow));
-            snprintf(text, sizeof(text), "%s, lontano dal suo proprietario, e' con te da %s. Cercalo addosso o nella borsa.",
+            snprintf(text, sizeof(text), "%s, lontano dal suo proprietario, è con te da %s. Cercalo addosso o nella borsa.",
                      name, follow);
             ui_confirm("Tracker sospetto", text, "Trova", C_EMBER, alert_answer, (void *)(uintptr_t)d.id);
         }
@@ -1083,3 +1094,39 @@ void ombra_ui_create(lv_obj_t *screen)
     render(ui);
     ui->timer = lv_timer_create(tick, 62, ui); /* 16 Hz */
 }
+
+#if CONFIG_WATCH_DEV_CONSOLE
+/* QA only: "view field|menu|nearby|trackers|detail|find|shield|mix" opens a page
+ * (detail and find on the nearest device), so screenshots need no taps. */
+#include "core/devcon.h"
+#include <stdio.h>
+
+bool devcon_app_command(char *line)
+{
+    if (strncmp(line, "view ", 5) != 0 || s_ui == NULL)
+        return false;
+    static const char *const names[] = {"field", "menu", "nearby", "detail", "find", "shield", "mix", "trackers"};
+    int view = -1;
+    for (int i = 0; i < 8; i++)
+        if (strcmp(line + 5, names[i]) == 0)
+            view = i;
+    if (view < 0)
+    {
+        printf("@ERR unknown view\n");
+        return true;
+    }
+    lv_port_lock();
+    ombra_ui_t *ui = s_ui;
+    ui->filter = view == 7 ? OMBRA_KIND_TRACKER : -1;
+    if (view == DETAIL || view == FIND)
+    {
+        if (ombra_snapshot(ui->snapshot, SNAPSHOT, -1) > 0)
+            ui->selected = ui->snapshot[0].id;
+        ui->back_to = NEARBY;
+    }
+    go(ui, view == 7 ? NEARBY : view);
+    lv_port_unlock();
+    printf("@OK view %s\n", names[view]);
+    return true;
+}
+#endif
