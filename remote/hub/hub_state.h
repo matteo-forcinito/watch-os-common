@@ -55,6 +55,10 @@ bool hub_state_authorize(hub_state_t *state, unsigned node, uint64_t session);
 void hub_state_revoke(hub_state_t *state, unsigned node);
 hub_result_t hub_state_receive(hub_state_t *state, unsigned node,
                                       const uint8_t *packet, size_t length, uint32_t now_ms);
+/* Heartbeat (id 0, no payload): same session and sequence rules as input, it only
+ * keeps the session from expiring. */
+hub_result_t hub_state_keepalive(hub_state_t *state, unsigned node,
+                                 const uint8_t *packet, size_t length, uint32_t now_ms);
 void hub_state_expire(hub_state_t *state, uint32_t now_ms);
 /* Snapshot is non-destructive. Commit only after USB accepted this report.
  * No receive/expire/revoke may run between snapshot and commit. Failed sends

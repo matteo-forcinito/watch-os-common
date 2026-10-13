@@ -30,8 +30,40 @@ static hub_result_t receive(unsigned node, uint32_t now)
     return hub_state_receive(&s_state, node, s_packet, sizeof(s_packet), now);
 }
 
+static int keepalive_tests(void)
+{
+    hub_state_init(&s_state);
+    CHECK(hub_state_authorize(&s_state, 2, 33));
+    packet(0, 1, 33);
+    CHECK(hub_state_keepalive(&s_state, 2, s_packet, sizeof(s_packet), 1000) == HUB_ACCEPTED);
+    CHECK(hub_state_keepalive(&s_state, 2, s_packet, sizeof(s_packet), 1100) == HUB_DUPLICATE);
+    CHECK(receive(2, 1100) == HUB_INVALID); /* id 0 is never input */
+    packet(0, 2, 34);
+    CHECK(hub_state_keepalive(&s_state, 2, s_packet, sizeof(s_packet), 1200) == HUB_UNAUTHORIZED);
+    /* Heartbeats every 150 ms keep the session past the 500 ms timeout. */
+    for (uint32_t i = 0; i < 10; i++)
+    {
+        packet(0, 2 + i, 33);
+        CHECK(hub_state_keepalive(&s_state, 2, s_packet, sizeof(s_packet), 1150 + i * 150) == HUB_ACCEPTED);
+        hub_state_expire(&s_state, 1150 + i * 150 + 140);
+        CHECK(s_state.nodes[2].authorized);
+    }
+    packet(1, 20, 33);
+    CHECK(receive(2, 2700) == HUB_ACCEPTED); /* input continues the same sequence */
+    hub_state_expire(&s_state, 3300);
+    CHECK(!s_state.nodes[2].authorized); /* silence still expires */
+    packet(1, 1, 11);
+    CHECK(hub_state_keepalive(&s_state, 2, s_packet, sizeof(s_packet), 3300) == HUB_INVALID);
+    return 0;
+}
+
 int hub_tests(void)
 {
+    int failed = keepalive_tests();
+    if (failed)
+    {
+        return failed;
+    }
     hub_state_init(&s_state);
     CHECK(sizeof(hub_state_t) < 512);
     CHECK(!hub_state_authorize(&s_state, HUB_NODES, 1));

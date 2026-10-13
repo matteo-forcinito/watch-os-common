@@ -153,8 +153,10 @@ static void pairing_create(lv_obj_t *screen, void *arg)
     ui->list = column(ui->page);
     ui->actions = column(ui->page);
     ui_text(ui->page,
-            hub ? "Sull'altro orologio apri Remote > Hub > Cerca hub. Confronta il codice e conferma su entrambi."
-                : "Sull'hub apri Remote > Hub > Aggiungi dispositivo, poi scegli l'hub qui.",
+            hub ? "E' il satellite a trovare l'hub: sull'altro orologio apri Remote > Hub multi-orologio > "
+                  "Satellite > Cerca hub. Poi confronta il codice e conferma su entrambi."
+                : "Sull'hub apri Remote > Hub multi-orologio > Aggiungi dispositivo. Con un solo hub vicino "
+                  "la scelta e' automatica.",
             true);
     ui->shown = HID_HUB_PAIR_IDLE;
     ui->found_shown = 0;

@@ -57,9 +57,12 @@ static const char *TAG = "hid_hub";
 #define KIND_CONFIRM 0x82
 #define HELLO 0x10
 #define ACK 0x20
-#define ACK_WAIT_MS 30
-#define PAIR_WINDOW_MS 90000
+#define ACK_WAIT_MS 60
+#define STATS_MS 10000
+#define PAIR_WINDOW_MS 180000
+#define FOUND_STALE_US 2000000 /* a hub not heard for 2 s left the pairing mode */
 #define FOUND_MAX 6
+#define AUTO_SELECT_US 2500000 /* a single hub in range is chosen by itself */
 
 typedef struct
 {
@@ -589,6 +592,17 @@ static void process_input(unsigned node, const uint8_t *packet)
         }
         write_le(reply + 8, 8, session);
     }
+    else if (packet[3] == 0)
+    {
+        /* Satellite heartbeat: keeps its session alive, controls unchanged. */
+        reply[3] = ACK;
+        hub_result_t result = hid_link_state() == HID_LINK_CONNECTED
+                                  ? hub_state_keepalive(&s_state, node, packet, HUB_PACKET_SIZE, now_ms())
+                                  : HUB_UNAUTHORIZED;
+        reply[16] = result == HUB_ACCEPTED || result == HUB_DUPLICATE ? 0 : 1;
+        if (reply[16])
+            hub_state_revoke(&s_state, node);
+    }
     else
     {
         if (packet[3] > 4)
@@ -610,6 +624,7 @@ static void process_input(unsigned node, const uint8_t *packet)
 
 static void pair_fail(const char *message)
 {
+    ESP_LOGW(TAG, "Pairing failed: %s", message);
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_pair.phase = HID_HUB_PAIR_FAILED;
     snprintf(s_pair.message, sizeof(s_pair.message), "%s", message);
@@ -709,7 +724,10 @@ static void pair_receive(const rx_t *rx)
                 if (memcmp(s_pair.found[i].mac, rx->mac, 6) == 0)
                     index = i;
             if (index < 0 && s_pair.found_count < FOUND_MAX)
+            {
                 index = s_pair.found_count++;
+                ESP_LOGI(TAG, "Pairing: found hub " MACSTR " (%d dBm)", MAC2STR(rx->mac), rx->rssi);
+            }
             if (index >= 0)
             {
                 found_t *f = &s_pair.found[index];
@@ -736,6 +754,7 @@ static void pair_receive(const rx_t *rx)
                 return;
             }
             add_radio_peer(rx->mac);
+            ESP_LOGI(TAG, "Pairing: join from %s (" MACSTR ")", s_pair.peer_name, MAC2STR(rx->mac));
             xSemaphoreTake(s_lock, portMAX_DELAY);
             s_pair.phase = HID_HUB_PAIR_CODE;
             s_pair.deadline = now + 60000000;
@@ -764,11 +783,7 @@ static void pair_receive(const rx_t *rx)
             return;
         }
         s_pair.remote_ok = true;
-        if (s_pair.local_ok)
-        {
-            send_confirm(); /* the other side may have missed ours */
-            pair_complete();
-        }
+        ESP_LOGI(TAG, "Pairing: %s confirmed", s_pair.peer_name);
     }
 }
 
@@ -796,6 +811,8 @@ static void pair_select(int index)
     xSemaphoreGive(s_lock);
     if (!ok)
         pair_fail("Hub non piu disponibile");
+    else
+        ESP_LOGI(TAG, "Pairing: joining %s (" MACSTR ")", s_pair.peer_name, MAC2STR(s_pair.peer_mac));
 }
 
 static void pair_tick(void)
@@ -810,9 +827,32 @@ static void pair_tick(void)
     hid_hub_pair_phase_t phase = s_pair.phase;
     if (phase == HID_HUB_PAIR_IDLE || phase == HID_HUB_PAIR_DONE || phase == HID_HUB_PAIR_FAILED)
         return;
+    if (phase == HID_HUB_PAIR_OPEN && !is_hub())
+    {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        for (int i = 0; i < s_pair.found_count;)
+            if (now - s_pair.found[i].seen > FOUND_STALE_US)
+                s_pair.found[i] = s_pair.found[--s_pair.found_count];
+            else
+                i++;
+        xSemaphoreGive(s_lock);
+    }
+    if (phase == HID_HUB_PAIR_OPEN && !is_hub() && s_pair.found_count == 1 &&
+        now - (s_pair.deadline - (int64_t)PAIR_WINDOW_MS * 1000) > AUTO_SELECT_US)
+    {
+        pair_select(0);
+        return;
+    }
     if (now > s_pair.deadline)
     {
         pair_fail(phase == HID_HUB_PAIR_OPEN ? "Nessun dispositivo trovato" : "Tempo scaduto");
+        return;
+    }
+    if (phase == HID_HUB_PAIR_CONFIRMED && s_pair.remote_ok)
+    {
+        send_confirm(); /* the other side may have missed ours */
+        pair_complete();
+        ESP_LOGI(TAG, "Pairing: done with %s", s_pair.peer_name);
         return;
     }
     if (now < s_pair.next_send)
@@ -835,12 +875,32 @@ static void pair_tick(void)
 
 /* ------------------------------------------------------------ worker */
 
+static void log_stats(void)
+{
+    static uint32_t next, last_received, last_rejected, last_retries, last_dropped;
+    uint32_t received = atomic_load(&s_received), rejected = atomic_load(&s_rejected);
+    uint32_t retries = atomic_load(&s_retries), dropped = atomic_load(&s_dropped);
+    if ((int32_t)(now_ms() - next) < 0 || (received == last_received && rejected == last_rejected &&
+                                           retries == last_retries && dropped == last_dropped))
+        return;
+    next = now_ms() + STATS_MS;
+    ESP_LOGI(TAG, "link %s, session %s, peers 0x%x: received %lu, rejected %lu, retries %lu, dropped %lu",
+             hid_link_state() == HID_LINK_CONNECTED ? "up" : "down", s_session ? "yes" : "no",
+             atomic_load(&s_connected_mask), (unsigned long)received, (unsigned long)rejected,
+             (unsigned long)retries, (unsigned long)dropped);
+    last_received = received;
+    last_rejected = rejected;
+    last_retries = retries;
+    last_dropped = dropped;
+}
+
 static void worker(void *arg)
 {
     (void)arg;
     uint32_t epoch = UINT32_MAX;
     for (;;)
     {
+        log_stats();
         if (is_hub())
         {
             if (epoch != hid_link_version())
@@ -853,11 +913,10 @@ static void worker(void *arg)
             if (s_state.nodes[0].authorized && s_state.nodes[0].seen)
                 s_state.nodes[0].last_ms = now_ms();
             hub_state_expire(&s_state, now_ms());
+            /* A host that refuses reports (Bluetooth not encrypted yet, PC asleep) must
+             * not stop pairing and replies: satellites get a refusal and retry later. */
             if (hid_link_state() == HID_LINK_CONNECTED && !flush_host())
-            {
                 vTaskDelay(pdMS_TO_TICKS(5));
-                continue;
-            }
             local_t local;
             while (xQueueReceive(s_local, &local, 0) == pdTRUE)
                 process_input(0, local.packet);
@@ -1027,7 +1086,8 @@ esp_err_t hid_hub_pair_open(void)
         s_pair.deadline = esp_timer_get_time() + (int64_t)PAIR_WINDOW_MS * 1000;
         s_pair.phase = HID_HUB_PAIR_OPEN;
         snprintf(s_pair.message, sizeof(s_pair.message), "%s",
-                 is_hub() ? "Sul satellite: Remote > Hub > Cerca hub" : "Cerco hub vicini...");
+                 is_hub() ? "In attesa del satellite..." : "Cerco hub vicini...");
+        ESP_LOGI(TAG, "Pairing: %s", is_hub() ? "window open, sending beacons" : "searching for hubs");
         error = ESP_OK;
     }
     psa_reset_key_attributes(&attributes);
@@ -1088,13 +1148,7 @@ void hid_hub_pair_confirm(bool accept)
         snprintf(s_pair.message, sizeof(s_pair.message), "Conferma anche su %s", s_pair.peer_name);
     }
     xSemaphoreGive(s_lock);
-    /* The worker sends CONFIRM and completes when the other side's tag arrives;
-     * if it already arrived, finish here (pair_complete takes the locks it needs). */
-    if (ready && s_pair.remote_ok)
-    {
-        send_confirm();
-        pair_complete();
-    }
+    /* The worker sends CONFIRM and completes once the other side's tag arrived. */
 }
 
 void hid_hub_pair_cancel(void)

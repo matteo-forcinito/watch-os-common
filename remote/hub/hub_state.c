@@ -167,6 +167,31 @@ hub_result_t hub_state_receive(hub_state_t *state, unsigned node,
     return HUB_ACCEPTED;
 }
 
+hub_result_t hub_state_keepalive(hub_state_t *state, unsigned node,
+                                 const uint8_t *packet, size_t length, uint32_t now_ms)
+{
+    if (node >= HUB_NODES || packet == NULL || length != HUB_PACKET_SIZE ||
+        packet[0] != 'R' || packet[1] != 'H' || packet[2] != 1 || packet[3] != 0)
+    {
+        return HUB_INVALID;
+    }
+    hub_node_t *peer = &state->nodes[node];
+    if (!peer->authorized || read_le(packet + 8, 8) != peer->session)
+    {
+        return HUB_UNAUTHORIZED;
+    }
+    uint32_t sequence = (uint32_t)read_le(packet + 4, 4);
+    uint32_t distance = sequence - peer->sequence;
+    if (peer->seen && (distance == 0 || distance >= UINT32_C(0x80000000)))
+    {
+        return HUB_DUPLICATE;
+    }
+    peer->sequence = sequence;
+    peer->seen = true;
+    peer->last_ms = now_ms;
+    return HUB_ACCEPTED;
+}
+
 void hub_state_expire(hub_state_t *state, uint32_t now_ms)
 {
     for (unsigned node = 0; node < HUB_NODES; node++)
