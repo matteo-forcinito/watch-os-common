@@ -28,6 +28,9 @@ const char *web_server_last_error(void);
 
 /* "http://192.168.1.42/" and, in access point mode, the network name. */
 void web_server_url(char *out, size_t size);
+
+/* Six digits that pair a new browser (shown on the watch and in its QR as #code=...). */
+const char *web_server_code(void);
 bool web_server_ap_name(char *out, size_t size);
 
 #endif

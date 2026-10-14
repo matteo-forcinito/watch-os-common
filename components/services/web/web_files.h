@@ -21,4 +21,9 @@
 /* Register the handlers above (6 URI handlers). */
 void web_files_register(httpd_handle_t server);
 
+/* Register a route; /api/ routes (except /api/pair) need the paired browser's token. */
+void web_route(httpd_handle_t server, const httpd_uri_t *route);
+/* Device, apps, market and system update API (web_system.c). */
+void web_system_register(httpd_handle_t server);
+
 #endif

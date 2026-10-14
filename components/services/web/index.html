@@ -3,181 +3,439 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Watch</title>
+<title>Orologio · dashboard</title>
+<link rel="stylesheet" href="/kit.css">
 <style>
-:root{--bg:#000;--card:#1c1c1e;--hi:#2c2c2e;--text:#fff;--dim:#8e8e93;--accent:#3d8bff;--red:#ff453a;--green:#30d158}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 -apple-system,Segoe UI,Roboto,sans-serif}
-main{max-width:640px;margin:auto;padding:16px}h1{font-size:28px;margin:8px 4px 4px}h2{font-size:15px;color:var(--dim);font-weight:500;margin:24px 8px 8px;text-transform:uppercase;letter-spacing:.05em}
-.card{background:var(--card);border-radius:18px;padding:6px 16px;margin-bottom:12px}.row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--hi)}.row:last-child{border:0}
-.row label{flex:1}input,select,textarea{background:var(--hi);color:var(--text);border:0;border-radius:10px;padding:10px;font:inherit}input[type=text],input[type=password],select{width:55%}
-textarea{width:100%;min-height:260px;font:13px monospace}input[type=range]{flex:1}button{background:var(--accent);color:#fff;border:0;border-radius:999px;padding:10px 18px;font:inherit;cursor:pointer}
-button.ghost{background:var(--hi)}button.red{background:var(--red)}.status{color:var(--dim);margin:0 4px}.chip{display:inline-block;padding:4px 10px;border-radius:99px;background:var(--hi);margin:2px;cursor:pointer;user-select:none}.chip.on{background:var(--accent)}
-.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--hi);padding:10px 18px;border-radius:99px;opacity:0;transition:.3s}.toast.show{opacity:1}
-.fs-row{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--hi)}.fs-row:last-child{border:0}
-.fs-name{flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fs-meta{color:var(--dim);font-size:13px;white-space:nowrap}
-.icon{background:var(--hi);padding:6px 10px;border-radius:10px;cursor:pointer;user-select:none}.icon.red{background:#3a1715;color:var(--red)}
-.crumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:10px 0}.crumbs span{cursor:pointer;color:var(--accent)}
-.bar{height:6px;background:var(--hi);border-radius:3px;overflow:hidden;margin:6px 0}.bar div{height:100%;width:0;background:var(--accent);transition:width .2s}
-.tools{display:flex;flex-wrap:wrap;gap:8px;padding:10px 0}
+:root{--accent:#3d8bff}
+.appgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+.app{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.app .top{display:flex;align-items:center;gap:10px}
+.app .dot{width:38px;height:38px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:800;color:#fff;font-size:15px;overflow:hidden}
+.app .dot img{width:100%;height:100%;object-fit:cover}
+.app .about{font-size:13px;color:var(--dim);flex:1}
+.app.update{border-color:var(--warn)}
+.star{background:none;border:0;cursor:pointer;font-size:18px;color:var(--faint);margin-left:auto}.star.on{color:var(--warn)}
+.meter{height:10px;border-radius:99px;background:var(--panel2);overflow:hidden;margin:6px 0 2px}.meter i{display:block;height:100%;border-radius:99px}
+.days .chip{min-width:44px;text-align:center}
+.row2{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}.row2:last-child{border-bottom:0}
+.fsrow{display:grid;grid-template-columns:24px 1fr auto auto;gap:10px;align-items:center;padding:8px 6px;border-bottom:1px solid var(--line)}
+.fsrow .n{cursor:pointer;word-break:break-all}.fsrow .n:hover{color:var(--accent)}
+.crumbs span{cursor:pointer;color:var(--accent)}
+.progressbar{height:8px;background:var(--panel2);border-radius:99px;overflow:hidden;display:none;margin-top:8px}.progressbar i{display:block;height:100%;background:var(--accent);width:0}
+.badge{display:inline-block;min-width:18px;padding:0 6px;border-radius:99px;background:var(--warn);color:#000;font-size:11px;font-weight:800;margin-left:6px}
 </style>
 </head>
 <body>
+<header class="kit-top">
+  <div class="kit-brand"><div class="kit-logo">⌚</div><span id="product">Orologio</span></div>
+  <nav class="kit-nav">
+    <button data-view="v-home">Panoramica</button>
+    <button data-view="v-apps">App</button>
+    <button data-view="v-market">Market<span class="badge" id="mk-badge" hidden></span></button>
+    <button data-view="v-alarms">Sveglie</button>
+    <button data-view="v-wifi">Wi-Fi</button>
+    <button data-view="v-settings">Impostazioni</button>
+    <button data-view="v-files">File</button>
+    <button data-view="v-system">Sistema</button>
+  </nav>
+  <div class="kit-dev"></div>
+</header>
 <main>
-<h1 id="product">Watch</h1>
-<p class="status" id="status">...</p>
-
-<h2>Sveglie</h2>
-<div class="card" id="alarms"></div>
-<div class="card">
- <div class="row"><label>Ora</label><input type="time" id="a_time" value="07:30"></div>
- <div class="row"><label>Nome</label><input type="text" id="a_label" value="Sveglia"></div>
- <div class="row" id="a_days"></div>
- <div class="row"><button onclick="addAlarm()">Aggiungi sveglia</button></div>
-</div>
-
-<h2>Wi-Fi</h2>
-<div class="card" id="wifi"></div>
-<div class="card">
- <div class="row"><button class="ghost" onclick="scanWifi()">Cerca reti</button></div>
- <div id="w_scan"></div>
- <div class="row"><label>Rete</label><input type="text" id="w_ssid"></div>
- <div class="row"><label>Password</label><input type="password" id="w_pass"></div>
- <div class="row"><button onclick="addWifi(true)">Salva e collega</button><button class="ghost" onclick="addWifi(false)">Solo salva</button></div>
- <div class="status" id="w_status"></div>
-</div>
-
-<h2>Impostazioni</h2>
-<div class="card">
- <div class="row"><label>Luminosità</label><input type="range" min="10" max="255" id="brightness"></div>
- <div class="row"><label>Spegnimento schermo (s)</label><input type="range" min="5" max="120" id="screen_timeout"></div>
- <div class="row"><label>Volume</label><input type="range" min="0" max="100" id="volume"></div>
- <div class="row"><label>Always on display</label><input type="checkbox" id="always_on"></div>
- <div class="row"><label>Tocca per accendere</label><input type="checkbox" id="tap_to_wake"></div>
- <div class="row"><label>Accendi con le notifiche</label><input type="checkbox" id="wake_on_notification"></div>
- <div class="row"><label>Formato 24 ore</label><input type="checkbox" id="time_24h"></div>
- <div class="row"><label>Ora automatica</label><input type="checkbox" id="auto_time"></div>
- <div class="row"><label>Bluetooth</label><input type="checkbox" id="ble"></div>
- <div class="row"><label>Nome Bluetooth</label><input type="text" id="device_name"></div>
- <div class="row"><label>Fuso orario (POSIX)</label><input type="text" id="timezone"></div>
- <div class="row"><button onclick="saveSettings()">Salva</button><button class="ghost" onclick="syncTime()">Ora dal browser</button></div>
-</div>
-
-
-<section id="files_section" hidden>
-<h2 id="files_title">File</h2>
-<div class="card">
- <div class="crumbs" id="fs_crumbs"></div>
- <div class="tools">
-  <button class="ghost" onclick="fsUp()">&#8593; Su</button>
-  <button class="ghost" onclick="fsMkdir()">+ Cartella</button>
-  <button class="ghost" onclick="fsNewFile()">+ File</button>
-  <label class="icon" style="padding:10px 16px">Carica file<input type="file" id="fs_files" multiple hidden onchange="fsUpload(this.files)"></label>
- </div>
- <div class="bar" id="fs_bar" hidden><div id="fs_bar_fill"></div></div>
- <div class="status" id="fs_info"></div>
- <div id="fs_list"></div>
-</div>
-<div class="card" id="fs_editor" hidden>
- <div class="row"><label id="fs_edit_name"></label></div>
- <div class="row" style="display:block"><textarea id="fs_text" spellcheck="false"></textarea></div>
- <div class="row"><button onclick="fsSave()">Salva</button><button class="ghost" onclick="fsCloseEditor()">Chiudi</button></div>
-</div>
-
+<!-- ============================================================ HOME -->
+<section class="view" id="v-home">
+  <div class="grid g4" id="kpis"></div>
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card"><h2>Memoria</h2><div id="memory"></div></div>
+    <div class="card"><h2>Spazio</h2><div id="storage"></div></div>
+  </div>
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card"><h2>Aggiornamenti</h2><div id="home-updates"></div></div>
+    <div class="card"><h2>Azioni rapide</h2><div class="row">
+      <button class="btn" onclick="kit.show('v-apps')">Apri un'app sull'orologio</button>
+      <button class="btn" onclick="syncTime()">Sincronizza l'ora</button>
+      <button class="btn danger" onclick="reboot()">Riavvia</button></div></div>
+  </div>
 </section>
-<section id="external_section" hidden>
-<h2>App esterne</h2>
-<div class="card">
- <div class="row"><label>Nome</label><input type="text" id="u_name" placeholder="MiaApp"></div>
- <div class="row"><input type="file" id="u_file" accept=".bin"><button onclick="upload()">Carica .bin</button></div>
-</div>
 
+<!-- ============================================================ APPS -->
+<section class="view" id="v-apps">
+  <div class="card"><div class="row"><h2 class="grow" style="margin:0">Menu dell'orologio</h2>
+    <span class="dim">App per pagina</span><div class="pill-toggle" id="cards"><button data-c="4">4</button><button data-c="6">6</button><button data-c="9">9</button></div></div>
+    <p class="dim" style="margin:8px 0 0">★ mette un'app tra le Preferite in cima al menu (massimo 6).</p></div>
+  <h3 style="margin:20px 0 10px">Integrate</h3><div class="appgrid" id="builtin"></div>
+  <h3 style="margin:20px 0 10px">Esterne</h3><div class="appgrid" id="external"></div>
+  <div class="card" style="margin-top:16px"><h2>Carica un'app esterna (.bin)</h2>
+    <div class="row"><input id="u_name" placeholder="Nome (es. Pieno)"><input type="file" id="u_file" accept=".bin"><button class="btn primary" onclick="uploadApp()">Carica</button></div>
+    <p class="faint">Di solito non serve: le app si installano dal Market.</p></div>
 </section>
-<h2>Aggiornamento firmware</h2>
-<div class="card">
- <div class="row"><label>Versione installata</label><b id="fw_ver">-</b></div>
- <div class="row"><input type="file" id="fw_file" accept=".bin"><button onclick="fwUpload()">Installa</button></div>
- <div class="bar" id="fw_bar" hidden><div id="fw_bar_fill"></div></div>
- <div class="status" id="fw_info">Scegli <b>firmware.bin</b> (cartella <b>build</b> del progetto, o dalle release): l'orologio lo verifica, si riavvia e torna da solo alla versione precedente se quella nuova non parte.</div>
- <div class="row"><label>Manifest online (JSON)</label><input type="text" id="update_url" placeholder="https://.../version.json"></div>
- <div class="row"><button class="ghost" onclick="api('/api/settings',{update_url:$('update_url').value}).then(done)">Salva indirizzo</button></div>
-</div>
+
+<!-- ========================================================== MARKET -->
+<section class="view" id="v-market">
+  <div class="row" style="margin-bottom:12px"><span class="dim grow" id="mk-status"></span>
+    <button class="btn" onclick="marketRefresh()">↻ Aggiorna catalogo</button></div>
+  <div class="progressbar" id="mk-bar"><i></i></div>
+  <div id="market"></div>
+</section>
+
+<!-- ========================================================== ALARMS -->
+<section class="view" id="v-alarms">
+  <div class="grid g2">
+    <div class="card"><h2>Sveglie</h2><div id="alarms"></div></div>
+    <div class="card"><h2>Nuova sveglia</h2>
+      <div class="grid" style="gap:10px"><input type="time" id="a_time" value="07:00"><input id="a_label" placeholder="Etichetta (facoltativa)">
+        <div class="chips days" id="a_days"></div>
+        <div class="row end"><button class="btn primary" onclick="addAlarm()">Aggiungi</button></div></div></div>
+  </div>
+</section>
+
+<!-- ============================================================ WIFI -->
+<section class="view" id="v-wifi">
+  <div class="grid g2">
+    <div class="card"><h2>Reti salvate</h2><div id="wifi"></div><p class="dim" id="w_status"></p></div>
+    <div class="card"><h2>Aggiungi una rete</h2>
+      <div class="grid" style="gap:10px"><input id="w_ssid" placeholder="Nome rete (SSID)"><input id="w_pass" type="password" placeholder="Password">
+        <div class="row end"><button class="btn" onclick="scanWifi()">Cerca reti</button><button class="btn" onclick="addWifi(false)">Salva</button><button class="btn primary" onclick="addWifi(true)">Salva e collega</button></div>
+        <div class="chips" id="w_scan"></div>
+        <p class="faint">Solo reti a 2,4 GHz.</p></div></div>
+  </div>
+</section>
+
+<!-- ======================================================== SETTINGS -->
+<section class="view" id="v-settings">
+  <div class="grid g2">
+    <div class="card"><h2>Schermo e suono</h2><div class="grid" style="gap:12px">
+      <label class="field">Luminosità <input type="range" id="brightness" min="10" max="255"></label>
+      <label class="field">Spegnimento schermo (s)<input type="number" id="screen_timeout" min="5" max="120"></label>
+      <label class="field">Volume <input type="range" id="volume" min="0" max="100"></label>
+      <label class="row"><input type="checkbox" id="always_on"> Always on</label>
+      <label class="row"><input type="checkbox" id="tap_to_wake"> Tocca per accendere</label>
+      <label class="row"><input type="checkbox" id="wake_on_notification"> Accendi con le notifiche</label></div></div>
+    <div class="card"><h2>Ora e dispositivo</h2><div class="grid" style="gap:12px">
+      <label class="field">Nome Bluetooth<input id="device_name" maxlength="23"></label>
+      <label class="field">Fuso orario (POSIX)<input id="timezone"></label>
+      <label class="row"><input type="checkbox" id="time_24h"> 24 ore</label>
+      <label class="row"><input type="checkbox" id="auto_time"> Ora automatica</label>
+      <label class="row"><input type="checkbox" id="ble"> Bluetooth (companion)</label></div></div>
+  </div>
+  <div class="row end" style="margin-top:14px"><button class="btn primary" onclick="saveSettings()">Salva sull'orologio</button></div>
+</section>
+
+<!-- =========================================================== FILES -->
+<section class="view" id="v-files">
+  <div class="card">
+    <div class="row"><div class="crumbs grow" id="fs_crumbs"></div><span class="dim" id="fs_info"></span>
+      <button class="btn sm" onclick="fsMkdir()">+ Cartella</button>
+      <label class="btn sm primary">⤒ Carica<input type="file" id="fs_files" multiple hidden onchange="fsUpload(this.files)"></label></div>
+    <div class="progressbar" id="fs_bar"><i></i></div>
+    <div id="fs_list" style="margin-top:10px"></div>
+  </div>
+  <div class="card" id="fs_editor" style="margin-top:16px;display:none"><div class="row"><b class="grow" id="fs_edit_name"></b>
+    <button class="btn sm" onclick="kit.$('#fs_editor').style.display='none'">Chiudi</button><button class="btn sm primary" onclick="fsSave()">Salva</button></div>
+    <textarea id="fs_text" rows="16" style="width:100%;margin-top:10px;font-family:ui-monospace,monospace"></textarea></div>
+</section>
+
+<!-- ========================================================== SYSTEM -->
+<section class="view" id="v-system">
+  <div class="grid g2">
+    <div class="card"><h2>Aggiornamento del sistema</h2><div id="upd"></div>
+      <div class="row" style="margin-top:10px"><button class="btn" onclick="updCheck()">Controlla</button><button class="btn primary" id="upd-install" onclick="updInstall()" hidden>Installa</button></div></div>
+    <div class="card"><h2>Firmware da file</h2><p class="dim">Il .bin di questo orologio (verifica e riavvio automatici; se non parte torna alla versione precedente).</p>
+      <div class="row"><input type="file" id="fw_file" accept=".bin"><button class="btn primary" onclick="fwUpload()">Installa</button></div>
+      <div class="progressbar" id="fw_bar"><i></i></div><p class="dim" id="fw_info"></p></div>
+  </div>
+  <div class="card" style="margin-top:16px"><h2>Dispositivo</h2><div id="device"></div></div>
+</section>
 </main>
-<div class="toast" id="toast"></div>
-<script>
-const $=id=>document.getElementById(id);const days=['Lun','Mar','Mer','Gio','Ven','Sab','Dom'];let dayMask=0x1F;
-function toast(t){const e=$('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)}
-async function api(path,body,raw){const o=body===undefined?{}:{method:'POST',body:raw?body:JSON.stringify(body)};const r=await fetch(path,o);return(r.headers.get('content-type')||'').includes('json')?r.json():r.text()}
-function done(r){toast(r.ok?(r.message||'Salvato'):(r.message||'Errore'))}
-function drawDays(){$('a_days').innerHTML=days.map((d,i)=>`<span class="chip ${dayMask&(1<<i)?'on':''}" onclick="dayMask^=${1<<i};drawDays()">${d}</span>`).join('')}
-function dayText(m){return m==0?'Una volta':m==127?'Ogni giorno':days.filter((d,i)=>m&(1<<i)).join(' ')}
-async function load(){
- const s=await api('/api/state');const st=s.settings;
- if(s.product){document.title=s.product;$('product').textContent=s.product}
- $('status').textContent=`Batteria ${s.battery<0?'-':s.battery+'%'}${s.charging?' (in carica)':''} · Wi-Fi ${s.wifi||'access point'}${s.has_sdcard ? ` · SD ${s.sd?'ok':'assente'}` : ''}`;
- $('files_section').hidden=!s.files;
- $('external_section').hidden=!s.has_sdcard;
- $('files_title').textContent=s.has_sdcard?'Scheda SD':'Memoria interna';
- if(s.files)fsLoad(cwd);
- for(const k of['brightness','screen_timeout','volume','timezone','device_name','update_url'])$(k).value=st[k]||'';
- $('fw_ver').textContent=s.version||'-';
- for(const k of['always_on','tap_to_wake','wake_on_notification','time_24h','auto_time','ble'])$(k).checked=st[k];
- const al=await api('/api/alarms');$('alarms').innerHTML=al.length?al.map(a=>`<div class="row"><label><b>${String(a.hour).padStart(2,'0')}:${String(a.minute).padStart(2,'0')}</b> ${a.label}<br><small class="status">${dayText(a.days)}</small></label><input type="checkbox" ${a.enabled?'checked':''} onchange="api('/api/alarms',{id:${a.id},enabled:this.checked}).then(done)"><button class="red" onclick="api('/api/alarms',{id:${a.id},delete:true}).then(r=>{done(r);load()})">✕</button></div>`).join(''):'<div class="row status">Nessuna sveglia</div>';
- const w=await api('/api/wifi');$('wifi').innerHTML=w.length?w.map(n=>`<div class="row"><label>${n}</label><button class="red" onclick="api('/api/wifi',{ssid:'${n.replace(/'/g,"\\'")}',delete:true}).then(r=>{done(r);load()})">✕</button></div>`).join(''):'<div class="row status">Nessuna rete salvata</div>';
-}
-function addAlarm(){const [h,m]=$('a_time').value.split(':').map(Number);api('/api/alarms',{hour:h,minute:m,days:dayMask,label:$('a_label').value,enabled:true}).then(r=>{done(r);load()})}
-function addWifi(c){api('/api/wifi',{ssid:$('w_ssid').value,password:$('w_pass').value,connect:c}).then(r=>{done(r);$('w_pass').value='';load();if(c&&r.ok)pollWifi(0)})}
-const bars=r=>r>-60?'▂▄▆█':r>-70?'▂▄▆':r>-80?'▂▄':'▂';
-async function scanWifi(){$('w_scan').innerHTML='<div class="status">Ricerca (qualche secondo)...</div>';const l=await api('/api/wifi/scan').catch(()=>[]);$('w_scan').innerHTML=l.length?l.map(n=>`<span class="chip" data-s="${esc(n.ssid)}" onclick="$('w_ssid').value=this.dataset.s;$('w_pass').focus()">${n.open?'':'&#128274; '}${esc(n.ssid)} <small>${bars(n.rssi)}</small>${n.known?' ✓':''}</span>`).join(''):'<div class="status">Nessuna rete 2,4 GHz trovata</div>'}
-async function pollWifi(n){const s=await api('/api/wifi/status').catch(()=>null);
- if(s)$('w_status').textContent=s.state=='connecting'?`Collegamento a ${s.ssid}... (il telefono può perdere la rete per qualche secondo)`:s.state=='ok'?`Collegato a ${s.ssid} · IP ${s.ip}`:s.state=='failed'?`Non collegato a ${s.ssid}: ${s.reason}`:'';
- else $('w_status').textContent='In attesa che il telefono si ricolleghi...';
- if(n<30&&(!s||s.state=='connecting'))setTimeout(()=>pollWifi(n+1),2000)}
-function saveSettings(){const b={};for(const k of['brightness','screen_timeout','volume'])b[k]=+$(k).value;for(const k of['timezone','device_name'])b[k]=$(k).value;for(const k of['always_on','tap_to_wake','wake_on_notification','time_24h','auto_time','ble'])b[k]=$(k).checked;api('/api/settings',b).then(done)}
-function syncTime(){api('/api/time',{epoch:Math.floor(Date.now()/1000)}).then(done)}
-async function upload(){const f=$('u_file').files[0],n=$('u_name').value.trim();if(!f||!n)return toast('Scegli nome e file');toast('Caricamento...');const r=await fetch('/api/upload?name='+encodeURIComponent(n),{method:'POST',body:f});done(await r.json())}
 
-let cwd='/',editing=null;const TEXT=/\.(txt|json|ini|csv|md|html|htm|cfg|log|m3u|pls)$/i;
-const join=(d,n)=>(d.endsWith('/')?d:d+'/')+n;
-const enc=p=>encodeURIComponent(p);
-const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function size(b){return b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB'}
-async function fsLoad(path){
- const r=await fetch('/api/fs/list?path='+enc(path)).then(x=>x.json()).catch(()=>({ok:false,message:'Errore di rete'}));
- if(!r.ok){toast(r.message||'Errore');return}
- cwd=r.path;const parts=cwd.split('/').filter(x=>x);let acc='';
- $('fs_crumbs').innerHTML='<span data-p="/" onclick="fsLoad(this.dataset.p)">'+esc(r.storage||'File')+'</span>'+parts.map(p=>{acc+='/'+p;return ' / <span data-p="'+esc(acc)+'" onclick="fsLoad(this.dataset.p)">'+esc(p)+'</span>'}).join('');
- $('fs_info').textContent=`${r.free_mb} MB liberi su ${r.total_mb} MB`;
- const items=r.entries.sort((a,b)=>(b.d-a.d)||a.n.localeCompare(b.n));
- $('fs_list').innerHTML=items.length?items.map((e,i)=>{const p=join(cwd,e.n);return `<div class="fs-row"><span>${e.d?'&#128193;':'&#128196;'}</span>`+
-  `<span class="fs-name" onclick="fsOpen(${i})">${esc(e.n)}</span><span class="fs-meta">${e.d?'':size(e.s)}</span>`+
-  (e.d?'':`<a class="icon" href="/api/fs/get?path=${enc(p)}&dl=1">&#11015;</a>`)+
-  `<span class="icon" onclick="fsRename(${i})">&#9998;</span><span class="icon red" onclick="fsDelete(${i})">&#10005;</span></div>`}).join(''):'<div class="status" style="padding:12px 0">Cartella vuota</div>';
- window.fsItems=items;
+<script src="/kit.js"></script>
+<script>
+'use strict';
+const {el, $, $$} = kit;
+const S = {sys: null, apps: null, market: null, revision: -1, ready: false};
+const hex = c => '#' + (c >>> 0).toString(16).padStart(6, '0');
+const kb = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+const enc = encodeURIComponent;
+/* the older endpoints answer {ok:false,message} with HTTP 200 */
+async function call(path, opt) { const r = await kit.api(path, opt); if (r && r.ok === false) throw new Error(r.message || 'Errore'); return r; }
+const act = (fn, ok) => kit.try(fn, ok);
+
+/* ------------------------------------------------------------ home */
+async function loadSystem() {
+  const s = S.sys = await kit.api('/api/system');
+  $('#product').textContent = s.product;
+  document.title = s.product + ' · dashboard';
+  const k = $('#kpis'), card = (v, t, cls) => el('div', {class: 'card kpi'}, el('b', {class: cls || ''}, v), el('span', {}, t));
+  k.innerHTML = '';
+  const up = s.uptime, upt = up > 86400 ? Math.floor(up / 86400) + ' g' : up > 3600 ? Math.floor(up / 3600) + ' h' : Math.floor(up / 60) + ' min';
+  k.append(card(s.battery >= 0 ? s.battery + '%' : '–', s.charging ? 'batteria · in carica' : s.usb ? 'batteria · USB' : 'batteria', s.battery >= 0 && s.battery < 20 ? 'bad' : ''),
+    card(s.wifi.ssid ? s.wifi.rssi + ' dBm' : '–', s.wifi.ssid ? s.wifi.ssid + ' · ' + s.wifi.ip : 'Wi-Fi'),
+    card('v' + s.version, s.board), card(upt, 'acceso da'));
+  const bar = (used, total, label, warn) => {
+    const p = total ? used / total : 0, c = p > warn ? 'var(--bad)' : p > warn - .15 ? 'var(--warn)' : 'var(--good)';
+    return el('div', {style: {marginBottom: '12px'}}, el('div', {class: 'row'}, el('b', {class: 'grow'}, label), el('span', {class: 'dim'}, kb(Math.max(total - used, 0)) + ' liberi')),
+      el('div', {class: 'meter'}, el('i', {style: {width: (p * 100).toFixed(1) + '%', background: c}})));
+  };
+  const mem = $('#memory'), m = s.memory, internalTotal = Math.max(m.internal + 1, 160 * 1024);
+  mem.innerHTML = '';
+  mem.append(bar(internalTotal - m.internal, internalTotal, 'RAM interna', .8),
+    el('p', {class: 'faint', style: {marginTop: '-6px'}}, `Blocco più grande ${kb(m.internal_largest)} · minimo storico ${kb(m.internal_min)}`),
+    bar(m.psram_total - m.psram, m.psram_total, 'PSRAM', .9));
+  const st = $('#storage'), d = s.storage;
+  st.innerHTML = '';
+  if (d.sd) st.append(bar((d.sd_total_mb - d.sd_free_mb) * 1048576, d.sd_total_mb * 1048576, 'microSD', .9));
+  else if (d.sd_slot) st.append(el('p', {class: 'dim'}, 'Nessuna microSD inserita.'));
+  if (d.flash_total_kb) st.append(bar((d.flash_total_kb - d.flash_free_kb) * 1024, d.flash_total_kb * 1024, 'Memoria interna (file)', .9));
+  device();
 }
-function fsUp(){if(cwd==='/')return;fsLoad(cwd.substring(0,cwd.lastIndexOf('/'))||'/')}
-function fsOpen(i){const e=fsItems[i],p=join(cwd,e.n);if(e.d)fsLoad(p);else if(TEXT.test(e.n)&&e.s<65536)fsEdit(p);else location.href='/api/fs/get?path='+enc(p)+'&dl=1'}
-async function fsPost(url){const r=await fetch(url,{method:'POST'}).then(x=>x.json()).catch(()=>({ok:false,message:'Errore di rete'}));done(r);fsLoad(cwd);return r.ok}
-function fsMkdir(){const n=prompt('Nome della nuova cartella');if(n)fsPost('/api/fs/mkdir?path='+enc(join(cwd,n.trim())))}
-function fsRename(i){const e=fsItems[i],n=prompt('Nuovo nome',e.n);if(n&&n!==e.n)fsPost('/api/fs/rename?from='+enc(join(cwd,e.n))+'&to='+enc(join(cwd,n.trim())))}
-function fsDelete(i){const e=fsItems[i];if(confirm((e.d?'Eliminare la cartella "'+e.n+'" e tutto il suo contenuto?':'Eliminare "'+e.n+'"?')))fsPost('/api/fs/delete?path='+enc(join(cwd,e.n)))}
-function fsNewFile(){const n=prompt('Nome del nuovo file (es. note.txt)');if(n){editing=join(cwd,n.trim());$('fs_edit_name').textContent=editing;$('fs_text').value='';$('fs_editor').hidden=false;$('fs_text').focus()}}
-async function fsEdit(p){const t=await fetch('/api/fs/get?path='+enc(p)).then(x=>x.text());editing=p;$('fs_edit_name').textContent=p;$('fs_text').value=t;$('fs_editor').hidden=false;$('fs_editor').scrollIntoView({behavior:'smooth'})}
-async function fsSave(){if(!editing)return;const r=await fetch('/api/fs/put?path='+enc(editing),{method:'POST',body:$('fs_text').value}).then(x=>x.json()).catch(()=>({ok:false}));done(r);fsLoad(cwd)}
-function fsCloseEditor(){editing=null;$('fs_editor').hidden=true}
-function putFile(path,file,onp){return new Promise(res=>{const x=new XMLHttpRequest();x.open('POST','/api/fs/put?path='+enc(path));
- x.upload.onprogress=e=>{if(e.lengthComputable)onp(e.loaded/e.total)};x.onload=()=>{try{res(JSON.parse(x.responseText))}catch(e){res({ok:false})}};x.onerror=()=>res({ok:false,message:'Errore di rete'});x.send(file)})}
-async function fsUpload(files){const list=[...files];if(!list.length)return;$('fs_bar').hidden=false;let ok=0;
- for(let i=0;i<list.length;i++){const f=list[i];$('fs_info').textContent=`Caricamento ${i+1}/${list.length}: ${f.name}`;
-  const r=await putFile(join(cwd,f.name),f,p=>{$('fs_bar_fill').style.width=((i+p)/list.length*100)+'%'});if(r.ok)ok++;else toast(f.name+': '+(r.message||'errore'))}
- $('fs_bar').hidden=true;$('fs_bar_fill').style.width='0';$('fs_files').value='';toast(ok+' file caricati');fsLoad(cwd)}
-function fwUpload(){const f=$('fw_file').files[0];if(!f)return toast('Scegli il file .bin');const x=new XMLHttpRequest(),t0=Date.now();
- $('fw_bar').hidden=false;$('fw_info').textContent='Invio...';x.open('POST','/api/firmware');
- x.upload.onprogress=e=>{if(!e.lengthComputable)return;const p=e.loaded/e.total,s=(Date.now()-t0)/1000;$('fw_bar_fill').style.width=(p*100)+'%';
-  $('fw_info').textContent=`${Math.round(p*100)}% · ${(e.loaded/1024/Math.max(s,.1)).toFixed(0)} KB/s`};
- x.onload=()=>{let r={ok:false};try{r=JSON.parse(x.responseText)}catch(e){}$('fw_info').textContent=r.message||(r.ok?'Fatto':'Errore');
-  $('fw_bar').hidden=true;if(r.ok){$('fw_info').textContent='Installato e verificato: l’orologio si riavvia con la nuova versione. Per tornare a questa pagina riapri l’app Web.'}};
- x.onerror=()=>{$('fw_info').textContent='Errore di rete';$('fw_bar').hidden=true};x.send(f)}
-drawDays();load();
+function device() {
+  const s = S.sys, box = $('#device');
+  if (!s) return;
+  box.innerHTML = '';
+  const row = (k, v) => box.append(el('div', {class: 'row2'}, el('span', {class: 'dim grow'}, k), el('b', {}, v)));
+  row('Modello', s.board); row('Sistema', 'v' + s.version); row('Schermo', `${s.width}×${s.height}${s.round ? ' tondo' : ''}`);
+  row('Batteria', s.battery >= 0 ? `${s.battery}% · ${(s.battery_mv / 1000).toFixed(2)} V` : '–'); row('Indirizzo', s.wifi.ip || '–');
+}
+const syncTime = () => act(() => call('/api/time', {body: {epoch: Math.floor(Date.now() / 1000)}}), 'Ora sincronizzata');
+const reboot = () => confirm('Riavviare l\'orologio?') && act(() => kit.api('/api/reboot', {body: {}}), 'Riavvio...');
+
+/* ------------------------------------------------------------ apps */
+async function loadApps() {
+  const a = S.apps = await kit.api('/api/apps');
+  $$('#cards button').forEach(b => { b.classList.toggle('on', +b.dataset.c === a.cards); b.onclick = () => saveLauncher({cards: +b.dataset.c}); });
+  const fav = new Set(a.favorites);
+  const star = key => el('button', {class: 'star' + (fav.has(key) ? ' on' : ''), title: 'Preferita', onclick: () => {
+    const list = a.favorites.filter(k => k !== key);
+    if (!fav.has(key)) { if (list.length >= 6) return kit.toast('Già 6 preferite', 'bad'); list.push(key); }
+    saveLauncher({favorites: list});
+  }}, '★');
+  const b = $('#builtin');
+  b.innerHTML = '';
+  for (const x of a.builtin) b.append(el('div', {class: 'app'},
+    el('div', {class: 'top'}, el('div', {class: 'dot', style: {background: hex(x.color)}}, x.name[0]), el('b', {}, x.name), star(x.id)),
+    el('div', {class: 'about'}, x.about || ''),
+    el('div', {class: 'row'}, el('button', {class: 'btn sm', onclick: () => act(() => call('/api/apps/open', {body: {id: x.id}}), x.name + ' aperta sull\'orologio')}, '▶ Apri sull\'orologio'))));
+  const e = $('#external');
+  e.innerHTML = '';
+  for (const x of a.external) e.append(el('div', {class: 'app'},
+    el('div', {class: 'top'}, el('div', {class: 'dot', style: {background: '#bf5af2'}}, x.name[0]), el('b', {}, x.name), star('ext:' + x.id)),
+    el('div', {class: 'about'}, `v${x.version || '?'} · ${x.slot ? 'nella memoria app' : kb(x.size)}${x.ready ? ' · pronta' : ''}`),
+    el('div', {class: 'row'}, el('button', {class: 'btn sm', onclick: () => act(() => call('/api/apps/open', {body: {ext: x.id}}), x.name + ' si avvia sull\'orologio')}, '▶ Avvia'),
+      el('button', {class: 'btn sm danger', onclick: () => confirm('Disinstallare ' + x.name + '?') && act(() => kit.api('/api/market/remove', {body: {id: x.id}}), 'Disinstallazione avviata').then(() => setTimeout(loadApps, 3000))}, 'Disinstalla'))));
+  if (!a.external.length) e.append(el('div', {class: 'empty'}, 'Nessuna app esterna: le trovi nel Market.'));
+}
+const saveLauncher = body => act(() => kit.api('/api/apps/launcher', {body}), 'Salvato').then(loadApps);
+async function uploadApp() {
+  const f = $('#u_file').files[0], n = $('#u_name').value.trim();
+  if (!f || !n) return kit.toast('Scegli nome e file', 'bad');
+  kit.toast('Caricamento...');
+  await act(() => call('/api/upload?name=' + enc(n), {body: f}), 'App caricata');
+  loadApps();
+}
+
+/* ---------------------------------------------------------- market */
+async function loadMarket() {
+  const m = S.market = await kit.api('/api/market');
+  const st = m.status, updates = m.apps.filter(a => a.update);
+  const badge = $('#mk-badge'); badge.hidden = !updates.length; badge.textContent = updates.length;
+  $('#mk-status').textContent = (st.update_all ? 'Aggiorno tutte le app... ' : '') + (st.message || (m.apps.length ? m.apps.length + ' app nel catalogo' : 'Catalogo non ancora caricato: tocca Aggiorna catalogo'));
+  $('#mk-bar').style.display = st.busy ? 'block' : 'none';
+  $('#mk-bar i').style.width = st.percent + '%';
+  homeUpdates(updates);
+  const sig = st.revision + ':' + st.busy + ':' + st.update_all + ':' + (st.busy ? st.percent : '');
+  if (sig === S.revision) return;
+  S.revision = sig;
+  const box = $('#market');
+  box.innerHTML = '';
+  if (!m.sd) box.append(el('p', {class: 'dim'}, 'Senza microSD c\'è posto per un\'app alla volta: installarne un\'altra la sostituisce.'));
+  const groups = [['Da aggiornare', updates], ['Da installare', m.apps.filter(a => !a.installed)], ['Installate', m.apps.filter(a => a.installed && !a.update)]];
+  for (const [title, list] of groups) {
+    if (!list.length) continue;
+    const head = el('div', {class: 'row', style: {margin: '18px 0 10px'}}, el('h3', {class: 'grow', style: {margin: 0}}, title + ' (' + list.length + ')'));
+    if (title === 'Da aggiornare' && list.length > 1) head.append(el('button', {class: 'btn primary', disabled: st.busy || st.update_all,
+      onclick: () => act(() => kit.api('/api/market/update_all', {body: {}}), 'Aggiorno tutte, una alla volta')}, '⤓ Aggiorna tutte'));
+    box.append(head);
+    const grid = el('div', {class: 'appgrid'});
+    for (const a of list) {
+      const busyHere = st.busy && st.app === a.id;
+      grid.append(el('div', {class: 'app' + (a.update ? ' update' : '')},
+        el('div', {class: 'top'}, el('div', {class: 'dot', style: {background: hex(a.color)}}, el('img', {src: a.icon, alt: '', onerror: e => e.target.remove()})),
+          el('div', {}, el('b', {}, a.name), el('div', {class: 'faint', style: {fontSize: '12px'}}, a.update ? `${a.installed_version} → ${a.version}` : 'v' + a.version + (a.channel !== 'stable' ? ' · ' + a.channel : '') + ' · ' + kb(a.size)))),
+        el('div', {class: 'about'}, a.summary),
+        busyHere ? el('div', {class: 'dim'}, st.percent + '% · ' + st.message) :
+        el('div', {class: 'row'},
+          !a.installed ? el('button', {class: 'btn sm primary', disabled: st.busy, onclick: () => act(() => kit.api('/api/market/install', {body: {id: a.id}}), 'Installazione avviata')}, '⤓ Installa') : '',
+          a.update ? el('button', {class: 'btn sm primary', disabled: st.busy, onclick: () => act(() => kit.api('/api/market/install', {body: {id: a.id}}), 'Aggiornamento avviato')}, '⤓ Aggiorna') : '',
+          a.installed ? el('button', {class: 'btn sm', onclick: () => act(() => call('/api/apps/open', {body: {ext: a.id}}), 'Si avvia sull\'orologio')}, '▶ Avvia') : '',
+          a.installed ? el('button', {class: 'btn sm danger', disabled: st.busy, onclick: () => confirm('Disinstallare ' + a.name + '?') && act(() => kit.api('/api/market/remove', {body: {id: a.id}}), 'Disinstallazione avviata')}, 'Disinstalla') : '')));
+    }
+    box.append(grid);
+  }
+}
+const marketRefresh = () => act(() => kit.api('/api/market/refresh', {body: {}}), 'Carico il catalogo...');
+function homeUpdates(updates) {
+  const box = $('#home-updates');
+  box.innerHTML = '';
+  box.append(el('div', {class: 'row2'}, el('span', {class: 'grow'}, 'App'), updates.length ? el('button', {class: 'btn sm primary', onclick: () => kit.show('v-market')}, updates.length + ' da aggiornare') : el('span', {class: 'dim'}, 'aggiornate')));
+  box.append(el('div', {class: 'row2'}, el('span', {class: 'grow'}, 'Sistema'), el('button', {class: 'btn sm', onclick: () => kit.show('v-system')}, 'Controlla')));
+}
+
+/* ---------------------------------------------------------- alarms */
+const DAYS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
+let dayMask = 0x1F;
+const dayText = m => m == 0 ? 'Una volta' : m == 127 ? 'Ogni giorno' : m == 0x1F ? 'Lun–Ven' : DAYS.filter((d, i) => m & (1 << i)).join(' ');
+function drawDays() { const b = $('#a_days'); b.innerHTML = ''; DAYS.forEach((d, i) => b.append(el('button', {class: 'chip' + (dayMask & (1 << i) ? ' on' : ''), onclick: () => { dayMask ^= 1 << i; drawDays(); }}, d))); }
+async function loadAlarms() {
+  const list = await kit.api('/api/alarms'), box = $('#alarms');
+  box.innerHTML = '';
+  for (const a of list) {
+    const on = el('input', {type: 'checkbox'}); on.checked = a.enabled;
+    on.onchange = () => act(() => call('/api/alarms', {body: {id: a.id, enabled: on.checked}}), on.checked ? 'Attivata' : 'Disattivata');
+    box.append(el('div', {class: 'row2'}, el('b', {class: 'big'}, String(a.hour).padStart(2, '0') + ':' + String(a.minute).padStart(2, '0')),
+      el('div', {class: 'grow'}, el('div', {}, a.label || 'Sveglia'), el('div', {class: 'dim'}, dayText(a.days))), on,
+      el('button', {class: 'btn sm danger', onclick: () => act(() => call('/api/alarms', {body: {id: a.id, delete: true}}), 'Eliminata').then(loadAlarms)}, '✕')));
+  }
+  if (!list.length) box.append(el('div', {class: 'empty'}, 'Nessuna sveglia'));
+}
+function addAlarm() {
+  const [h, m] = $('#a_time').value.split(':').map(Number);
+  act(() => call('/api/alarms', {body: {hour: h, minute: m, days: dayMask, label: $('#a_label').value, enabled: true}}), 'Sveglia aggiunta').then(loadAlarms);
+}
+
+/* ------------------------------------------------------------ wifi */
+async function loadWifi() {
+  const list = await kit.api('/api/wifi'), box = $('#wifi');
+  box.innerHTML = '';
+  for (const n of list) box.append(el('div', {class: 'row2'}, el('span', {class: 'grow'}, n),
+    el('button', {class: 'btn sm danger', onclick: () => confirm('Dimenticare ' + n + '?') && act(() => call('/api/wifi', {body: {ssid: n, delete: true}}), 'Rimossa').then(loadWifi)}, '✕')));
+  if (!list.length) box.append(el('div', {class: 'empty'}, 'Nessuna rete salvata'));
+}
+async function scanWifi() {
+  const box = $('#w_scan'); box.textContent = 'Ricerca (qualche secondo)...';
+  const list = await kit.api('/api/wifi/scan').catch(() => []);
+  box.innerHTML = '';
+  for (const n of list) box.append(el('button', {class: 'chip', onclick: () => { $('#w_ssid').value = n.ssid; $('#w_pass').focus(); }}, (n.open ? '' : '🔒 ') + n.ssid + ' ' + n.rssi + ' dBm' + (n.known ? ' ✓' : '')));
+  if (!list.length) box.textContent = 'Nessuna rete 2,4 GHz trovata';
+}
+function addWifi(connect) {
+  act(() => call('/api/wifi', {body: {ssid: $('#w_ssid').value, password: $('#w_pass').value, connect}}), 'Salvata')
+    .then(r => { $('#w_pass').value = ''; loadWifi(); if (connect && r) pollWifi(0); });
+}
+async function pollWifi(n) {
+  const s = await kit.api('/api/wifi/status').catch(() => null), t = $('#w_status');
+  t.textContent = !s ? 'In attesa che l\'orologio si ricolleghi...' : s.state == 'connecting' ? `Collegamento a ${s.ssid}...` :
+    s.state == 'ok' ? `Collegato a ${s.ssid} · IP ${s.ip}` : s.state == 'failed' ? `Non collegato a ${s.ssid}: ${s.reason}` : '';
+  if (n < 30 && (!s || s.state == 'connecting')) setTimeout(() => pollWifi(n + 1), 2000);
+}
+
+/* -------------------------------------------------------- settings */
+const NUMS = ['brightness', 'screen_timeout', 'volume'], TEXTS = ['timezone', 'device_name'],
+  FLAGS = ['always_on', 'tap_to_wake', 'wake_on_notification', 'time_24h', 'auto_time', 'ble'];
+async function loadSettings() {
+  const st = (await kit.api('/api/state')).settings;
+  for (const k of NUMS.concat(TEXTS)) $('#' + k).value = st[k];
+  for (const k of FLAGS) $('#' + k).checked = !!st[k];
+}
+function saveSettings() {
+  const b = {};
+  for (const k of NUMS) b[k] = +$('#' + k).value;
+  for (const k of TEXTS) b[k] = $('#' + k).value;
+  for (const k of FLAGS) b[k] = $('#' + k).checked;
+  act(() => call('/api/settings', {body: b}), 'Impostazioni salvate');
+}
+
+/* ----------------------------------------------------------- files */
+let cwd = '/', editing = null;
+const join = (a, b) => (a === '/' ? '' : a) + '/' + b;
+const getUrl = p => '/api/fs/get?path=' + enc(p) + '&dl=1&k=' + kit.key();
+async function fsLoad(path) {
+  const list = $('#fs_list');
+  const r = await kit.api('/api/fs/list?path=' + enc(path)).catch(e => ({ok: false, message: e.message}));
+  if (!r.ok) { list.innerHTML = ''; list.append(el('div', {class: 'empty'}, r.message || 'Nessuna memoria file')); return; }
+  cwd = r.path;
+  const crumbs = $('#fs_crumbs'); crumbs.innerHTML = '';
+  crumbs.append(el('span', {onclick: () => fsLoad('/')}, r.storage || 'File'));
+  let acc = '';
+  for (const p of cwd.split('/').filter(Boolean)) { acc += '/' + p; const to = acc; crumbs.append(' / ', el('span', {onclick: () => fsLoad(to)}, p)); }
+  $('#fs_info').textContent = `${r.free_mb} MB liberi su ${r.total_mb} MB`;
+  const items = r.entries.sort((a, b) => (b.d - a.d) || a.n.localeCompare(b.n));
+  list.innerHTML = '';
+  if (cwd !== '/') list.append(el('div', {class: 'fsrow'}, '↩', el('span', {class: 'n', onclick: () => fsLoad(cwd.substring(0, cwd.lastIndexOf('/')) || '/')}, '..'), '', ''));
+  items.forEach(e => {
+    const p = join(cwd, e.n), text = /\.(txt|json|csv|ini|cfg|md|m3u|log)$/i.test(e.n) && e.s < 65536;
+    list.append(el('div', {class: 'fsrow'}, e.d ? '📁' : '📄',
+      el('span', {class: 'n', onclick: () => e.d ? fsLoad(p) : text ? fsEdit(p) : location.href = getUrl(p)}, e.n),
+      el('span', {class: 'faint'}, e.d ? '' : kb(e.s)),
+      el('span', {class: 'row'},
+        e.d ? '' : el('a', {class: 'btn sm', href: getUrl(p)}, '⤓'),
+        el('button', {class: 'btn sm', onclick: () => { const n = prompt('Nuovo nome', e.n); if (n && n.trim() !== e.n) fsPost('/api/fs/rename?from=' + enc(p) + '&to=' + enc(join(cwd, n.trim()))); }}, '✎'),
+        el('button', {class: 'btn sm danger', onclick: () => confirm('Eliminare "' + e.n + '"?') && fsPost('/api/fs/delete?path=' + enc(p))}, '✕'))));
+  });
+  if (!items.length) list.append(el('div', {class: 'empty'}, 'Cartella vuota'));
+}
+const fsPost = url => act(() => call(url, {method: 'POST'}), 'Fatto').then(() => fsLoad(cwd));
+const fsMkdir = () => { const n = prompt('Nome della nuova cartella'); if (n) fsPost('/api/fs/mkdir?path=' + enc(join(cwd, n.trim()))); };
+async function fsEdit(p) {
+  const t = await (await kit.api('/api/fs/get?path=' + enc(p), {raw: true})).text();
+  editing = p; $('#fs_edit_name').textContent = p; $('#fs_text').value = t; $('#fs_editor').style.display = 'block';
+}
+const fsSave = () => editing && act(() => call('/api/fs/put?path=' + enc(editing), {body: $('#fs_text').value}), 'Salvato').then(() => fsLoad(cwd));
+function xhrPost(url, body, onp) {
+  return new Promise(res => {
+    const x = new XMLHttpRequest();
+    x.open('POST', url); x.setRequestHeader('X-Key', kit.key());
+    x.upload.onprogress = e => e.lengthComputable && onp(e.loaded / e.total, e.loaded);
+    x.onload = () => { try { res(JSON.parse(x.responseText)); } catch (e) { res({ok: false, message: x.responseText || 'Errore ' + x.status}); } };
+    x.onerror = () => res({ok: false, message: 'Errore di rete'});
+    x.send(body);
+  });
+}
+async function fsUpload(files) {
+  const list = [...files], bar = $('#fs_bar');
+  if (!list.length) return;
+  bar.style.display = 'block'; let ok = 0;
+  for (let i = 0; i < list.length; i++) {
+    const r = await xhrPost('/api/fs/put?path=' + enc(join(cwd, list[i].name)), list[i], p => $('#fs_bar i').style.width = ((i + p) / list.length * 100) + '%');
+    if (r.ok) ok++; else kit.toast(list[i].name + ': ' + (r.message || 'errore'), 'bad');
+  }
+  bar.style.display = 'none'; $('#fs_files').value = ''; kit.toast(ok + ' file caricati', 'good'); fsLoad(cwd);
+}
+
+/* ---------------------------------------------------------- system */
+async function loadUpdate() {
+  const u = await kit.api('/api/update'), box = $('#upd');
+  box.innerHTML = '';
+  box.append(el('div', {class: 'row2'}, el('span', {class: 'dim grow'}, 'Versione installata'), el('b', {}, 'v' + u.running)));
+  if (u.available) box.append(el('div', {class: 'row2'}, el('span', {class: 'dim grow'}, 'Disponibile'), el('b', {class: 'good'}, 'v' + u.available)));
+  if (u.message) box.append(el('p', {class: 'dim'}, u.message + (u.percent > 0 && u.percent < 100 ? ' · ' + u.percent + '%' : '')));
+  $('#upd-install').hidden = !u.is_available;
+}
+const updCheck = () => act(() => kit.api('/api/update/check', {body: {}}), 'Controllo aggiornamenti...');
+const updInstall = () => confirm('Installare l\'aggiornamento? L\'orologio si riavvierà.') && act(() => kit.api('/api/update/install', {body: {}}), 'Installazione avviata');
+async function fwUpload() {
+  const f = $('#fw_file').files[0], bar = $('#fw_bar'), info = $('#fw_info'), t0 = Date.now();
+  if (!f) return kit.toast('Scegli il file .bin', 'bad');
+  bar.style.display = 'block'; info.textContent = 'Invio...';
+  const r = await xhrPost('/api/firmware', f, (p, done) => { $('#fw_bar i').style.width = (p * 100) + '%';
+    info.textContent = `${Math.round(p * 100)}% · ${(done / 1024 / Math.max((Date.now() - t0) / 1000, .1)).toFixed(0)} KB/s`; });
+  bar.style.display = 'none';
+  info.textContent = r.ok ? 'Installato e verificato: l\'orologio si riavvia con la nuova versione.' : (r.message || 'Errore');
+}
+
+/* ------------------------------------------------------------ start */
+const loaders = {'v-home': loadSystem, 'v-apps': loadApps, 'v-market': loadMarket, 'v-alarms': loadAlarms, 'v-wifi': loadWifi,
+  'v-settings': loadSettings, 'v-files': () => fsLoad(cwd), 'v-system': () => Promise.all([loadUpdate(), loadSystem()])};
+let current = 'v-home';
+drawDays();
+kit.views(id => { current = id; if (S.ready) loaders[id]().catch(e => kit.toast(e.message, 'bad')); });
+kit.start({onReady: () => {
+  S.ready = true;
+  kit.poll(async () => {
+    await loadMarket().catch(() => {});
+    if (current === 'v-home') await loadSystem();
+    else if (current === 'v-system') await loadUpdate();
+  }, 4000);
+  if (current !== 'v-home' && current !== 'v-market') loaders[current]().catch(e => kit.toast(e.message, 'bad'));
+}});
 </script>
 </body>
 </html>

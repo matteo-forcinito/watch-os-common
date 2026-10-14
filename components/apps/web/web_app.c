@@ -92,13 +92,19 @@ static void show_ready(void *arg)
     lv_qrcode_set_size(qr, 190);
     lv_qrcode_set_dark_color(qr, lv_color_black());
     lv_qrcode_set_light_color(qr, lv_color_white());
-    lv_qrcode_update(qr, url, (uint32_t)strlen(url));
+    char target[72];
+    snprintf(target, sizeof(target), "%s#code=%s", url, web_server_code());   /* the QR pairs the phone too */
+    lv_qrcode_update(qr, target, (uint32_t)strlen(target));
     lv_obj_center(qr);
 
     lv_obj_t *link = lv_label_create(s_page);
     lv_label_set_text(link, url);
     lv_obj_set_style_text_font(link, UI_FONT_LARGE, 0);
     lv_obj_set_style_text_color(link, ui_accent(), 0);
+
+    lv_obj_t *code = lv_label_create(s_page);
+    lv_label_set_text_fmt(code, "Codice  %.3s %.3s", web_server_code(), web_server_code() + 3);
+    lv_obj_set_style_text_font(code, ui_font_title, 0);
 
     ui_text(s_page, "oppure http://watch.local/  ·  chiudi l'app per spegnere il Wi-Fi", true);
 

@@ -19,6 +19,9 @@
 #include "cJSON.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_timer.h"
+#include "nvs.h"
 #include "lwip/inet.h"
 #include "mdns.h"
 
@@ -35,6 +38,21 @@ static const char *TAG = "web";
 
 extern const char index_html_start[] asm("_binary_index_html_start");
 extern const char index_html_end[] asm("_binary_index_html_end");
+extern const char kit_js_start[] asm("_binary_kit_js_start");
+extern const char kit_js_end[] asm("_binary_kit_js_end");
+extern const char kit_css_start[] asm("_binary_kit_css_start");
+extern const char kit_css_end[] asm("_binary_kit_css_end");
+
+/*
+ * Access: like the apps' dashboards, a browser pairs once with the 6-digit
+ * code shown on the watch (Web page app, also in the QR) and keeps a token
+ * (NVS "web"/"token") that survives restarts. Every /api/ route except
+ * /api/pair checks it (X-Key header, same origin).
+ */
+static char s_token[33];
+static char s_code[7];
+static int64_t s_pair_reset;
+static int s_pair_attempts;
 
 static httpd_handle_t s_server = NULL;
 static bool s_ap_mode = false;
@@ -150,12 +168,154 @@ static void get_string(const cJSON *json, const char *key, char *out, size_t siz
     }
 }
 
+/* ------------------------------------------------------------ access */
+
+static void token_load(void)
+{
+    nvs_handle_t nvs;
+    size_t size = sizeof(s_token);
+    bool ok = false;
+    if (nvs_open("web", NVS_READWRITE, &nvs) == ESP_OK)
+    {
+        ok = nvs_get_str(nvs, "token", s_token, &size) == ESP_OK && strlen(s_token) == 32;
+        if (!ok)
+        {
+            uint8_t bytes[16];
+            esp_fill_random(bytes, sizeof(bytes));
+            for (int i = 0; i < 16; i++)
+            {
+                snprintf(s_token + i * 2, 3, "%02x", bytes[i]);
+            }
+            ok = nvs_set_str(nvs, "token", s_token) == ESP_OK && nvs_commit(nvs) == ESP_OK;
+        }
+        nvs_close(nvs);
+    }
+    snprintf(s_code, sizeof(s_code), "%06lu", (unsigned long)(esp_random() % 1000000));
+}
+
+static bool same_origin(httpd_req_t *req)
+{
+    if (httpd_req_get_hdr_value_len(req, "Origin") == 0)
+    {
+        return true;
+    }
+    char origin[100], host[80], expected[100];
+    if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK ||
+        httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK)
+    {
+        return false;
+    }
+    snprintf(expected, sizeof(expected), "http://%s", host);
+    return strcmp(origin, expected) == 0;
+}
+
+static bool authorized(httpd_req_t *req)
+{
+    char token[40] = "";
+    if (!same_origin(req) || s_token[0] == '\0')
+    {
+        return false;
+    }
+    if (httpd_req_get_hdr_value_str(req, "X-Key", token, sizeof(token)) != ESP_OK)
+    {
+        /* Download links and uploads cannot set headers: ?k=<token> */
+        char query[300];
+        if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+            httpd_query_key_value(query, "k", token, sizeof(token)) != ESP_OK)
+        {
+            return false;
+        }
+    }
+    if (strlen(token) != 32)
+    {
+        return false;
+    }
+    unsigned difference = 0;
+    for (int i = 0; i < 32; i++)
+    {
+        difference |= (unsigned)(token[i] ^ s_token[i]);
+    }
+    return difference == 0;
+}
+
+static esp_err_t guard(httpd_req_t *req)
+{
+    if (!authorized(req))
+    {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        return httpd_resp_sendstr(req, "Abbina la dashboard");
+    }
+    esp_err_t (*handler)(httpd_req_t *) = (esp_err_t (*)(httpd_req_t *))req->user_ctx;
+    return handler(req);
+}
+
+void web_route(httpd_handle_t server, const httpd_uri_t *route)
+{
+    httpd_uri_t copy = *route;
+    if (strncmp(route->uri, "/api/", 5) == 0 && strcmp(route->uri, "/api/pair") != 0)
+    {
+        copy.handler = guard;
+        copy.user_ctx = (void *)route->handler;
+    }
+    httpd_register_uri_handler(server, &copy);
+}
+
+const char *web_server_code(void)
+{
+    return s_code;
+}
+
+static esp_err_t handle_pair(httpd_req_t *req)
+{
+    if (!same_origin(req))
+    {
+        return send_ok(req, false, "Origine non consentita");
+    }
+    int64_t now = esp_timer_get_time();
+    if (now >= s_pair_reset)
+    {
+        s_pair_attempts = 0;
+        s_pair_reset = now + 60000000;
+    }
+    cJSON *json = ++s_pair_attempts <= 6 ? parse_body(req) : NULL;
+    const char *code = cJSON_GetStringValue(cJSON_GetObjectItem(json, "code"));
+    bool ok = code != NULL && strcmp(code, s_code) == 0;
+    cJSON_Delete(json);
+    if (!ok)
+    {
+        httpd_resp_set_status(req, "401 Unauthorized");
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        return httpd_resp_sendstr(req, s_pair_attempts > 6 ? "Troppi tentativi: riprova tra un minuto"
+                                                           : "Codice errato: guarda l'orologio");
+    }
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "token", s_token);
+    return send_json(req, out);
+}
+
+static esp_err_t send_static(httpd_req_t *req, const char *type, const char *start, const char *end)
+{
+    httpd_resp_set_type(req, type);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    return httpd_resp_send(req, start, end - start - 1);
+}
+
+static esp_err_t handle_kit_js(httpd_req_t *req)
+{
+    return send_static(req, "text/javascript; charset=utf-8", kit_js_start, kit_js_end);
+}
+
+static esp_err_t handle_kit_css(httpd_req_t *req)
+{
+    return send_static(req, "text/css; charset=utf-8", kit_css_start, kit_css_end);
+}
+
 /* ------------------------------------------------------------ handlers */
 
 static esp_err_t handle_index(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    return httpd_resp_send(req, index_html_start, index_html_end - index_html_start - 1);
+    return send_static(req, "text/html; charset=utf-8", index_html_start, index_html_end);
 }
 
 static esp_err_t handle_state(httpd_req_t *req)
@@ -648,7 +808,7 @@ static esp_err_t handle_not_found(httpd_req_t *req, httpd_err_code_t error)
 static esp_err_t start_httpd(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 24;
+    config.max_uri_handlers = 64;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
     config.recv_wait_timeout = 15;
@@ -673,14 +833,22 @@ static esp_err_t start_httpd(void)
         {.uri = "/api/alarms", .method = HTTP_POST, .handler = handle_alarm_save},
         {.uri = "/api/upload", .method = HTTP_POST, .handler = handle_upload},
         {.uri = "/api/firmware", .method = HTTP_POST, .handler = handle_firmware},
+        {.uri = "/api/pair", .method = HTTP_POST, .handler = handle_pair},
+        {.uri = "/kit.js", .method = HTTP_GET, .handler = handle_kit_js},
+        {.uri = "/kit.css", .method = HTTP_GET, .handler = handle_kit_css},
     };
 
+    if (s_token[0] == '\0')
+    {
+        token_load();
+    }
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++)
     {
-        httpd_register_uri_handler(s_server, &routes[i]);
+        web_route(s_server, &routes[i]);
     }
 
     web_files_register(s_server);   /* SD card file manager */
+    web_system_register(s_server);  /* device, apps, market, system update */
     httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, handle_not_found);
 
     return ESP_OK;

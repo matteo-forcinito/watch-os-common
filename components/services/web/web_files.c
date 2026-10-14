@@ -525,6 +525,6 @@ void web_files_register(httpd_handle_t server)
 
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++)
     {
-        httpd_register_uri_handler(server, &routes[i]);
+        web_route(server, &routes[i]);
     }
 }

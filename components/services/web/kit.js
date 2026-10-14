@@ -66,6 +66,7 @@
     const type = r.headers.get('Content-Type') || '';
     return type.includes('json') ? r.json() : r.text();
   };
+  kit.key = () => token;   /* links and uploads that cannot set headers use ?k= */
   kit.try = async function (fn, okText) {
     try { const v = await fn(); if (okText) kit.toast(okText, 'good'); return v; }
     catch (e) { kit.toast(e.message, 'bad'); return undefined; }

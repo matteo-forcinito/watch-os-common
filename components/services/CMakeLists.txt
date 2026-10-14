@@ -13,6 +13,7 @@ idf_component_register(
         "weather/weather.c"
         "web/web_server.c"
         "web/web_files.c"
+        "web/web_system.c"
         "web/captive_dns.c"
         "apps/extapp.c"
         "apps/market.c"
@@ -48,4 +49,6 @@ idf_component_register(
         wear_levelling
     EMBED_TXTFILES
         "web/index.html"
+        "web/kit.js"
+        "web/kit.css"
 )
