@@ -73,9 +73,9 @@ si ritrovano, convergono allo stesso stato. Ogni nodo tiene la copia in PSRAM
 
 ### 2.4 Fiducia
 
-- **Unirsi alla famiglia, una volta sola**: il nuovo dispositivo mostra un
-  codice di 6 cifre, lo confermi dalla dashboard di un membro. La chiave
-  dell'ecosistema (32 byte) viaggia cifrata con una chiave derivata dal codice.
+- **Unirsi alla famiglia, una volta sola**: come Remote (4bis), scambio di chiavi
+  ECDH tra il nuovo nodo e un membro, stesso codice di 6 cifre sui due schermi
+  da confermare, poi la chiave di famiglia consegnata cifrata.
 - **Ogni messaggio firmato** (HMAC-SHA256, con data e numero progressivo
   contro le ripetizioni). Niente in chiaro che possa comandare un dispositivo.
 - Un dispositivo perso si **espelle** da qualsiasi membro: la chiave ruota.
@@ -187,6 +187,62 @@ Ogni fase si chiude con: build delle 4 board + e-paper, prova su almeno due
 dispositivi reali, misura della RAM (soglie dei margini invariate), release.
 
 ---
+
+## 4bis. Remote come parte nativa di ECOS (pensiero del 14 ottobre 2026)
+
+**Cosa c'è già.** `components/hid_link/hid_hub.c` (Remote) contiene un
+collegamento ESP-NOW tra dispositivi fatto bene, cioè metà della Famiglia:
+
+- frame sigillati con AES-128-GCM (nonce casuale, AAD con mittente e
+  destinatario: niente ripetizioni né deviazioni);
+- abbinamento ECDH P-256 con **codice di 6 cifre da confrontare sui due
+  schermi** (esclude l'uomo nel mezzo), conferma HMAC, peer in NVS;
+- annunci (beacon), conferme (ACK), battito, un worker che possiede lo stato e
+  una callback Wi-Fi che si limita ad accodare.
+
+**La proposta.** Estrarre questo strato in un componente comune,
+`services/ecos/link` (o `ecos_link`), e farlo usare a entrambi:
+
+```
+            ┌──────────── ECOS (famiglia, stato condiviso, sveglia di casa…)
+ecos_link ──┤
+ (ESP-NOW,  └──────────── Remote (tastiera, mouse, media verso il PC)
+  fiducia)
+```
+
+- **Un solo abbinamento**: chi entra nella famiglia può già fare da tastiera
+  per un altro membro. Remote non chiede più di abbinare i dispositivi tra loro.
+- **Remote diventa una capacità**: ogni nodo con USB o Bluetooth HID annuncia
+  "ponte verso il PC". Gli altri (orologio, ghiera del Knob) mandano
+  tasti, mouse e media a quel ponte via ECOS. "Hub" non è più un ruolo fisso:
+  è il nodo collegato al PC in quel momento, coerente con il modello alla pari.
+- **Il Knob come tastiera multimediale** di qualsiasi PC di casa, senza
+  abbinamento Bluetooth, purché un membro sia collegato via USB.
+
+**Cosa cambiare nel link per renderlo generico**
+
+1. **Pacchetti variabili**: oggi il pacchetto interno è fisso a 24 byte
+   (`hub_state`). ECOS ha bisogno di messaggi fino a ~200 byte (limite ESP-NOW
+   250) e di un "tipo di servizio" nell'intestazione (ecos, input...).
+2. **Canale**: oggi è fisso al canale 1. Con i dispositivi collegati al router
+   ESP-NOW deve usare il canale dell'access point di casa. Regola: il canale
+   della rete di casa nota a tutti, con fallback su 1 senza router.
+3. **Chiave di famiglia**: l'abbinamento resta a coppie (ECDH + codice), poi il
+   nodo che accoglie consegna la chiave di gruppo, cifrata, sul canale a coppia.
+   Così il gossip e i broadcast (stop sveglia) non richiedono N chiavi.
+4. **Energia**: la radio ESP-NOW richiede il driver Wi-Fi acceso. Ascolto
+   continuo solo sui nodi alimentati; sugli orologi il link vive quando il Wi-Fi
+   è già acceso o per un'azione esplicita (interfono, Remote).
+
+**Cosa resta com'è.** Gli stack HID (USB e Bluetooth HID, ~300 KB) restano
+nell'app esterna Remote, che non smonta mai gli stack a runtime: solo il nodo
+"ponte" ne ha bisogno. Il lato "manda input" è piccolo e può entrare nell'OS.
+
+**Ordine consigliato**
+1. Fase 1 Famiglia costruita su `ecos_link` estratto da `hid_hub` (con i test
+   host già esistenti per `hub_state` come base).
+2. Remote rifattorizzato su `ecos_link` in un secondo momento, senza cambiare
+   la sua UI. Prima va provato con due dispositivi reali, perché oggi funziona.
 
 ## 5. Dove vive il codice
 
