@@ -63,6 +63,11 @@ typedef struct
     uint8_t update_channel;
     /* Optional perimeter indicators on every display shape. */
     bool border_progress;
+
+    /* launcher: app cards per page (4, 6 or 9) */
+    uint8_t launcher_cards;
+    /* main menu favourites: app ids ("alarms") or external apps ("ext:Pieno"), "" = free */
+    char favorites[6][24];
 } settings_t;
 
 esp_err_t settings_init(void);

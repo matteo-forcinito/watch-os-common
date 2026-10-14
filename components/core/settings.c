@@ -52,6 +52,8 @@ static void set_defaults(settings_t *s)
     s->knob_focus = false;
     s->update_channel = 0;
     s->border_progress = false;
+    s->launcher_cards = 4;
+    memset(s->favorites, 0, sizeof(s->favorites));
 }
 
 static void sanitize(settings_t *s)
@@ -75,6 +77,14 @@ static void sanitize(settings_t *s)
     s->device_name[sizeof(s->device_name) - 1] = '\0';
     s->weather_city[sizeof(s->weather_city) - 1] = '\0';
     s->update_url[sizeof(s->update_url) - 1] = '\0';
+    if (s->launcher_cards != 4 && s->launcher_cards != 6 && s->launcher_cards != 9)
+    {
+        s->launcher_cards = 4;
+    }
+    for (int i = 0; i < 6; i++)
+    {
+        s->favorites[i][sizeof(s->favorites[i]) - 1] = '\0';
+    }
 
     if (s->timezone[0] == '\0')
     {

@@ -45,6 +45,9 @@ struct market_ui
     int page; /* 0 entrance, 1 catalog, 2 app cover, 3 information */
     int angle;
     uint32_t action_ready_at;
+    char queue[MARKET_MAX_APPS][32];   /* "update all": one download at a time */
+    int queue_count;
+    int queue_next;
     lv_point_t swipe_start;
 };
 
@@ -338,6 +341,47 @@ static void show_hero(market_ui_t *ui)
     animate(ui->animation);
 }
 
+/* Start the next queued update; false when the queue is done. */
+static bool queue_step(market_ui_t *ui)
+{
+    while (ui->queue_next < ui->queue_count)
+    {
+        const char *id = ui->queue[ui->queue_next++];
+        if (market_install(id) == ESP_OK)
+        {
+            char text[64];
+            snprintf(text, sizeof(text), "Aggiorno %d di %d...", ui->queue_next, ui->queue_count);
+            ui_toast(text);
+            lv_timer_resume(ui->poll);
+            return true;
+        }
+    }
+    if (ui->queue_count > 0)
+    {
+        ui_toast(LV_SYMBOL_OK " Aggiornamenti completati");
+        ui->queue_count = ui->queue_next = 0;
+        launcher_refresh();
+    }
+    return false;
+}
+
+static void update_all(lv_event_t *event)
+{
+    market_ui_t *ui = lv_event_get_user_data(event);
+    if (market_busy() || ui->queue_count > 0) return;
+    market_entry_t *entry = malloc(sizeof(*entry));
+    if (entry == NULL) return;
+    ui->queue_count = ui->queue_next = 0;
+    for (int i = 0; market_entry(i, entry) && ui->queue_count < MARKET_MAX_APPS; i++)
+    {
+        if (entry->installed && entry->installed_version[0] != '\0' &&
+            fw_version_compare(entry->version, entry->installed_version) > 0)
+            snprintf(ui->queue[ui->queue_count++], sizeof(ui->queue[0]), "%s", entry->id);
+    }
+    free(entry);
+    queue_step(ui);
+}
+
 static void show_catalog(market_ui_t *ui)
 {
     lv_obj_t *page = ui_page(ui->content, "Esplora");
@@ -368,55 +412,93 @@ static void show_catalog(market_ui_t *ui)
     int count = market_count();
     market_entry_t *entry = malloc(sizeof(*entry));
     if (entry == NULL) return;
-    lv_obj_t *grid = NULL;
-    if (market_view() == 0)
-    {
-        grid = lv_obj_create(page);
-        lv_obj_remove_style_all(grid);
-        lv_obj_set_width(grid, LV_PCT(100));
-        lv_obj_set_height(grid, LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-        lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-        lv_obj_set_style_pad_row(grid, 10, 0);
-    }
+    /* Three groups: what needs an update (with "update all"), what is new, what is installed. */
+    static const char *const heads[] = {"DA AGGIORNARE", "DA INSTALLARE", "INSTALLATE"};
+    int updates = 0;
     for (int i = 0; i < count && i < MARKET_MAX_APPS; i++)
     {
-        if (!market_entry(i, entry)) continue;
-        ui->cards[i].ui = ui;
-        snprintf(ui->cards[i].id, sizeof(ui->cards[i].id), "%s", entry->id);
-        const char *icon = entry->installed && entry->local.icon[0] != '\0' ? entry->local.icon : symbol(entry->id);
-        char version[48];
-        bool update = entry->installed && entry->installed_version[0] != '\0' &&
-                      fw_version_compare(entry->version, entry->installed_version) > 0;
-        snprintf(version, sizeof(version), "%s%s", entry->version, update ? " · aggiorna" : entry->installed ? " · salvata" : "");
-        if (market_view() == 1)
+        if (market_entry(i, entry) && entry->installed && entry->installed_version[0] != '\0' &&
+            fw_version_compare(entry->version, entry->installed_version) > 0)
         {
-            ui_row(page, icon, entry->color, entry->name, version, details, &ui->cards[i]);
-            continue;
+            updates++;
         }
-        lv_obj_t *card = lv_obj_create(grid != NULL ? grid : page);
-        ui_make_card(card);
-        lv_obj_set_clickable(card, true);
-        lv_port_set_focusable(card);
-        lv_obj_set_width(card, grid != NULL ? LV_PCT(48) : LV_PCT(100));
-        lv_obj_set_height(card, grid != NULL ? 154 : 255);
-        lv_obj_set_scrollable(card, false);
-        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_all(card, 8, 0);
-        lv_obj_set_style_pad_row(card, 8, 0);
-        ui_icon_bubble(card, icon, entry->color, grid != NULL ? 62 : 96);
-        lv_obj_t *name = label(card, entry->name, grid != NULL ? UI_FONT_BODY : ui_font_headline, 0xFFFFFF);
-        lv_obj_set_width(name, LV_PCT(100));
-        lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
-        label(card, version, UI_FONT_SMALL, 0xB3B3CA);
-        if (grid == NULL)
+    }
+    for (int group = 0; group < 3; group++)
+    {
+        lv_obj_t *grid = NULL;
+        bool headed = false;
+        for (int i = 0; i < count && i < MARKET_MAX_APPS; i++)
         {
-            lv_obj_t *summary = label(card, entry->summary, UI_FONT_SMALL, 0xD0CFE0);
-            lv_obj_set_width(summary, LV_PCT(90));
-            lv_label_set_long_mode(summary, LV_LABEL_LONG_MODE_WRAP);
+            if (!market_entry(i, entry)) continue;
+            bool update = entry->installed && entry->installed_version[0] != '\0' &&
+                          fw_version_compare(entry->version, entry->installed_version) > 0;
+            int kind = update ? 0 : entry->installed ? 2 : 1;
+            if (kind != group) continue;
+            if (!headed)
+            {
+                headed = true;
+                ui_section(page, heads[group]);
+                if (group == 0 && updates > 1)
+                {
+                    char text[40];
+                    snprintf(text, sizeof(text), LV_SYMBOL_DOWNLOAD "  Aggiorna tutte (%d)", updates);
+                    lv_obj_t *all = ui_button(page, text, UI_COLOR_ORANGE, update_all, ui);
+                    lv_port_set_focusable(all);
+                }
+                if (market_view() == 0)
+                {
+                    grid = lv_obj_create(page);
+                    lv_obj_remove_style_all(grid);
+                    lv_obj_set_width(grid, LV_PCT(100));
+                    lv_obj_set_height(grid, LV_SIZE_CONTENT);
+                    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+                    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+                    lv_obj_set_style_pad_row(grid, 10, 0);
+                }
+            }
+            ui->cards[i].ui = ui;
+            snprintf(ui->cards[i].id, sizeof(ui->cards[i].id), "%s", entry->id);
+            const char *icon = entry->installed && entry->local.icon[0] != '\0' ? entry->local.icon : symbol(entry->id);
+            char version[80];
+            if (update)
+                snprintf(version, sizeof(version), "%s " LV_SYMBOL_RIGHT " %s", entry->installed_version, entry->version);
+            else
+                snprintf(version, sizeof(version), "%s%s", entry->version, entry->installed ? " · installata" : "");
+            if (market_view() == 1)
+            {
+                lv_obj_t *row = ui_row(page, icon, entry->color, entry->name, version, details, &ui->cards[i]);
+                if (update) lv_obj_set_style_text_color(ui_row_value(row), lv_color_hex(UI_COLOR_ORANGE), 0);
+                continue;
+            }
+            lv_obj_t *card = lv_obj_create(grid != NULL ? grid : page);
+            ui_make_card(card);
+            lv_obj_set_clickable(card, true);
+            lv_port_set_focusable(card);
+            lv_obj_set_width(card, grid != NULL ? LV_PCT(48) : LV_PCT(100));
+            lv_obj_set_height(card, grid != NULL ? 154 : 255);
+            lv_obj_set_scrollable(card, false);
+            lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_set_style_pad_all(card, 8, 0);
+            lv_obj_set_style_pad_row(card, 8, 0);
+            if (update)
+            {
+                lv_obj_set_style_border_color(card, lv_color_hex(UI_COLOR_ORANGE), 0);
+                lv_obj_set_style_border_width(card, 2, 0);
+            }
+            ui_icon_bubble(card, icon, entry->color, grid != NULL ? 62 : 96);
+            lv_obj_t *name = label(card, entry->name, grid != NULL ? UI_FONT_BODY : ui_font_headline, 0xFFFFFF);
+            lv_obj_set_width(name, LV_PCT(100));
+            lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+            label(card, version, UI_FONT_SMALL, update ? UI_COLOR_ORANGE : 0xB3B3CA);
+            if (grid == NULL)
+            {
+                lv_obj_t *summary = label(card, entry->summary, UI_FONT_SMALL, 0xD0CFE0);
+                lv_obj_set_width(summary, LV_PCT(90));
+                lv_label_set_long_mode(summary, LV_LABEL_LONG_MODE_WRAP);
+            }
+            lv_obj_add_event_cb(card, details, LV_EVENT_CLICKED, &ui->cards[i]);
         }
-        lv_obj_add_event_cb(card, details, LV_EVENT_CLICKED, &ui->cards[i]);
     }
     free(entry);
     if (count == 0 && !market_busy()) ui_text(page, "Aggiorna il catalogo per scoprire le app.", true);
@@ -617,6 +699,8 @@ static void poll(lv_timer_t *timer)
     }
     if (ui->action != NULL && state.busy)
         lv_label_set_text(lv_obj_get_child(ui->action, 0), state.phase == MARKET_PUBLISHING ? "Salvo..." : "Annulla");
+    if (!state.busy && ui->queue_next < ui->queue_count && queue_step(ui)) return;
+    if (!state.busy && ui->queue_count > 0 && ui->queue_next >= ui->queue_count) queue_step(ui);
     if (!state.busy) lv_timer_pause(ui->poll);
 }
 

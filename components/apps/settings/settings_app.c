@@ -99,6 +99,14 @@ static void cycle_timeout(lv_event_t *e)
     lv_label_set_text_fmt(ui_row_value(lv_event_get_current_target_obj(e)), "%u s", next);
 }
 
+static void cycle_cards(lv_event_t *e)
+{
+    uint8_t current = settings_get()->launcher_cards;
+    uint8_t next = current == 4 ? 6 : current == 6 ? 9 : 4;
+    EDIT_SETTINGS(s->launcher_cards = next);
+    lv_label_set_text_fmt(ui_row_value(lv_event_get_current_target_obj(e)), "%u", next);
+}
+
 static void cycle_accent(lv_event_t *e)
 {
     uint32_t current = settings_get()->accent_color;
@@ -168,6 +176,8 @@ static void display_create(lv_obj_t *screen, void *arg)
     ui_switch_row(page, LV_SYMBOL_BELL, UI_COLOR_ORANGE, "Accendi con notifiche", st->wake_on_notification,
                   set_wake_notify, NULL);
     ui_row(page, " ", st->accent_color, "Colore principale", NULL, cycle_accent, NULL);
+    snprintf(value, sizeof(value), "%u", st->launcher_cards);
+    ui_row(page, LV_SYMBOL_LIST, UI_COLOR_BLUE, "App per pagina", value, cycle_cards, NULL);
 
     if (board_info()->has_knob)
     {

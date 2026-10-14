@@ -64,6 +64,8 @@ typedef struct app
     bool (*back)(void);                             /* return true to handle "back" yourself */
     /* Optional input override, before normal navigation. True consumes the event. */
     bool (*button)(button_id_t button, button_event_t event);
+    /* One or two sentences for the app's details page ("" or NULL = none). */
+    const char *about;
 } app_t;
 
 void app_register(const app_t *app);

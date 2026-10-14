@@ -52,6 +52,9 @@ static const app_t *const s_apps[] = {
     &versions_app,
     &folder_app,
     &launcher_all_app,
+    &launcher_apps_app,
+    &launcher_actions_app,
+    &launcher_details_app,
 };
 
 void apps_open_cb(lv_event_t *e)

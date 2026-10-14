@@ -30,6 +30,9 @@ extern const app_t usb_drive_app;
 extern const app_t sdcard_app;
 extern const app_t battery_app;
 extern const app_t launcher_all_app;    /* hidden: every app in a list (round launcher, "Altre") */
+extern const app_t launcher_apps_app;   /* hidden: paged cards, arg = (void *)0 built-in, (void *)1 external */
+extern const app_t launcher_actions_app;/* hidden: Apri / Dettagli / Preferita..., arg = launcher_item_t * (malloc) */
+extern const app_t launcher_details_app;/* hidden: details of one app, arg = launcher_item_t * (malloc) */
 extern const app_t call_app;
 extern const app_t update_app;          /* hidden: Settings > Aggiornamento */
 extern const app_t versions_app;        /* hidden: every release online + on the SD card */
