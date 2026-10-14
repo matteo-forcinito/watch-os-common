@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deck - tasti</title>
+<style>
+:root{--bg:#0b0d12;--panel:#14171f;--cap:#1b1f2a;--line:#272c3a;--ink:#eef1f7;--mist:#8b93a7;--accent:#4fb3ff;--bad:#ff6b6b;--ok:#5bd6a0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:18px 24px;border-bottom:1px solid var(--line)}
+header h1{font-size:20px;margin:0;font-weight:650;letter-spacing:.5px}header .hint{color:var(--mist);font-size:13px}
+main{display:grid;grid-template-columns:240px 1fr 360px;gap:0;min-height:calc(100vh - 66px)}
+@media(max-width:1000px){main{grid-template-columns:1fr}}
+nav{border-right:1px solid var(--line);padding:14px}nav h2,aside h2{font-size:12px;color:var(--mist);text-transform:uppercase;letter-spacing:1.5px;margin:14px 6px 8px}
+.profile{padding:9px 12px;border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+.profile:hover{background:var(--panel)}.profile.sel{background:#1d2433;outline:1px solid #2f3a52}.profile small{color:var(--mist)}
+button{background:#232a3a;color:var(--ink);border:1px solid #2f3a52;border-radius:9px;padding:8px 12px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--accent)}button.primary{background:var(--accent);color:#06121f;border:0;font-weight:650}
+button.danger{color:var(--bad)}section{padding:22px 28px}
+.title{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+input,select{background:#0f1218;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit}
+input:focus,select:focus{outline:1px solid var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(4,120px);gap:14px}
+.cap{height:104px;border-radius:20px;background:var(--cap);border:1px solid #2a3040;box-shadow:0 5px 0 #07080c;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;position:relative;transition:transform .08s}
+.cap:active{transform:translateY(3px);box-shadow:0 2px 0 #07080c}.cap.sel{outline:2px solid var(--accent)}
+.cap .g{font-size:22px;font-weight:700}.cap .l{font-size:12px;color:var(--mist);text-align:center;padding:0 6px;line-height:1.2}
+.cap.empty{opacity:.35;border-style:dashed}
+aside{border-left:1px solid var(--line);padding:14px 18px}
+label{display:block;font-size:12px;color:var(--mist);margin:12px 0 4px}aside input,aside select{width:100%}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.err{color:var(--bad);font-size:13px;min-height:18px;margin-top:6px}.ok{color:var(--ok)}
+.help{font-size:12.5px;color:var(--mist);background:var(--panel);border-radius:10px;padding:10px 12px;margin-top:14px}
+.help code{color:var(--ink)}#rec.on{background:var(--bad);color:#fff;border:0}
+#lock{position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center}
+#lock div{background:var(--panel);padding:26px;border-radius:16px;width:320px;text-align:center}#lock input{width:100%;font-size:26px;text-align:center;letter-spacing:6px;margin:14px 0}
+.ro{color:var(--mist);font-size:13px}
+</style>
+</head>
+<body>
+<header><h1>DECK</h1><span class="hint" id="status">Tasti programmabili per il PC</span><span style="flex:1"></span><button class="primary" id="save">Salva sull'orologio</button></header>
+<main>
+<nav><h2>Profili</h2><div id="profiles"></div><div style="padding:8px 6px"><button id="add">+ Nuovo profilo</button></div></nav>
+<section>
+  <div class="title"><input id="pname" maxlength="23" placeholder="Nome profilo"><select id="dial"></select><span style="flex:1"></span><button id="dup">Duplica</button><button class="danger" id="del">Elimina</button></div>
+  <div class="ro" id="ro"></div>
+  <div class="grid" id="grid"></div>
+</section>
+<aside><h2>Tasto</h2><div id="editor">
+  <label>Etichetta</label><input id="klabel" maxlength="23">
+  <div class="row"><div><label>Simbolo</label><select id="kglyph"></select></div><div><label>o testo breve</label><input id="ktext" maxlength="4" placeholder="F5"></div></div>
+  <label>Colore</label><input id="kcolor" type="color">
+  <label>Azione</label><div class="row"><input id="kaction" maxlength="159" placeholder="ctrl+shift+m"><button id="rec" style="flex:0 0 auto">Registra</button></div>
+  <div class="err" id="kerr"></div>
+  <div class="row" style="margin-top:6px"><button id="kclear">Svuota tasto</button></div>
+  <div class="help"><b>Azioni</b><br><code>ctrl+shift+m</code> combinazione &middot; <code>ctrl+k ctrl+c</code> in sequenza<br><code>win+r; wait:300; type:notepad; enter</code> passi separati da <code>;</code><br><code>media:play</code> next prev stop mute volup voldown calc &middot; <code>wheel:-3</code> rotella<br>Registra: premi la combinazione sulla tastiera del PC.</div>
+</div></aside>
+</main>
+<div id="lock"><div><b>Codice dell'orologio</b><p class="ro">Lo trovi sullo schermo di Deck, in configurazione.</p><input id="code" maxlength="6" inputmode="numeric" autofocus><button class="primary" id="enter" style="width:100%">Entra</button><div class="err" id="cerr"></div></div></div>
+<script>
+const $=s=>document.querySelector(s);let code=sessionStorage.deckCode||'',data=null,cur=0,key=-1,dirty=false;
+const KEYS=12,SYMBOL={mic:'\u{1F399}',video:'\u{1F3A5}',mute:'\u{1F507}',volup:'\u{1F50A}',voldown:'\u{1F509}',play:'▶',pause:'⏸',stop:'■',next:'⏭',prev:'⏮',up:'↑',down:'↓',left:'←',right:'→',plus:'+',minus:'−',close:'✕',ok:'✓',home:'⌂',list:'☰',settings:'⚙',power:'⏻',image:'\u{1F5BC}',refresh:'↻',loop:'↺',shuffle:'\u{1F500}',edit:'✎',copy:'⎘',cut:'✂',paste:'\u{1F4CB}',save:'\u{1F4BE}',file:'\u{1F4C4}',folder:'\u{1F4C1}',download:'⬇',upload:'⬆',trash:'\u{1F5D1}',keyboard:'⌨',bell:'\u{1F514}',envelope:'✉',call:'☎',wifi:'\u{1F4F6}',bluetooth:'ᛒ',usb:'⇨',warning:'⚠',eye:'\u{1F441}',eye_closed:'◌',gps:'⌖',charge:'⚡',bars:'≡',eject:'⏏',drive:'\u{1F5B4}'};
+async function api(method,body){const r=await fetch('/api/profiles',{method,headers:{'X-Deck-Code':code,'Content-Type':'application/json'},body});return r.json()}
+async function login(){code=$('#code').value.trim();const j=await api('GET').catch(()=>null);if(!j||j.ok===false){$('#cerr').textContent=j&&j.error||'Orologio non raggiungibile';return}sessionStorage.deckCode=code;$('#lock').remove();data=j;draw()}
+$('#enter').onclick=login;$('#code').onkeydown=e=>{if(e.key==='Enter')login()};if(code){$('#code').value=code;login()}
+const custom=()=>data.profiles.filter(p=>p.custom);
+function draw(){const list=$('#profiles');list.innerHTML='';let h='';data.profiles.forEach((p,i)=>{if(i===0)list.insertAdjacentHTML('beforeend','<h2>Pronti</h2>');if(p.custom&&!h){h=1;list.insertAdjacentHTML('beforeend','<h2>Personali</h2>')}const d=document.createElement('div');d.className='profile'+(i===cur?' sel':'');d.innerHTML=`<span>${esc(p.name)}</span><small>${p.keys.length}</small>`;d.onclick=()=>{cur=i;key=-1;draw()};list.appendChild(d)});
+const p=data.profiles[cur];$('#pname').value=p.name;$('#pname').disabled=!p.custom;$('#dial').innerHTML=data.dials.map(d=>`<option value="${d.id}" ${d.id===p.dial?'selected':''}>Manopola: ${d.name}</option>`).join('');$('#dial').disabled=!p.custom;$('#del').style.display=p.custom?'':'none';
+$('#ro').textContent=p.custom?'Tocca un tasto per modificarlo.':'Profilo pronto, non modificabile: duplicalo per personalizzarlo.';
+const g=$('#grid');g.innerHTML='';for(let k=0;k<KEYS;k++){const kk=p.keys[k],c=document.createElement('div');c.className='cap'+(kk?'':' empty')+(k===key?' sel':'');if(kk){c.innerHTML=`<div class="g" style="color:${kk.color}">${esc(SYMBOL[kk.glyph]||kk.glyph||'')}</div><div class="l">${esc(kk.label)}</div>`}else c.innerHTML='<div class="l">+</div>';c.onclick=()=>{if(!p.custom)return;key=k;if(!p.keys[k])p.keys[k]={label:'',glyph:'',color:'#4fb3ff',action:''};draw()};g.appendChild(c)}
+editor()}
+function editor(){const p=data.profiles[cur],kk=p.custom&&key>=0?p.keys[key]:null;$('#editor').style.opacity=kk?1:.35;['#klabel','#kglyph','#ktext','#kcolor','#kaction','#rec','#kclear'].forEach(s=>$(s).disabled=!kk);
+$('#kglyph').innerHTML='<option value="">(testo)</option>'+data.glyphs.map(g=>`<option value="${g}">${SYMBOL[g]||''} ${g}</option>`).join('');if(!kk)return;
+$('#klabel').value=kk.label;$('#kcolor').value=kk.color;$('#kaction').value=kk.action;const isG=data.glyphs.includes(kk.glyph);$('#kglyph').value=isG?kk.glyph:'';$('#ktext').value=isG?'':kk.glyph;$('#kerr').textContent=''}
+function cur_key(){const p=data.profiles[cur];return p.custom&&key>=0?p.keys[key]:null}
+$('#klabel').oninput=e=>{cur_key().label=e.target.value;mark()};$('#kcolor').oninput=e=>{cur_key().color=e.target.value;mark()};
+$('#kglyph').onchange=e=>{cur_key().glyph=e.target.value||$('#ktext').value;mark()};$('#ktext').oninput=e=>{if(!$('#kglyph').value){cur_key().glyph=e.target.value;mark()}};
+$('#kaction').oninput=e=>{cur_key().action=e.target.value;mark()};
+$('#kclear').onclick=()=>{const p=data.profiles[cur];p.keys.splice(key,1);key=-1;mark()};
+$('#pname').oninput=e=>{data.profiles[cur].name=e.target.value;dirty=true;$('#status').textContent='Modifiche non salvate';document.querySelector('.profile.sel span').textContent=e.target.value};
+$('#dial').onchange=e=>{data.profiles[cur].dial=e.target.value;dirty=true};
+$('#add').onclick=()=>{if(custom().length>=6)return alert('Al massimo 6 profili personali');data.profiles.push({name:'Personale',dial:'volume',custom:true,keys:[]});cur=data.profiles.length-1;key=-1;mark()};
+$('#dup').onclick=()=>{if(custom().length>=6)return alert('Al massimo 6 profili personali');const p=JSON.parse(JSON.stringify(data.profiles[cur]));p.custom=true;p.name=(p.name+' 2').slice(0,23);data.profiles.push(p);cur=data.profiles.length-1;key=-1;mark()};
+$('#del').onclick=()=>{if(!confirm('Eliminare il profilo?'))return;data.profiles.splice(cur,1);cur=0;key=-1;mark()};
+function mark(){dirty=true;$('#status').textContent='Modifiche non salvate';draw()}
+$('#save').onclick=async()=>{const body=JSON.stringify({profiles:custom().map(p=>({name:p.name,dial:p.dial,keys:p.keys.filter(k=>k&&(k.label||k.action))}))});$('#status').textContent='Salvataggio...';const j=await api('POST',body).catch(()=>null);
+if(j&&j.ok){dirty=false;$('#status').innerHTML='<span class="ok">Salvato. Sull\'orologio: "Torna ai tasti".</span>'}else{$('#status').textContent='';$('#kerr').textContent=(j&&j.error)||'Orologio non raggiungibile';alert((j&&j.error)||'Orologio non raggiungibile')}};
+/* Record: the physical key, as Deck sends physical HID codes. */
+const CODE={Enter:'enter',Escape:'esc',Tab:'tab',Space:'space',Backspace:'backspace',Delete:'delete',Insert:'insert',Home:'home',End:'end',PageUp:'pageup',PageDown:'pagedown',ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Minus:'minus',Equal:'equal',BracketLeft:'lbracket',BracketRight:'rbracket',Backslash:'backslash',IntlBackslash:'backslash',Semicolon:'semicolon',Quote:'quote',Backquote:'grave',Comma:'comma',Period:'period',Slash:'slash',PrintScreen:'printscreen',Pause:'pause',CapsLock:'capslock',ContextMenu:'menu',NumpadAdd:'kpplus',NumpadSubtract:'kpminus'};
+let recording=false;$('#rec').onclick=()=>{recording=!recording;$('#rec').classList.toggle('on',recording);$('#rec').textContent=recording?'Premi...':'Registra'};
+document.addEventListener('keydown',e=>{if(!recording)return;e.preventDefault();let k=CODE[e.code]||(/^Key([A-Z])$/.exec(e.code)||[])[1]||(/^Digit(\d)$/.exec(e.code)||[])[1]||(/^(F\d{1,2})$/.exec(e.code)||[])[1];
+if(['Control','Shift','Alt','Meta','AltGraph'].includes(e.key))return;if(!k){$('#kerr').textContent='Tasto non supportato: '+e.code;return}
+const m=[];if(e.ctrlKey&&!e.getModifierState('AltGraph'))m.push('ctrl');if(e.getModifierState('AltGraph'))m.push('altgr');else if(e.altKey)m.push('alt');if(e.shiftKey)m.push('shift');if(e.metaKey)m.push('win');
+const combo=[...m,k.toLowerCase()].join('+');const a=$('#kaction');a.value=a.value&&!a.value.endsWith(' ')&&a.dataset.rec==='1'?a.value+' '+combo:combo;a.dataset.rec='1';cur_key().action=a.value;recording=false;$('#rec').classList.remove('on');$('#rec').textContent='Registra';mark()});
+window.onbeforeunload=()=>dirty?'':undefined;
+function esc(t){return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+</script>
+</body>
+</html>
