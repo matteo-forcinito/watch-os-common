@@ -52,7 +52,7 @@ esegue lo stesso codice ECOS e tiene la sua copia dello stato di casa.
 |---|---|---|
 | **Wi-Fi di casa** (UDP + HTTP) | stato, sincronizzazione, contenuti | mDNS `_ecos._udp`: nome, ruolo, capacità |
 | **ESP-NOW** | comandi istantanei tra vicini (suona, ferma, interfono) | anche senza router; già usato da Remote |
-| **Bluetooth (annunci)** | presenza: "l'orologio è qui" | l'hub ascolta, l'orologio annuncia (già lo fa) |
+| **Bluetooth (annunci)** | presenza: "l'orologio è qui" | i nodi in ascolto sentono, l'orologio annuncia (già lo fa) |
 
 ### 2.3 Lo stato di casa
 
@@ -115,7 +115,7 @@ l'umidità supera la soglia. Lo storico va nella dashboard.
 
 ### ★ Trova il dispositivo
 Dall'orologio: "suona il Knob". Dal Knob: "dov'è l'orologio?" → l'orologio
-vibra e suona; l'hub dice anche *dove l'ha sentito l'ultima volta* (Bluetooth).
+vibra e suona; la casa dice anche *chi l'ha sentito per ultimo* (Bluetooth).
 
 ### ★ Notifiche ovunque, lette una volta
 La notifica del telefono arriva all'orologio e compare anche sul Knob o sul
@@ -151,7 +151,7 @@ rete locale in pochi millisecondi invece di andare su internet: meno Wi-Fi,
 meno RAM, più batteria. Gli aggiornamenti si scaricano una volta per tutti.
 
 ### Presenza
-L'hub sente l'orologio: sei a casa, alla scrivania o fuori. Quando entri,
+I nodi in ascolto sentono l'orologio: sei a casa, alla scrivania o fuori. Quando entri,
 l'e-paper ti saluta con la giornata; quando esci, Sentinel diventa più
 sospettoso ("dispositivo nuovo in rete mentre sei fuori").
 
@@ -167,7 +167,7 @@ Dalla dashboard, frasi semplici senza programmare:
 "Quando esco di casa → spegni la radio".
 
 ### Diario di casa
-L'hub tiene una timeline settimanale: sonno (IMU), clima (SHTC3), rete
+Lo stato di casa conserva una timeline settimanale (sui nodi con microSD): sonno (IMU), clima (SHTC3), rete
 (Sentinel), notizie della settimana (News), focus (Giornata). Ogni domenica un
 riassunto sull'e-paper e nella dashboard.
 
