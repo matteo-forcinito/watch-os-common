@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sentinel · la tua rete</title>
+<link rel="stylesheet" href="/kit.css">
+<style>
+:root{--accent:#2fcfa5}
+.hero{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}@media(max-width:900px){.hero{grid-template-columns:1fr}}
+.radar{position:relative;aspect-ratio:1;max-width:340px;margin:auto}
+.radar svg{width:100%;height:100%}
+.devgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.dev{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px;cursor:pointer;display:flex;flex-direction:column;gap:6px}
+.dev:hover{border-color:var(--accent)}.dev.fresh{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn)}.dev.off{opacity:.55}
+.dev .top{display:flex;align-items:center;gap:10px}
+.dev .ic{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 18%,transparent);font-size:18px;flex:none}
+.dev b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dev .sub{font-size:12.5px;color:var(--dim)}
+.badge{display:inline-block;font-size:11px;font-weight:800;padding:2px 7px;border-radius:99px;background:var(--warn);color:#000}
+.badge.ok{background:color-mix(in srgb,var(--good) 25%,transparent);color:var(--good)}
+.meter{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden;margin-top:6px}.meter i{display:block;height:100%;border-radius:99px}
+.chbar{display:flex;align-items:flex-end;gap:6px;height:120px;margin-top:12px}
+.chbar div{flex:1;border-radius:6px 6px 0 0;background:var(--accent);opacity:.8;position:relative}
+.chbar span{position:absolute;bottom:-20px;left:0;right:0;text-align:center;font-size:12px;color:var(--dim)}
+.portrow{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)}
+.warnline{color:var(--warn);font-size:13px}
+.progress{height:3px;background:var(--panel2);border-radius:99px;overflow:hidden;margin:-12px 0 16px;display:none}.progress i{display:block;height:100%;background:var(--accent);transition:width .4s}
+</style>
+</head>
+<body>
+<header class="kit-top">
+  <div class="kit-brand"><div class="kit-logo">🛰</div><span>Sentinel</span></div>
+  <nav class="kit-nav">
+    <button data-view="v-home">Panoramica</button>
+    <button data-view="v-devices">Dispositivi</button>
+    <button data-view="v-check">Verifica</button>
+    <button data-view="v-air">Reti vicine</button>
+  </nav>
+  <div class="kit-dev"></div>
+</header>
+<main>
+<div class="progress" id="progress"><i></i></div>
+
+<section class="view" id="v-home">
+  <div class="hero">
+    <div class="card"><div class="dim" id="h-ssid">Rete</div>
+      <div style="display:flex;align-items:baseline;gap:12px;margin:8px 0"><span class="big" id="h-online" style="font-size:56px">–</span><span class="dim">dispositivi connessi</span></div>
+      <div id="h-fresh"></div><p class="dim" id="h-msg"></p>
+      <div class="row"><button class="btn primary" onclick="job('scan','Scansione avviata')">↻ Scansiona</button>
+        <button class="btn" onclick="job('check','Verifica avviata');kit.show('v-check')">Verifica la rete</button>
+        <button class="btn" onclick="exportCsv()">⤓ Esporta CSV</button></div></div>
+    <div class="card"><div class="radar" id="radar"></div></div>
+  </div>
+  <div class="grid g3" style="margin-top:16px" id="kinds"></div>
+</section>
+
+<section class="view" id="v-devices">
+  <div class="row" style="margin-bottom:14px"><input id="search" placeholder="Cerca per nome, IP, produttore..." class="grow" oninput="drawDevices()">
+    <div class="pill-toggle" id="filter"><button data-f="all" class="on">Tutti</button><button data-f="new">Nuovi</button><button data-f="untrusted">Da verificare</button><button data-f="off">Non in linea</button></div></div>
+  <div class="devgrid" id="devs"></div>
+</section>
+
+<section class="view" id="v-check">
+  <div class="grid g2">
+    <div class="card"><h2>Verdetto</h2><p class="serif" id="c-verdict" style="font-size:20px">Nessuna verifica ancora.</p>
+      <button class="btn primary" onclick="job('check','Verifica avviata')">Verifica ora</button></div>
+    <div class="card"><h2>Misure</h2><div id="c-measures" class="dim">—</div></div>
+  </div>
+</section>
+
+<section class="view" id="v-air">
+  <div class="grid g2">
+    <div class="card"><div class="row"><h2 class="grow" style="margin:0">Reti vicine</h2><button class="btn" onclick="job('air','Ascolto le reti...')">↻ Ascolta</button></div>
+      <table style="width:100%;margin-top:10px"><thead><tr><th align=left>Rete</th><th>Canale</th><th>Segnale</th><th align=left>Sicurezza</th></tr></thead><tbody id="aps"></tbody></table></div>
+    <div class="card"><h2>Affollamento dei canali</h2><div class="chbar" id="chbar"></div><p style="margin-top:30px" id="best"></p></div>
+  </div>
+</section>
+</main>
+
+<div class="modal" id="dlg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40;place-items:center">
+  <div class="card" style="max-width:520px;width:calc(100% - 32px);max-height:90vh;overflow:auto">
+    <div class="row"><h2 class="grow" style="margin:0" id="d-title"></h2><button class="btn sm" onclick="closeDlg()">✕</button></div>
+    <div id="d-body" style="margin-top:12px"></div>
+    <label class="field" style="margin-top:12px">Nome personale<input id="d-label" maxlength="31"></label>
+    <label class="row" style="margin-top:10px"><input type="checkbox" id="d-trusted"> Dispositivo fidato</label>
+    <div class="row end" style="margin-top:14px"><button class="btn" onclick="ports()">Controlla i servizi</button><button class="btn primary" onclick="saveDevice()">Salva</button></div>
+  </div>
+</div>
+
+<script src="/kit.js"></script>
+<script>
+'use strict';
+const {$, $$} = kit;
+const S = {st: null, filter: 'all', open: null};
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const ICON = {'Router': '📡', 'Telefono': '📱', 'Tablet': '📱', 'Computer': '💻', 'Stampante': '🖨', 'TV / media': '📺', 'Altoparlante': '🔊',
+  'Videocamera': '📷', 'Domotica': '💡', 'NAS': '🗄', 'Console': '🎮'};
+const ago = t => t ? new Date(t * 1000).toLocaleString('it-IT', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) : '—';
+
+async function load() {
+  const st = S.st = await kit.api('/api/state'), s = st.status;
+  const busy = s.phase !== 0 && s.phase !== 7;
+  $('#progress').style.display = busy ? 'block' : 'none';
+  $('#progress i').style.width = (s.percent || 4) + '%';
+  $('#h-ssid').textContent = (s.ssid || 'Rete') + (s.ip ? ' · orologio ' + s.ip + ' · router ' + s.gateway : '');
+  $('#h-online').textContent = s.online;
+  $('#h-msg').textContent = s.message + (s.scanned ? ' · ultima scansione ' + ago(s.scanned) : '');
+  $('#h-fresh').innerHTML = s.fresh ? `<span class="badge">${s.fresh} nuovi</span> <span class="dim">dispositivi mai visti prima su questa rete</span>` : '<span class="badge ok">nessun nuovo dispositivo</span>';
+  drawRadar(); drawKinds(); drawDevices(); drawCheck(); drawAir();
+  if (S.open) { const d = st.devices.find(x => x.ip === S.open.ip); if (d) fillDlg(d, false); }
+}
+const job = (name, text) => kit.try(() => kit.api('/api/' + name, {body: {}}), text).then(() => setTimeout(load, 600));
+
+function drawRadar() {
+  const devs = S.st.devices.filter(d => d.online), n = devs.length, size = 340, c = size / 2;
+  let dots = '';
+  devs.forEach((d, i) => {
+    const a = i / Math.max(n, 1) * Math.PI * 2 - Math.PI / 2, r = d.kind === 'Router' ? 0 : 60 + Math.min(1, (d.rtt < 0 ? 200 : d.rtt) / 200) * 95;
+    const x = c + Math.cos(a) * r, y = c + Math.sin(a) * r, color = d.fresh ? 'var(--warn)' : d.trusted ? 'var(--good)' : 'var(--accent)';
+    dots += `<g style="cursor:pointer" onclick="openDev('${esc(d.ip)}')"><circle cx="${x}" cy="${y}" r="${d.kind === 'Router' ? 14 : 8}" fill="${color}"/><title>${esc(d.name)} · ${esc(d.ip)}</title></g>`;
+  });
+  $('#radar').innerHTML = `<svg viewBox="0 0 ${size} ${size}">${[60, 110, 155].map(r => `<circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--line)"/>`).join('')}${dots}
+    <text x="${c}" y="${size - 6}" text-anchor="middle" fill="var(--faint)" font-size="11">più vicino al centro = risponde più in fretta</text></svg>`;
+}
+function drawKinds() {
+  const counts = {};
+  S.st.devices.filter(d => d.online).forEach(d => { const k = d.kind || 'Altro'; counts[k] = (counts[k] || 0) + 1; });
+  $('#kinds').innerHTML = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) =>
+    `<div class="card kpi"><b>${ICON[k] || '🔹'} ${n}</b><span>${esc(k)}</span></div>`).join('');
+}
+function drawDevices() {
+  const q = $('#search').value.toLowerCase();
+  const list = S.st.devices.filter(d => {
+    if (S.filter === 'new' && !d.fresh) return false;
+    if (S.filter === 'untrusted' && (d.trusted || !d.online)) return false;
+    if (S.filter === 'off' && d.online) return false;
+    return !q || [d.name, d.ip, d.mac, d.vendor, d.kind].join(' ').toLowerCase().includes(q);
+  });
+  $('#devs').innerHTML = list.map(d => `<div class="dev${d.fresh ? ' fresh' : ''}${d.online ? '' : ' off'}" onclick="openDev('${esc(d.ip)}')">
+    <div class="top"><div class="ic">${ICON[d.kind] || '🔹'}</div><div style="min-width:0"><b>${esc(d.name)}</b><div class="sub">${esc(d.kind || d.vendor || 'Dispositivo')}</div></div>
+      <div style="margin-left:auto">${d.fresh ? '<span class="badge">NUOVO</span>' : d.trusted ? '<span class="badge ok">✓</span>' : ''}</div></div>
+    <div class="sub">${esc(d.ip)} · ${esc(d.mac || 'MAC non rilevato')}${d.rtt >= 0 ? ' · ' + d.rtt + ' ms' : ''}</div>
+    ${d.vendor ? `<div class="sub">${esc(d.vendor)}</div>` : ''}</div>`).join('') || '<div class="empty">Nessun dispositivo.</div>';
+}
+$$('#filter button').forEach(b => b.onclick = () => { S.filter = b.dataset.f; $$('#filter button').forEach(x => x.classList.toggle('on', x === b)); drawDevices(); });
+
+function openDev(ip) { const d = S.st.devices.find(x => x.ip === ip); if (!d) return; S.open = d; fillDlg(d, true); $('#dlg').style.display = 'grid'; }
+function closeDlg() { S.open = null; $('#dlg').style.display = 'none'; }
+function fillDlg(d, inputs) {
+  $('#d-title').textContent = d.name;
+  const names = [['mDNS', d.mdns], ['NetBIOS', d.netbios], ['UPnP', d.upnp], ['DNS', d.dns]].filter(x => x[1]).map(x => `${x[0]}: <b>${esc(x[1])}</b>`).join('<br>');
+  const ports = d.ports ? (d.ports.length ? d.ports.map(p => `<div class="portrow"><span>${p.port} · ${esc(p.name)}</span>${p.warning ? `<span class="warnline">⚠ ${esc(p.warning)}</span>` : ''}</div>`).join('')
+    : '<div class="dim">Nessun servizio comune aperto.</div>') : '<div class="dim">Servizi non ancora controllati.</div>';
+  $('#d-body').innerHTML = `<div class="dim">${esc(d.kind || 'Tipo non riconosciuto')} · ${esc(d.vendor || 'produttore sconosciuto')}</div>
+    <p>IP <b>${esc(d.ip)}</b> · MAC <b>${esc(d.mac || '—')}</b><br>Visto la prima volta ${ago(d.first)} · ultima ${ago(d.last)}</p>
+    ${names ? `<p>${names}</p>` : ''}<h3>Servizi aperti</h3>${ports}`;
+  if (inputs) { $('#d-label').value = d.label; $('#d-trusted').checked = d.trusted; }
+}
+const ports = () => S.open && kit.try(() => kit.api('/api/ports', {body: {ip: S.open.ip}}), 'Controllo i servizi (20 porte)...');
+async function saveDevice() {
+  const d = S.open;
+  await kit.try(() => kit.api('/api/edit', {body: {mac: d.mac, ip: d.ip, label: $('#d-label').value, trusted: $('#d-trusted').checked}}), 'Salvato');
+  closeDlg(); load();
+}
+
+function drawCheck() {
+  const c = S.st.check;
+  if (!c) return;
+  $('#c-verdict').textContent = c.verdict;
+  const bar = (label, value, unit, good, bad, invert) => {
+    if (value < 0) return `<div style="margin-bottom:12px"><b>${label}</b> <span class="bad">non disponibile</span></div>`;
+    const p = Math.max(0, Math.min(1, invert ? (value - bad) / (good - bad) : 1 - (value - good) / (bad - good)));
+    const color = p > .66 ? 'var(--good)' : p > .33 ? 'var(--warn)' : 'var(--bad)';
+    return `<div style="margin-bottom:12px"><div class="row"><b class="grow">${label}</b><span>${value} ${unit}</span></div><div class="meter"><i style="width:${(p * 100).toFixed(0)}%;background:${color}"></i></div></div>`;
+  };
+  $('#c-measures').innerHTML = bar('Segnale', c.rssi, 'dBm', -50, -85, true) + bar('Router', c.gateway_avg, 'ms', 5, 80) +
+    bar('Pacchetti persi', c.gateway_loss, '%', 0, 30) + bar('Internet', c.internet_ms, 'ms', 15, 200) + bar('DNS', c.dns_ms, 'ms', 10, 300) +
+    `<p class="dim">Canale ${c.channel} · sicurezza ${esc(c.security)}</p>`;
+}
+function drawAir() {
+  const aps = S.st.aps, load = {};
+  aps.forEach(a => { for (let ch = 1; ch <= 13; ch++) if (a.channel && Math.abs(a.channel - ch) <= 2) load[ch] = (load[ch] || 0) + 1; });
+  $('#aps').innerHTML = aps.map(a => `<tr${a.current ? ' style="color:var(--accent)"' : ''}><td>${esc(a.ssid || '(nascosta)')}${a.current ? ' · in uso' : ''}</td><td align=center>${a.channel}</td><td align=center>${a.rssi} dBm</td><td>${esc(a.security)}</td></tr>`).join('')
+    || '<tr><td colspan=4 class="dim">Tocca "Ascolta" per cercare le reti vicine.</td></tr>';
+  const max = Math.max(1, ...Object.values(load));
+  $('#chbar').innerHTML = Array.from({length: 13}, (_, i) => i + 1).map(ch => `<div style="height:${((load[ch] || 0) / max * 100).toFixed(0)}%;${[1, 6, 11].includes(ch) ? '' : 'opacity:.35'}"><span>${ch}</span></div>`).join('');
+  if (aps.length) { const best = [1, 6, 11].sort((a, b) => (load[a] || 0) - (load[b] || 0))[0]; $('#best').innerHTML = `Canale consigliato tra 1, 6 e 11: <b>${best}</b> (${load[best] || 0} reti si sovrappongono)`; }
+}
+function exportCsv() { location.href = kit.base + '/api/export.csv?k=' + kit.key(); }
+
+kit.views(() => {});
+kit.start({onReady: () => kit.poll(load, 3000)});
+</script>
+</body>
+</html>
