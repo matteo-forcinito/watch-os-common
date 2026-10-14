@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casa - configurazione</title>
+<style>
+:root{--bg:#0a0c10;--panel:#13161d;--line:#252a36;--ink:#eef1f6;--mist:#8b93a6;--accent:#ffc870;--ok:#5bd6a0;--bad:#ff6b6b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:28px 22px 80px}h1{font-weight:650;letter-spacing:.5px;margin:0 0 4px}.sub{color:var(--mist);margin:0 0 26px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:18px}.card h2{font-size:13px;letter-spacing:1.5px;text-transform:uppercase;color:var(--mist);margin:0 0 12px}
+label{display:block;font-size:12.5px;color:var(--mist);margin:10px 0 4px}input{width:100%;background:#0d1015;color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit}
+input:focus{outline:1px solid var(--accent)}button{background:#232836;color:var(--ink);border:1px solid #303748;border-radius:10px;padding:9px 14px;font:inherit;cursor:pointer}
+button.primary{background:var(--accent);color:#1d1406;border:0;font-weight:650}button:disabled{opacity:.4}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.grow{flex:1}.hint{font-size:13px;color:var(--mist)}.err{color:var(--bad)}.ok{color:var(--ok)}
+.area{margin:14px 0 6px;font-size:12px;letter-spacing:1.4px;text-transform:uppercase;color:var(--accent)}
+.ents{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
+.ent{display:flex;gap:10px;align-items:center;background:#0f1218;border:1px solid var(--line);border-radius:12px;padding:9px 11px;cursor:pointer}
+.ent.on{border-color:var(--accent);background:#1a1710}.ent .ico{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#1d222c;flex:none;font-size:15px}
+.ent .t{flex:1;min-width:0}.ent .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ent .s{font-size:12px;color:var(--mist);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.count{font-weight:650;color:var(--accent)}#lock{position:fixed;inset:0;background:#000d;display:flex;align-items:center;justify-content:center}
+#lock .card{width:330px;text-align:center}#lock input{font-size:26px;text-align:center;letter-spacing:6px}
+ol{margin:6px 0 0 18px;padding:0;color:var(--mist);font-size:13.5px}ol b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Casa</h1><p class="sub">Home Assistant sull'orologio: scegli cosa vuoi avere al polso.</p>
+<div class="card"><h2>1 &middot; Home Assistant</h2>
+<label>Indirizzo</label><input id="url" placeholder="http://homeassistant.local:8123 oppure https://....ui.nabu.casa">
+<label>Token di accesso a lunga durata</label><input id="token" type="password" autocomplete="off" placeholder="Incolla il token">
+<ol><li>In Home Assistant: <b>profilo</b> (in basso a sinistra) &rarr; scheda <b>Sicurezza</b> &rarr; <b>Token di accesso a lunga durata</b> &rarr; <b>Crea token</b>.</li><li>Chiamalo "Orologio", copia e incolla qui. Resta solo sull'orologio.</li></ol>
+<div class="row" style="margin-top:12px"><button class="primary" id="load">Carica le entità</button><span class="hint" id="hstatus"></span></div></div>
+<div class="card" id="pick" style="display:none"><h2>2 &middot; Preferiti</h2>
+<div class="row"><input id="filter" class="grow" placeholder="Cerca (luce, cucina, termostato...)"><span class="hint"><span class="count" id="count">0</span> / 40 scelti</span></div>
+<div id="list"></div></div>
+<div class="card"><h2>3 &middot; Salva</h2><div class="row"><button class="primary" id="save">Salva sull'orologio</button><span class="hint" id="sstatus"></span></div>
+<p class="hint">L'orologio si collega da solo. Per cambiare i preferiti torna su questa pagina quando vuoi, mentre Casa è aperta.</p></div>
+</div>
+<div id="lock"><div class="card"><b>Codice dell'orologio</b><p class="hint">Lo trovi in Casa &rarr; Impostazioni.</p><input id="code" maxlength="6" inputmode="numeric" autofocus><div class="row" style="justify-content:center;margin-top:12px"><button class="primary" id="enter">Entra</button></div><p class="err" id="cerr"></p></div></div>
+<script>
+const $=s=>document.querySelector(s);let code=sessionStorage.casaCode||'',entities=[],chosen=new Map(),hasToken=false;
+const DOMAINS=['light','switch','input_boolean','automation','fan','cover','climate','media_player','scene','script','button','input_button','lock','sensor','binary_sensor','weather','person','device_tracker'];
+const ICON={light:'\u{1F4A1}',switch:'⏻',input_boolean:'⏻',automation:'⚙',fan:'\u{1F300}',cover:'\u{1FA9F}',climate:'\u{1F321}',media_player:'♫',scene:'✨',script:'▶',button:'●',input_button:'●',lock:'\u{1F512}',sensor:'\u{1F4C8}',binary_sensor:'◐',weather:'☁',person:'\u{1F464}',device_tracker:'\u{1F4CD}'};
+async function api(method,body){const r=await fetch('/api/config',{method,headers:{'X-Casa-Code':code,'Content-Type':'application/json'},body});return r.json()}
+async function login(){code=$('#code').value.trim();const j=await api('GET').catch(()=>null);if(!j||j.ok===false){$('#cerr').textContent=j&&j.error||'Orologio non raggiungibile';return}
+sessionStorage.casaCode=code;$('#lock').remove();$('#url').value=j.url||'';hasToken=j.has_token;if(hasToken)$('#token').placeholder='Token già salvato: incollalo solo per ricaricare le entità o per cambiarlo';
+(j.favorites||[]).forEach(f=>chosen.set(f.id,f));$('#count').textContent=chosen.size}
+$('#enter').onclick=login;$('#code').onkeydown=e=>{if(e.key==='Enter')login()};if(code){$('#code').value=code;login()}
+function wsUrl(u){u=u.trim().replace(/\/+$/,'');return u.replace(/^http/,'ws')+'/api/websocket'}
+$('#load').onclick=()=>{const u=$('#url').value.trim(),t=$('#token').value.trim();if(!/^https?:\/\//.test(u))return status('#hstatus','Indirizzo: deve iniziare con http:// o https://',1);if(!t)return status('#hstatus','Serve il token per leggere le entità',1);
+status('#hstatus','Collegamento...');let ws;try{ws=new WebSocket(wsUrl(u))}catch(e){return status('#hstatus','Indirizzo non valido',1)}
+const replies={};let id=1;const ask=type=>{const n=++id;ws.send(JSON.stringify({id:n,type}));return n};let ids={};
+ws.onerror=()=>status('#hstatus','Home Assistant non raggiungibile da questo PC (indirizzo? stessa rete?)',1);
+ws.onmessage=ev=>{const m=JSON.parse(ev.data);if(m.type==='auth_required')ws.send(JSON.stringify({type:'auth',access_token:t}));
+else if(m.type==='auth_invalid'){status('#hstatus','Token rifiutato',1);ws.close()}
+else if(m.type==='auth_ok'){status('#hstatus','Collegato a Home Assistant '+m.ha_version+', leggo le entità...');ids={states:ask('get_states'),areas:ask('config/area_registry/list'),reg:ask('config/entity_registry/list'),dev:ask('config/device_registry/list')}}
+else if(m.type==='result'){replies[m.id]=m.success?m.result:[];if(Object.values(ids).every(n=>n in replies)){ws.close();build(replies[ids.states],replies[ids.areas],replies[ids.reg],replies[ids.dev])}}}};
+function build(states,areas,reg,devices){const areaName={};areas.forEach(a=>areaName[a.area_id]=a.name);const devArea={};devices.forEach(d=>devArea[d.id]=d.area_id);const entArea={};reg.forEach(r=>{entArea[r.entity_id]=r.area_id||devArea[r.device_id]||''});
+const order=areas.map(a=>a.name);entities=states.filter(s=>DOMAINS.includes(s.entity_id.split('.')[0])).map(s=>({id:s.entity_id,name:s.attributes.friendly_name||s.entity_id,area:areaName[entArea[s.entity_id]]||'',state:s.state,unit:s.attributes.unit_of_measurement||''}));
+entities.sort((a,b)=>{const ia=a.area?order.indexOf(a.area):999,ib=b.area?order.indexOf(b.area):999;return ia-ib||a.name.localeCompare(b.name)});
+status('#hstatus',entities.length+' entità trovate',0,true);$('#pick').style.display='';draw()}
+function draw(){const f=$('#filter').value.toLowerCase(),list=$('#list');list.innerHTML='';let area=null,box=null;
+entities.filter(e=>!f||(e.name+' '+e.area+' '+e.id).toLowerCase().includes(f)).forEach(e=>{const a=e.area||'Senza stanza';if(a!==area){area=a;list.insertAdjacentHTML('beforeend',`<div class="area">${esc(a)}</div>`);box=document.createElement('div');box.className='ents';list.appendChild(box)}
+const d=document.createElement('div');d.className='ent'+(chosen.has(e.id)?' on':'');d.innerHTML=`<div class="ico">${ICON[e.id.split('.')[0]]||'•'}</div><div class="t"><div class="n">${esc(e.name)}</div><div class="s">${esc(e.state)}${e.unit?' '+esc(e.unit):''} &middot; ${esc(e.id)}</div></div>`;
+d.onclick=()=>{if(chosen.has(e.id))chosen.delete(e.id);else{if(chosen.size>=40)return alert('Al massimo 40 preferiti');chosen.set(e.id,{id:e.id,name:e.name.slice(0,39),area:(e.area||'Altro').slice(0,39)})}$('#count').textContent=chosen.size;d.classList.toggle('on')};box.appendChild(d)})}
+$('#filter').oninput=draw;
+$('#save').onclick=async()=>{const u=$('#url').value.trim();if(!chosen.size)return status('#sstatus','Scegli almeno un preferito',1);if(!hasToken&&!$('#token').value.trim())return status('#sstatus','Manca il token',1);
+/* Order as the list shows it: rooms, then names. */const ids=entities.length?entities.filter(e=>chosen.has(e.id)).map(e=>chosen.get(e.id)):[...chosen.values()];[...chosen.values()].forEach(c=>{if(!ids.find(x=>x.id===c.id))ids.push(c)});
+const j=await api('POST',JSON.stringify({url:u,token:$('#token').value.trim(),favorites:ids})).catch(()=>null);
+if(j&&j.ok){status('#sstatus','Salvato: guarda l\'orologio.',0,true);$('#token').value='';hasToken=true}else status('#sstatus',(j&&j.error)||'Orologio non raggiungibile',1)};
+function status(s,t,bad,good){const e=$(s);e.textContent=t;e.className='hint'+(bad?' err':good?' ok':'')}
+function esc(t){return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+</script>
+</body>
+</html>
