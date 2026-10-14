@@ -346,6 +346,17 @@ void appkit_web_activate(void)
 {
 }
 
+void appkit_hosted_register(const char *name, const char *app_id)
+{
+    (void)name;
+    (void)app_id;   /* external apps run their own server */
+}
+
+void appkit_web_host(char *out, size_t size)
+{
+    snprintf(out, size, "%s.local", s_key);
+}
+
 void appkit_web_stop(void)
 {
     atomic_store(&s_stop, true);

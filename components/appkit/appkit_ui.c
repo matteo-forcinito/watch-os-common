@@ -10,6 +10,7 @@
  *     Codice 482 913
  */
 #include "appkit.h"
+#include "services/wifi.h"
 #include "appkit_private.h"
 
 #include "hardware/board.h"
@@ -26,6 +27,7 @@ typedef struct
     lv_obj_t *qr;
     lv_obj_t *url;
     lv_obj_t *code;
+    lv_obj_t *info;
     lv_obj_t *usage;
     lv_timer_t *timer;
     char shown[64];
@@ -58,6 +60,7 @@ static void refresh(lv_timer_t *timer)
         lv_obj_set_hidden(p->frame, state != APPKIT_WEB_ON);
         lv_obj_set_hidden(p->url, state != APPKIT_WEB_ON);
         lv_obj_set_hidden(p->code, state != APPKIT_WEB_ON);
+        lv_obj_set_hidden(p->info, state != APPKIT_WEB_ON);
     }
 
     char target[64];
@@ -69,6 +72,12 @@ static void refresh(lv_timer_t *timer)
         lv_label_set_text(p->url, url);
         const char *code = appkit_web_code();
         lv_label_set_text_fmt(p->code, "Codice  %.3s %.3s", code, code + 3);
+        /* Everything needed to reach it without the QR: network, address, name. */
+        char ssid[33] = "", ip[20] = "", host[64];
+        wifi_current_ssid(ssid, sizeof(ssid));
+        wifi_get_ip(ip, sizeof(ip));
+        appkit_web_host(host, sizeof(host));
+        lv_label_set_text_fmt(p->info, "Wi-Fi  %s\nIP  %s\noppure  %s", ssid[0] ? ssid : "–", ip[0] ? ip : "–", host);
     }
 
     unsigned hits = appkit_web_hits();
@@ -126,6 +135,9 @@ void appkit_dashboard_page(lv_obj_t *parent, lv_color_t accent)
     lv_label_set_text(p->code, "");
     lv_obj_set_style_text_font(p->code, ui_font_title, 0);
     lv_obj_set_style_text_color(p->code, lv_color_hex(0xF4F6FA), 0);
+
+    p->info = ui_text(parent, "", false);
+    lv_obj_set_style_text_align(p->info, LV_TEXT_ALIGN_CENTER, 0);
 
     p->usage = ui_text(parent, "Il codice abbina un nuovo browser; quelli abbinati restano validi.", true);
     lv_obj_set_style_text_align(p->usage, LV_TEXT_ALIGN_CENTER, 0);

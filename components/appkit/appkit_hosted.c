@@ -11,6 +11,8 @@
 #include "appkit.h"
 #include "appkit_private.h"
 
+#include "core/app.h"
+#include "core/lv_port.h"
 #include "core/sys.h"
 #include "hardware/board.h"
 #include "hardware/pmu.h"
@@ -41,6 +43,18 @@ static atomic_uint s_hits;
 static atomic_int s_generation;
 static bool s_server_held;                /* this app holds one web_server_start() */
 static char s_folder[FOLDER_MAX];         /* "/pieno" */
+
+/* Folders registered at boot, so a dashboard can open its app. */
+#define REGISTERED_MAX 8
+typedef struct
+{
+    char folder[FOLDER_MAX];
+    char app[24];
+    char name[24];
+} registered_t;
+static registered_t s_registered[REGISTERED_MAX];
+static int s_registered_count;
+static char s_autostart[FOLDER_MAX];      /* the app opened from the browser: start its dashboard */
 
 /* ----------------------------------------------------------- alarms */
 
@@ -97,6 +111,11 @@ void appkit_web_url(char *out, size_t size)
     snprintf(out, size, "%s%s/", base, s_folder + 1);
 }
 
+void appkit_web_host(char *out, size_t size)
+{
+    snprintf(out, size, "%s.local%s/", sys_hostname(), s_folder);
+}
+
 /* ------------------------------------------------------------ routes */
 
 static esp_err_t page(httpd_req_t *request)
@@ -134,6 +153,57 @@ static esp_err_t kit_info(httpd_req_t *request)
     return appkit_json(request, out);
 }
 
+static void folder_of(const char *name, char *out, size_t size)
+{
+    size_t i = 0;
+    out[i++] = '/';
+    for (size_t c = 0; name[c] != '\0' && i < size - 1; c++)
+    {
+        unsigned char ch = (unsigned char)name[c];
+        if (isalnum(ch))
+        {
+            out[i++] = (char)tolower(ch);
+        }
+    }
+    out[i] = '\0';
+}
+
+/* The app is closed: open it on the watch and answer with a page that
+ * reloads itself in a moment (by then the app serves its dashboard). */
+static esp_err_t open_app(httpd_req_t *request, const registered_t *r)
+{
+    /* A page load carries no token: opening an app is harmless (its data stays
+     * behind the pairing). */
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool already_open = s_config != NULL && strcmp(s_folder, r->folder) == 0;
+    if (!already_open)
+    {
+        snprintf(s_autostart, sizeof(s_autostart), "%s", r->folder);
+    }
+    xSemaphoreGive(s_lock);
+    bool opened = true;
+    if (already_open)
+    {
+        appkit_web_activate();   /* open on the watch, dashboard not started yet */
+    }
+    else
+    {
+        lv_port_lock();
+        opened = app_open(r->app, NULL);
+        lv_port_unlock();
+    }
+    char html[420];
+    snprintf(html, sizeof(html),
+             "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+             "<meta http-equiv=refresh content='2'><title>%s</title>"
+             "<body style='font:18px system-ui;background:#0b0d12;color:#eef1f7;display:grid;place-items:center;height:90vh'>"
+             "<div style='text-align:center'><h2>%s</h2><p>%s</p></div>",
+             r->name, r->name, opened ? "Apro l'app sull'orologio..." : "L'orologio è occupato: riprovo...");
+    httpd_resp_set_type(request, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(request, html);
+}
+
 /* Every GET/POST under "/<app>/" lands here (registered once, never removed).
  * The lock is held while the app's handler runs, so appkit_web_stop() (app
  * closing) waits for a request in flight before the app frees its data. */
@@ -146,6 +216,17 @@ static esp_err_t dispatch(httpd_req_t *request)
         request->uri[folder] != '/')
     {
         xSemaphoreGive(s_lock);
+        /* The page of a closed app: open the app. API calls just get 404. */
+        for (int i = 0; i < s_registered_count; i++)
+        {
+            const registered_t *r = &s_registered[i];
+            size_t n = strlen(r->folder);
+            if (request->method == HTTP_GET && strncmp(request->uri, r->folder, n) == 0 && request->uri[n] == '/' &&
+                (request->uri[n + 1] == '\0' || request->uri[n + 1] == '?' || request->uri[n + 1] == '#'))
+            {
+                return open_app(request, r);
+            }
+        }
         return appkit_error(request, "404 Not Found", "Apri l'app sull'orologio");
     }
     const char *path = request->uri + folder;   /* "/api/state?x=1" */
@@ -205,7 +286,7 @@ static void start_task(void *arg)
         char wildcard[FOLDER_MAX + 2];
         snprintf(wildcard, sizeof(wildcard), "%s/*", s_folder);
         s_server_held = true;
-        if (web_server_add_folder(wildcard, dispatch) != ESP_OK)
+        if (web_server_add_folder(wildcard, NULL, dispatch) != ESP_OK)
         {
             ESP_LOGE(TAG, "No room for %s", wildcard);
         }
@@ -248,20 +329,35 @@ esp_err_t appkit_web_start(const appkit_web_config_t *config)
         xSemaphoreTake(s_lock, portMAX_DELAY);
     }
     s_config = config;
-    size_t i = 0;
-    s_folder[i++] = '/';
-    for (size_t c = 0; config->name[c] != '\0' && i < sizeof(s_folder) - 1; c++)
-    {
-        unsigned char ch = (unsigned char)config->name[c];
-        if (isalnum(ch))
-        {
-            s_folder[i++] = (char)tolower(ch);
-        }
-    }
-    s_folder[i] = '\0';
+    folder_of(config->name, s_folder, sizeof(s_folder));
     atomic_store(&s_state, APPKIT_WEB_OFF);
+    bool autostart = strcmp(s_autostart, s_folder) == 0;
+    s_autostart[0] = '\0';
     xSemaphoreGive(s_lock);
+    if (autostart)
+    {
+        appkit_web_activate();   /* opened from the browser: the dashboard at once */
+    }
     return ESP_OK;
+}
+
+void appkit_hosted_register(const char *name, const char *app_id)
+{
+    if (s_lock == NULL)
+    {
+        s_lock = xSemaphoreCreateMutex();
+    }
+    if (s_lock == NULL || s_registered_count == REGISTERED_MAX)
+    {
+        return;
+    }
+    registered_t *r = &s_registered[s_registered_count++];
+    folder_of(name, r->folder, sizeof(r->folder));
+    snprintf(r->app, sizeof(r->app), "%s", app_id);
+    snprintf(r->name, sizeof(r->name), "%s", name);
+    char wildcard[FOLDER_MAX + 2];
+    snprintf(wildcard, sizeof(wildcard), "%s/*", r->folder);
+    web_server_add_folder(wildcard, app_id, dispatch);
 }
 
 void appkit_web_activate(void)

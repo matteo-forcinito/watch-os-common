@@ -39,6 +39,13 @@ void sys_worker_init(void);
 /* "internal 123 KB free (largest 60 KB, min 80 KB), PSRAM 7.5 MB free" in the log. */
 void sys_heap_log(const char *where);
 
+/* This watch's own name, fixed and made from its MAC (like a Flipper's):
+ * "Tamiro". Used for Bluetooth ("Bangle.js Tamiro"), the network
+ * ("tamiro.local") and the access point ("Tamiro-AMOLED"). */
+const char *sys_nickname(void);
+/* The same in lower case, for mDNS: "tamiro". */
+const char *sys_hostname(void);
+
 /*
  * Why the chip started this time. If the previous run crashed, the log shows
  * the task and the address saved in the core dump. Call once at boot.

@@ -25,6 +25,7 @@
 #include "services/fw_version.h"
 #include "services/market.h"
 #include "services/storage.h"
+#include "services/web_server.h"
 #include "services/wifi.h"
 
 #include "cJSON.h"
@@ -102,6 +103,10 @@ static esp_err_t system_get(httpd_req_t *req)
     cJSON *out = cJSON_CreateObject();
     cJSON_AddStringToObject(out, "product", b->product);
     cJSON_AddStringToObject(out, "board", b->name);
+    cJSON_AddStringToObject(out, "name", sys_nickname());
+    char host[24];
+    snprintf(host, sizeof(host), "%s.local", sys_hostname());
+    cJSON_AddStringToObject(out, "hostname", host);
     cJSON_AddBoolToObject(out, "round", b->round);
     cJSON_AddNumberToObject(out, "width", b->width);
     cJSON_AddNumberToObject(out, "height", b->height);
@@ -180,6 +185,11 @@ static esp_err_t apps_get(httpd_req_t *req)
         cJSON_AddStringToObject(j, "name", a->name);
         cJSON_AddNumberToObject(j, "color", a->color);
         cJSON_AddStringToObject(j, "about", a->about != NULL ? a->about : "");
+        char folder[32];
+        if (web_server_app_folder(a->id, folder, sizeof(folder)) != NULL)
+        {
+            cJSON_AddStringToObject(j, "dashboard", folder);   /* opening it opens the app */
+        }
         cJSON_AddItemToArray(builtin, j);
     }
     extapp_t *ext = heap_caps_calloc(EXTAPP_MAX, sizeof(extapp_t), MALLOC_CAP_SPIRAM);

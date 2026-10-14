@@ -41,8 +41,8 @@ static void set_defaults(settings_t *s)
     strcpy(s->timezone, "CET-1CEST,M3.5.0,M10.5.0/3");   /* Italy */
     s->auto_time = true;
     s->ble_enabled = true;
-    /* "Bangle.js" prefix: Gadgetbridge pairs it. */
-    snprintf(s->device_name, sizeof(s->device_name), "Bangle.js %s", board_info()->short_name);
+    /* "Bangle.js" prefix: Gadgetbridge pairs it. Then the watch's own name. */
+    snprintf(s->device_name, sizeof(s->device_name), "Bangle.js %s", sys_nickname());
     strcpy(s->weather_city, "Civita Castellana");
     s->weather_lat = 42.2946f;
     s->weather_lon = 12.4103f;
@@ -75,6 +75,13 @@ static void sanitize(settings_t *s)
 
     s->timezone[sizeof(s->timezone) - 1] = '\0';
     s->device_name[sizeof(s->device_name) - 1] = '\0';
+    /* The old default ("Bangle.js AMOLED", same on every watch) becomes this watch's own name. */
+    char old_default[sizeof(s->device_name)];
+    snprintf(old_default, sizeof(old_default), "Bangle.js %s", board_info()->short_name);
+    if (strcmp(s->device_name, old_default) == 0)
+    {
+        snprintf(s->device_name, sizeof(s->device_name), "Bangle.js %s", sys_nickname());
+    }
     s->weather_city[sizeof(s->weather_city) - 1] = '\0';
     s->update_url[sizeof(s->update_url) - 1] = '\0';
     if (s->launcher_cards != 4 && s->launcher_cards != 6 && s->launcher_cards != 9)

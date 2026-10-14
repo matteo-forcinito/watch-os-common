@@ -8,6 +8,7 @@
 #include "esp_core_dump.h"
 #endif
 #include "esp_heap_caps.h"
+#include "esp_mac.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -15,6 +16,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static const char *TAG = "sys";
 
@@ -257,4 +259,49 @@ void sys_health_start(void)
     {
         esp_timer_start_periodic(timer, (uint64_t)HEALTH_PERIOD_S * 1000000);
     }
+}
+
+/* ------------------------------------------------------------ identity */
+
+static char s_nickname[8];
+static char s_hostname[8];
+
+static void make_names(void)
+{
+    if (s_nickname[0] != '\0')
+    {
+        return;
+    }
+    static const char consonants[] = "bcdfglmnprstvz";
+    static const char vowels[] = "aeiou";
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_BASE);
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < 6; i++)
+    {
+        h = (h ^ mac[i]) * 16777619u;
+    }
+    /* Three syllables, consonant + vowel: "tamiro", "lusena"... */
+    for (int i = 0; i < 6; i += 2)
+    {
+        s_hostname[i] = consonants[h % 14];
+        h /= 14;
+        s_hostname[i + 1] = vowels[h % 5];
+        h /= 5;
+    }
+    s_hostname[6] = '\0';
+    memcpy(s_nickname, s_hostname, sizeof(s_nickname));
+    s_nickname[0] = (char)(s_nickname[0] - 'a' + 'A');
+}
+
+const char *sys_nickname(void)
+{
+    make_names();
+    return s_nickname;
+}
+
+const char *sys_hostname(void)
+{
+    make_names();
+    return s_hostname;
 }

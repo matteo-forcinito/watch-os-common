@@ -50,6 +50,8 @@
   </div>
   <div class="grid g2" style="margin-top:16px">
     <div class="card"><h2>Aggiornamenti</h2><div id="home-updates"></div></div>
+    <div class="card"><h2>Dashboard delle app</h2><div class="row" id="app-dashboards"></div>
+      <p class="faint" style="margin:8px 0 0">Si aprono anche ad app chiusa: l'orologio apre l'app da solo.</p></div>
     <div class="card"><h2>Azioni rapide</h2><div class="row">
       <button class="btn" onclick="kit.show('v-apps')">Apri un'app sull'orologio</button>
       <button class="btn" onclick="syncTime()">Sincronizza l'ora</button>
@@ -160,10 +162,19 @@ async function call(path, opt) { const r = await kit.api(path, opt); if (r && r.
 const act = (fn, ok) => kit.try(fn, ok);
 
 /* ------------------------------------------------------------ home */
+async function loadDashLinks() {
+  const a = S.apps || await kit.api('/api/apps');
+  S.apps = a;
+  const box = $('#app-dashboards');
+  box.innerHTML = '';
+  a.builtin.filter(x => x.dashboard).forEach(x => box.append(el('a', {class: 'btn', href: x.dashboard, target: '_blank'},
+    el('span', {style: {color: hex(x.color)}}, '● '), x.name)));
+  if (!box.children.length) box.append(el('span', {class: 'dim'}, 'Nessuna'));
+}
 async function loadSystem() {
   const s = S.sys = await kit.api('/api/system');
-  $('#product').textContent = s.product;
-  document.title = s.product + ' · dashboard';
+  $('#product').textContent = s.name + ' · ' + s.product;
+  document.title = s.name + ' · dashboard';
   const k = $('#kpis'), card = (v, t, cls) => el('div', {class: 'card kpi'}, el('b', {class: cls || ''}, v), el('span', {}, t));
   k.innerHTML = '';
   const up = s.uptime, upt = up > 86400 ? Math.floor(up / 86400) + ' g' : up > 3600 ? Math.floor(up / 3600) + ' h' : Math.floor(up / 60) + ' min';
@@ -192,7 +203,7 @@ function device() {
   if (!s) return;
   box.innerHTML = '';
   const row = (k, v) => box.append(el('div', {class: 'row2'}, el('span', {class: 'dim grow'}, k), el('b', {}, v)));
-  row('Modello', s.board); row('Sistema', 'v' + s.version); row('Schermo', `${s.width}×${s.height}${s.round ? ' tondo' : ''}`);
+  row('Nome', s.name + ' (' + s.hostname + ')'); row('Modello', s.board); row('Sistema', 'v' + s.version); row('Schermo', `${s.width}×${s.height}${s.round ? ' tondo' : ''}`);
   row('Batteria', s.battery >= 0 ? `${s.battery}% · ${(s.battery_mv / 1000).toFixed(2)} V` : '–'); row('Indirizzo', s.wifi.ip || '–');
 }
 const syncTime = () => act(() => call('/api/time', {body: {epoch: Math.floor(Date.now() / 1000)}}), 'Ora sincronizzata');
@@ -213,7 +224,8 @@ async function loadApps() {
   for (const x of a.builtin) b.append(el('div', {class: 'app'},
     el('div', {class: 'top'}, el('div', {class: 'dot', style: {background: hex(x.color)}}, x.name[0]), el('b', {}, x.name), star(x.id)),
     el('div', {class: 'about'}, x.about || ''),
-    el('div', {class: 'row'}, el('button', {class: 'btn sm', onclick: () => act(() => call('/api/apps/open', {body: {id: x.id}}), x.name + ' aperta sull\'orologio')}, '▶ Apri sull\'orologio'))));
+    el('div', {class: 'row'}, el('button', {class: 'btn sm', onclick: () => act(() => call('/api/apps/open', {body: {id: x.id}}), x.name + ' aperta sull\'orologio')}, '▶ Apri sull\'orologio'),
+      x.dashboard ? el('a', {class: 'btn sm primary', href: x.dashboard, target: '_blank'}, 'Dashboard ↗') : '')));
   const e = $('#external');
   e.innerHTML = '';
   for (const x of a.external) e.append(el('div', {class: 'app'},
@@ -429,6 +441,7 @@ drawDays();
 kit.views(id => { current = id; if (S.ready) loaders[id]().catch(e => kit.toast(e.message, 'bad')); });
 kit.start({onReady: () => {
   S.ready = true;
+  loadDashLinks().catch(() => {});
   kit.poll(async () => {
     await loadMarket().catch(() => {});
     if (current === 'v-home') await loadSystem();

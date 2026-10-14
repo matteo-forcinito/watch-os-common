@@ -107,7 +107,9 @@ static void show_ready(void *arg)
     lv_label_set_text_fmt(code, "Codice  %.3s %.3s", web_server_code(), web_server_code() + 3);
     lv_obj_set_style_text_font(code, ui_font_title, 0);
 
-    ui_text(s_page, "oppure http://watch.local/  ·  chiudi l'app per spegnere il Wi-Fi", true);
+    char hint[96];
+    snprintf(hint, sizeof(hint), "oppure http://%s.local/  ·  chiudi l'app per spegnere il Wi-Fi", sys_hostname());
+    ui_text(s_page, hint, true);
 
     s_wifi = ui_text(s_page, "", false);
     lv_obj_set_style_text_align(s_wifi, LV_TEXT_ALIGN_CENTER, 0);

@@ -932,13 +932,10 @@ bool wifi_known_any(void)
 
 esp_err_t wifi_start_access_point(char *ssid_out, size_t size)
 {
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-
     wifi_config_t config = {0};
-    /* "<product>-XXXX" with dashes for spaces, e.g. "AMOLED-Watch-1A2B". */
-    int length = snprintf((char *)config.ap.ssid, sizeof(config.ap.ssid), "%s-%02X%02X",
-                          board_info()->product, mac[4], mac[5]);
+    /* "<name>-<board>", e.g. "Tamiro-AMOLED": the watch's own name, always the same. */
+    int length = snprintf((char *)config.ap.ssid, sizeof(config.ap.ssid), "%s-%s", sys_nickname(),
+                          board_info()->short_name);
 
     for (int i = 0; i < length && i < (int)sizeof(config.ap.ssid); i++)
     {

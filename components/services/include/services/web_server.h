@@ -43,7 +43,9 @@ bool web_server_ap_name(char *out, size_t size);
  * and POST under `folder` ("/pieno/" + "*"), now and after each server restart.
  * Routes are never removed (the server is not thread safe for that): the
  * handler answers "app closed" itself. */
-esp_err_t web_server_add_folder(const char *folder, esp_err_t (*handler)(httpd_req_t *req));
+esp_err_t web_server_add_folder(const char *folder, const char *app_id, esp_err_t (*handler)(httpd_req_t *req));
+/* "/pieno/" for the app with a dashboard folder, NULL otherwise. */
+const char *web_server_app_folder(const char *app_id, char *out, size_t size);
 /* The request comes from the paired browser (token, same origin). */
 bool web_server_authorized(httpd_req_t *req);
 

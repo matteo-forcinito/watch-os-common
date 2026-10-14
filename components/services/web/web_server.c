@@ -64,6 +64,7 @@ static SemaphoreHandle_t s_lock;
 typedef struct
 {
     char uri[24];
+    char app[24];
     esp_err_t (*handler)(httpd_req_t *req);
 } folder_t;
 static folder_t s_folders[FOLDERS_MAX];
@@ -950,7 +951,7 @@ static esp_err_t start_locked(bool allow_ap)
 
     if (mdns_init() == ESP_OK)
     {
-        mdns_hostname_set("watch");
+        mdns_hostname_set(sys_hostname());   /* "tamiro.local" */
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
     }
 
@@ -1004,7 +1005,20 @@ void web_server_stop(void)
     xSemaphoreGive(s_lock);
 }
 
-esp_err_t web_server_add_folder(const char *folder, esp_err_t (*handler)(httpd_req_t *req))
+const char *web_server_app_folder(const char *app_id, char *out, size_t size)
+{
+    for (int i = 0; i < s_folder_count; i++)
+    {
+        if (strcmp(s_folders[i].app, app_id) == 0)
+        {
+            snprintf(out, size, "%.*s", (int)strlen(s_folders[i].uri) - 1, s_folders[i].uri);   /* drop the '*' */
+            return out;
+        }
+    }
+    return NULL;
+}
+
+esp_err_t web_server_add_folder(const char *folder, const char *app_id, esp_err_t (*handler)(httpd_req_t *req))
 {
     lock_init();
     xSemaphoreTake(s_lock, portMAX_DELAY);
@@ -1023,6 +1037,7 @@ esp_err_t web_server_add_folder(const char *folder, esp_err_t (*handler)(httpd_r
         else
         {
             snprintf(s_folders[i].uri, sizeof(s_folders[i].uri), "%s", folder);
+            snprintf(s_folders[i].app, sizeof(s_folders[i].app), "%s", app_id != NULL ? app_id : "");
             s_folders[i].handler = handler;
             s_folder_count++;
             if (s_server != NULL)

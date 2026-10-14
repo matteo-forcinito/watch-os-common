@@ -82,6 +82,11 @@ esp_err_t appkit_unauthorized(httpd_req_t *request);
 /* Query parameter as text ("" if missing). */
 bool appkit_query(httpd_req_t *request, const char *key, char *out, size_t size);
 
+/* Internal apps (CONFIG_APPKIT_HOSTED), at boot: the dashboard folder
+ * "/<name>/" exists from now on. Opening its page with the app closed opens
+ * the app on the watch (and its dashboard) - nothing runs until then. */
+void appkit_hosted_register(const char *name, const char *app_id);
+
 /* ---------------------------------------------------------------------- UI */
 
 /* The dashboard page for the app's menu: QR code, address, pairing code, state.

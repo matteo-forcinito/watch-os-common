@@ -65,6 +65,13 @@
     catch (e) { setOnline(false); throw new Error('Orologio non raggiungibile'); }
     setOnline(true);
     if (r.status === 401) { showPair(); throw new Error('Abbina la dashboard'); }
+    if (r.status === 404 && kit.base && !document.getElementById('kit-closed')) {
+      /* An internal app closed on the watch: reloading the page opens it again. */
+      const bar = kit.el('div', {id: 'kit-closed', style: {position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 60,
+        padding: '14px', background: 'var(--panel)', borderTop: '1px solid var(--line)', textAlign: 'center'}},
+        'L'app è chiusa sull'orologio. ', kit.el('button', {class: 'btn primary', onclick: () => location.reload()}, 'Riapri'));
+      document.body.append(bar);
+    }
     if (!r.ok) throw new Error((await r.text()) || ('Errore ' + r.status));
     if (opt.raw) return r;
     const type = r.headers.get('Content-Type') || '';

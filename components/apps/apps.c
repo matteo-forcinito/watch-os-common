@@ -2,6 +2,10 @@
 
 #include "apps_internal.h"
 
+#if CONFIG_APPKIT_HOSTED
+#include "appkit.h"
+#endif
+
 #include "core/lv_port.h"
 #include "core/power.h"
 #include "core/state.h"
@@ -259,6 +263,11 @@ void apps_init(void)
 #if CONFIG_APPKIT_HOSTED
     giornata_service_start();   /* reminders ring with the app closed too */
     news_service_start();       /* background rounds keep the archive growing */
+    /* Dashboard folders exist from boot: opening one opens its app (no cost until then). */
+    appkit_hosted_register("News", "news");
+    appkit_hosted_register("Giornata", "giornata");
+    appkit_hosted_register("Pieno", "pieno");
+    appkit_hosted_register("Copertura", "copertura");
 #endif
     for (size_t i = 0; i < sizeof(s_apps) / sizeof(s_apps[0]); i++)
     {
