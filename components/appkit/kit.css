@@ -42,6 +42,7 @@ main{max-width:1280px;margin:0 auto;padding:22px}
 .big{font-size:28px;font-weight:700;letter-spacing:-.02em}
 .dim{color:var(--dim)}.faint{color:var(--faint)}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.row.end{justify-content:flex-end}.grow{flex:1}
+.stat,.kpi{display:flex;flex-direction:column;gap:2px}.kpi b{font-size:26px;letter-spacing:-.02em}.kpi span{font-size:13px;color:var(--dim)}
 .stat{display:flex;flex-direction:column;gap:2px}.stat b{font-size:24px;letter-spacing:-.02em}.stat span{color:var(--dim);font-size:13px}
 .btn{border:1px solid var(--line);background:var(--panel2);padding:9px 14px;border-radius:11px;cursor:pointer;font-weight:600;
   display:inline-flex;align-items:center;gap:7px;transition:.15s}

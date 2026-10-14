@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Giornata · agenda e attività</title>
+<link rel="stylesheet" href="/kit.css">
+<style>
+:root{--accent:#7c8cff}
+.planner{display:grid;grid-template-columns:52px repeat(7,minmax(0,1fr));border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
+.planner .head{padding:10px 8px;border-bottom:1px solid var(--line);font-weight:650;font-size:13px;text-align:center;background:var(--panel2)}
+.planner .head.today{color:var(--accent)}
+.planner .head b{display:block;font-size:20px;color:var(--ink)}
+.planner .head.today b{color:var(--accent)}
+.planner .allday{border-bottom:1px solid var(--line);padding:4px;min-height:30px;display:flex;flex-direction:column;gap:3px}
+.planner .hours{position:relative}
+.planner .hour{height:48px;border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent);font-size:11px;color:var(--faint);padding:2px 6px;text-align:right}
+.planner .col{position:relative;border-left:1px solid var(--line);cursor:copy}
+.planner .slot{height:48px;border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.planner .slot:hover{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.ev{position:absolute;left:3px;right:3px;border-radius:8px;padding:4px 7px;font-size:12px;line-height:1.25;overflow:hidden;cursor:pointer;
+  color:#fff;box-shadow:0 2px 6px rgba(0,0,0,.25);border-left:3px solid rgba(255,255,255,.55)}
+.ev b{display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev.past{opacity:.55}
+.ev.due{background:transparent!important;border:2px dashed var(--warn);color:var(--warn);box-shadow:none}
+.chipev{border-radius:6px;padding:2px 7px;font-size:12px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.nowline{position:absolute;left:0;right:0;height:2px;background:var(--bad);z-index:3}
+.nowline:before{content:'';position:absolute;left:-5px;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--bad)}
+.board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+@media(max-width:900px){.board{grid-template-columns:1fr}}
+.lane{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;min-height:300px;display:flex;flex-direction:column;gap:8px}
+.lane.over{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--panel))}
+.lane h3{margin:0 0 4px;display:flex;justify-content:space-between;font-size:14px;color:var(--dim);text-transform:uppercase}
+.task{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:grab;display:flex;gap:10px;align-items:flex-start}
+.task:hover{border-color:var(--accent)}.task.dragging{opacity:.4}
+.task .ck{width:20px;height:20px;border-radius:50%;border:2px solid var(--faint);flex:none;margin-top:1px;cursor:pointer;display:grid;place-items:center;font-size:12px}
+.task.done .ck{background:var(--good);border-color:var(--good);color:#000}
+.task.done .t{text-decoration:line-through;color:var(--faint)}
+.task.pri .ck{border-color:var(--warn)}
+.task .meta{font-size:12px;color:var(--dim);display:flex;gap:8px;flex-wrap:wrap;margin-top:3px}
+.task .play{margin-left:auto;background:none;border:0;color:var(--warn);cursor:pointer;font-size:15px;padding:0 2px}
+.dots i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--line);margin-right:2px}.dots i.on{background:var(--warn)}
+.addtask{display:flex;gap:6px}.addtask input{flex:1}
+.heat{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,14px);gap:3px;overflow-x:auto;padding-bottom:4px}
+.heat i{width:14px;height:14px;border-radius:3px;background:var(--panel2)}
+.focusbig{display:flex;align-items:center;gap:28px;flex-wrap:wrap}
+.ring{--p:0;width:180px;height:180px;border-radius:50%;display:grid;place-items:center;
+  background:conic-gradient(var(--warn) calc(var(--p)*1turn),var(--panel2) 0)}
+.ring>div{width:150px;height:150px;border-radius:50%;background:var(--panel);display:grid;place-items:center;text-align:center}
+.ring b{font-size:38px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.src{display:grid;grid-template-columns:14px 1fr auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.src:last-child{border-bottom:0}
+.swatch{width:14px;height:14px;border-radius:4px}
+.help details{border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:8px;background:var(--panel2)}
+.help summary{cursor:pointer;font-weight:650}
+.colors{display:flex;gap:6px;flex-wrap:wrap}.colors button{width:26px;height:26px;border-radius:8px;border:2px solid transparent;cursor:pointer}
+.colors button.on{border-color:var(--ink)}
+.weeknav{display:flex;gap:8px;align-items:center}
+</style>
+</head>
+<body>
+<header class="kit-top">
+  <div class="kit-brand"><div class="kit-logo">◷</div>Giornata</div>
+  <nav class="kit-nav">
+    <button data-view="v-week">Settimana</button>
+    <button data-view="v-tasks">Attività</button>
+    <button data-view="v-focus">Focus</button>
+    <button data-view="v-cal">Calendari</button>
+    <button data-view="v-set">Impostazioni</button>
+  </nav>
+  <div class="kit-dev"></div>
+</header>
+<main>
+  <section class="view" id="v-week">
+    <div class="row" style="margin-bottom:12px">
+      <div class="weeknav"><button class="btn sm" id="prev">‹</button><b id="range"></b><button class="btn sm" id="next">›</button></div>
+      <div class="grow"></div><span class="dim" id="syncline"></span>
+      <button class="btn sm" id="sync">↻ Aggiorna calendari</button>
+      <button class="btn sm primary" id="newev">+ Evento</button>
+    </div>
+    <div class="planner" id="planner"></div>
+    <p class="faint">Clic su uno spazio vuoto per creare un evento sull'orologio. Gli eventi dei calendari collegati si modificano nel calendario d'origine.</p>
+  </section>
+
+  <section class="view" id="v-tasks">
+    <div class="board" id="board"></div>
+  </section>
+
+  <section class="view" id="v-focus">
+    <div class="grid g2">
+      <div class="card"><h2>Adesso</h2><div class="focusbig" id="focusnow"></div></div>
+      <div class="card"><h2>Numeri</h2><div class="grid g2" id="focusstats"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>Minuti di focus, ultime 16 settimane</h2><div class="heat" id="heat"></div>
+      <div class="row dim" style="margin-top:8px;font-size:12px">meno <span class="heat" style="grid-template-rows:14px;display:inline-grid"><i></i><i style="background:color-mix(in srgb,var(--warn) 30%,var(--panel2))"></i><i style="background:color-mix(in srgb,var(--warn) 60%,var(--panel2))"></i><i style="background:var(--warn)"></i></span> più</div></div>
+    <div class="card" style="margin-top:16px"><h2>Dove va il tuo tempo</h2><div id="toptasks"></div></div>
+  </section>
+
+  <section class="view" id="v-cal">
+    <div class="grid g2">
+      <div class="card"><h2>Calendari collegati</h2><div id="sources"></div>
+        <h3 style="margin-top:18px">Aggiungi</h3>
+        <div class="grid" style="gap:10px">
+          <label class="field">Nome<input id="c-name" placeholder="Lavoro"></label>
+          <label class="field">Indirizzo iCal (https:// o webcal://)<input id="c-url" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"></label>
+          <div class="colors" id="c-colors"></div>
+          <div class="row end"><button class="btn primary" id="c-add">Collega</button></div>
+        </div>
+        <p class="faint">L'indirizzo resta sull'orologio e non viene più mostrato: chi lo conosce può leggere il calendario.</p>
+      </div>
+      <div class="card help"><h2>Dove trovo l'indirizzo?</h2>
+        <details open><summary>Google Calendar</summary><ol class="dim"><li>calendar.google.com dal PC → ⚙ Impostazioni</li><li>A sinistra scegli il calendario</li><li>Sezione "Integra calendario" → <b>Indirizzo segreto in formato iCal</b> → copia</li></ol></details>
+        <details><summary>iCloud (iPhone)</summary><ol class="dim"><li>App Calendario → ⓘ accanto al calendario</li><li>Attiva "Calendario pubblico" → Condividi link</li><li>Incolla il link webcal://</li></ol></details>
+        <details><summary>Outlook / Microsoft 365</summary><ol class="dim"><li>outlook.com → Impostazioni → Calendario → Calendari condivisi</li><li>"Pubblica un calendario" → Può visualizzare tutti i dettagli → Pubblica</li><li>Copia il link <b>ICS</b></li></ol></details>
+        <details><summary>Festività italiane</summary><p class="dim">https://calendar.google.com/calendar/ical/it.italian%23holiday%40group.v.calendar.google.com/public/basic.ics</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="v-set">
+    <div class="grid g2">
+      <div class="card"><h2>Promemoria</h2><div class="grid g2">
+        <label class="field">Avviso prima degli eventi (min, 0 = mai)<input type="number" id="s-remind" min="0" max="120"></label>
+        <label class="field">Suono<select id="s-sound"><option value="1">Sì</option><option value="0">No</option></select></label>
+        <label class="field">Silenzio dalle (ora)<input type="number" id="s-qf" min="0" max="23"></label>
+        <label class="field">alle (ora)<input type="number" id="s-qt" min="0" max="23"></label>
+      </div></div>
+      <div class="card"><h2>Focus</h2><div class="grid g2">
+        <label class="field">Sessione (min)<input type="number" id="s-focus" min="5" max="90"></label>
+        <label class="field">Pausa breve (min)<input type="number" id="s-short" min="1" max="30"></label>
+        <label class="field">Pausa lunga (min)<input type="number" id="s-long" min="5" max="60"></label>
+        <label class="field">Pausa lunga ogni (sessioni)<input type="number" id="s-per" min="2" max="8"></label>
+      </div></div>
+    </div>
+    <div class="row end" style="margin-top:14px"><button class="btn primary" id="s-save">Salva sull'orologio</button></div>
+  </section>
+</main>
+
+<div class="modal" id="modal"><div class="card" id="modalcard"></div></div>
+
+<script src="/kit.js"></script>
+<script>
+'use strict';
+const {el, $, $$, num} = kit;
+const COLORS = [0x7c8cff, 0x2fcf7f, 0xffb547, 0xff6b9a, 0x4fb3ff, 0xa27bff, 0xff7a45, 0x94a3b8];
+const hex = c => '#' + (c >>> 0).toString(16).padStart(6, '0');
+const DAY = 86400, H0 = 6, H1 = 24, PX = 48;
+const S = {state: null, agenda: [], tasks: [], events: [], weekOffset: 0, revision: -1, color: COLORS[0]};
+
+/* civil seconds <-> parts (UTC getters: civil time is "local as if UTC") */
+const D = t => new Date(t * 1000);
+const civil = (y, m, d, h = 0, mi = 0) => Date.UTC(y, m, d, h, mi) / 1000;
+const hm = t => { const d = D(t); return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0'); };
+const dayName = t => D(t).toLocaleDateString('it-IT', {weekday: 'short', timeZone: 'UTC'});
+const dateLong = t => D(t).toLocaleDateString('it-IT', {weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC'});
+const toInput = t => D(t).toISOString().slice(0, 16);
+const fromInput = v => { const [d, h] = v.split('T'); const [y, m, dd] = d.split('-').map(Number); const [hh, mm] = (h || '00:00').split(':').map(Number); return civil(y, m - 1, dd, hh, mm); };
+
+async function load() {
+  const st = await kit.api('/api/state');
+  S.state = st;
+  $('#syncline').textContent = st.status.message + (st.status.synced ? ' · ' + kit.ago(Math.round(Date.now() / 1000 - st.status.synced)) : '');
+  renderFocusNow();
+  if (st.status.revision !== S.revision) {
+    S.revision = st.status.revision;
+    [S.agenda, S.tasks, S.events] = await Promise.all([kit.api('/api/agenda'), kit.api('/api/tasks'), kit.api('/api/events')]);
+    renderWeek(); renderBoard(); renderSources(); renderSettings();
+    if ($('#v-focus').classList.contains('on')) renderFocusStats();
+  }
+}
+
+/* ------------------------------------------------------------- week */
+function renderWeek() {
+  const now = S.state.status.now, today = Math.floor(now / DAY) * DAY, first = today + S.weekOffset * 7 * DAY;
+  $('#range').textContent = D(first).toLocaleDateString('it-IT', {day: 'numeric', month: 'short', timeZone: 'UTC'}) + ' – ' +
+    D(first + 6 * DAY).toLocaleDateString('it-IT', {day: 'numeric', month: 'short', timeZone: 'UTC'});
+  $('#prev').disabled = S.weekOffset <= 0; $('#next').disabled = S.weekOffset >= 1;
+  const p = $('#planner');
+  p.innerHTML = '';
+  p.append(el('div', {class: 'head'}, ''));
+  for (let i = 0; i < 7; i++) {
+    const d = first + i * DAY;
+    p.append(el('div', {class: 'head' + (d === today ? ' today' : '')}, dayName(d), el('b', {}, D(d).getUTCDate())));
+  }
+  p.append(el('div', {class: 'allday', style: {fontSize: '11px', color: 'var(--faint)', textAlign: 'right'}}, 'giorno'));
+  for (let i = 0; i < 7; i++) {
+    const d = first + i * DAY, box = el('div', {class: 'allday', style: {borderLeft: '1px solid var(--line)'}});
+    for (const it of S.agenda.filter(a => a.all_day && a.start < d + DAY && a.end > d))
+      box.append(el('div', {class: 'chipev', style: {background: hex(it.color)}, onclick: () => openItem(it)}, it.title));
+    p.append(box);
+  }
+  const hours = el('div', {class: 'hours'});
+  for (let h = H0; h < H1; h++) hours.append(el('div', {class: 'hour'}, h + ':00'));
+  p.append(hours);
+  for (let i = 0; i < 7; i++) {
+    const d = first + i * DAY, col = el('div', {class: 'col'});
+    for (let h = H0; h < H1; h++) col.append(el('div', {class: 'slot', onclick: () => editEvent({start: d + h * 3600, end: d + h * 3600 + 3600})}));
+    /* timed items with simple lanes */
+    const items = S.agenda.filter(a => !a.all_day && a.start < d + DAY && a.end >= d).sort((a, b) => a.start - b.start);
+    const lanes = [];
+    for (const it of items) {
+      let lane = lanes.findIndex(e => e <= it.start); if (lane < 0) { lane = lanes.length; lanes.push(0); }
+      lanes[lane] = Math.max(it.end, it.start + 1800); it._lane = lane;
+    }
+    const n = Math.max(1, lanes.length);
+    for (const it of items) {
+      const s = Math.max(it.start, d + H0 * 3600), e = Math.min(Math.max(it.end, it.start + 1800), d + DAY);
+      if (e <= d + H0 * 3600) continue;
+      const top = (s - d - H0 * 3600) / 3600 * PX, height = Math.max(22, (e - s) / 3600 * PX - 2);
+      const w = 100 / n;
+      col.append(el('div', {class: 'ev' + (it.end < now ? ' past' : '') + (it.source === -2 ? ' due' : ''),
+        style: {top: top + 'px', height: height + 'px', background: hex(it.color), left: `calc(${it._lane * w}% + 3px)`, width: `calc(${w}% - 6px)`, right: 'auto'},
+        onclick: e => { e.stopPropagation(); openItem(it); }},
+        el('b', {}, (it.source === -2 ? '⚑ ' : '') + it.title), hm(it.start) + (it.source === -2 ? '' : '–' + hm(it.end)) + (it.location ? ' · ' + it.location : '')));
+    }
+    if (d === today && now >= d + H0 * 3600) col.append(el('div', {class: 'nowline', style: {top: (now - d - H0 * 3600) / 3600 * PX + 'px'}}));
+    p.append(col);
+  }
+}
+$('#prev').onclick = () => { S.weekOffset = Math.max(0, S.weekOffset - 1); renderWeek(); };
+$('#next').onclick = () => { S.weekOffset = Math.min(1, S.weekOffset + 1); renderWeek(); };
+$('#sync').onclick = () => kit.try(() => kit.api('/api/sync', {body: {}}), 'Aggiornamento avviato');
+$('#newev').onclick = () => { const n = S.state.status.now, s = Math.ceil(n / 3600) * 3600; editEvent({start: s, end: s + 3600}); };
+
+function openItem(it) {
+  if (it.source === -1) { const ev = S.events.find(e => e.id === it.ref); if (ev) return editEvent(ev); }
+  if (it.source === -2) { const t = S.tasks.find(x => x.id === it.ref); if (t) return editTask(t); }
+  const src = S.state.sources[it.source];
+  modal(el('div', {},
+    el('div', {class: 'row'}, el('span', {class: 'swatch', style: {background: hex(it.color)}}), el('div', {class: 'big grow'}, it.title)),
+    el('p', {class: 'dim'}, it.all_day ? dateLong(it.start) + ' · tutto il giorno' : `${dateLong(it.start)} · ${hm(it.start)}–${hm(it.end)}`),
+    it.location ? el('p', {}, '📍 ' + it.location) : '',
+    el('p', {class: 'faint'}, 'Dal calendario "' + (src ? src.name : '?') + '": si modifica lì.'),
+    el('div', {class: 'row end'}, el('button', {class: 'btn', onclick: closeModal}, 'Chiudi'))));
+}
+
+function colorPicker(current, onPick) {
+  const box = el('div', {class: 'colors'});
+  for (const c of COLORS) box.append(el('button', {class: c === current ? 'on' : '', style: {background: hex(c)}, type: 'button',
+    onclick: e => { $$('button', box).forEach(b => b.classList.remove('on')); e.target.classList.add('on'); onPick(c); }}));
+  return box;
+}
+
+function editEvent(ev) {
+  let color = ev.color || COLORS[0];
+  const title = el('input', {value: ev.title || '', placeholder: 'Titolo'});
+  const allDay = el('input', {type: 'checkbox'}); allDay.checked = !!ev.all_day;
+  const start = el('input', {type: 'datetime-local', value: toInput(ev.start)});
+  const end = el('input', {type: 'datetime-local', value: toInput(ev.end)});
+  const loc = el('input', {value: ev.location || '', placeholder: 'Luogo (facoltativo)'});
+  const rep = el('select', {}, ...['Non si ripete', 'Ogni giorno', 'Ogni settimana', 'Ogni mese', 'Ogni anno'].map((t, i) => el('option', {value: i}, t)));
+  rep.value = ev.repeat || 0;
+  const rem = el('select', {}, ...[['-1', 'Avviso predefinito'], ['0', 'Nessun avviso'], ['5', '5 min prima'], ['10', '10 min prima'], ['15', '15 min prima'], ['30', '30 min prima'], ['60', '1 ora prima']].map(([v, t]) => el('option', {value: v}, t)));
+  rem.value = String(ev.remind ?? -1);
+  const save = async () => {
+    let s = fromInput(start.value), e = fromInput(end.value);
+    if (allDay.checked) { s = Math.floor(s / DAY) * DAY; e = Math.max(s + DAY, Math.ceil(e / DAY) * DAY); }
+    const body = {id: ev.id || 0, title: title.value.trim(), location: loc.value.trim(), start: s, end: e, all_day: allDay.checked, repeat: +rep.value, color, remind: +rem.value};
+    if (await kit.try(() => kit.api('/api/event', {body}), 'Salvato sull\'orologio')) { closeModal(); S.revision = -1; load(); }
+  };
+  modal(el('div', {class: 'grid', style: {gap: '12px'}},
+    el('div', {class: 'big'}, ev.id ? 'Modifica evento' : 'Nuovo evento'),
+    title, el('div', {class: 'grid g2'}, el('label', {class: 'field'}, 'Inizio', start), el('label', {class: 'field'}, 'Fine', end)),
+    el('label', {class: 'row'}, allDay, 'Tutto il giorno'), loc,
+    el('div', {class: 'grid g2'}, el('label', {class: 'field'}, 'Ripeti', rep), el('label', {class: 'field'}, 'Promemoria', rem)),
+    colorPicker(color, c => color = c),
+    el('div', {class: 'row end'},
+      ev.id ? el('button', {class: 'btn danger', onclick: async () => { if (await kit.try(() => kit.api('/api/event/delete', {body: {id: ev.id}}), 'Eliminato')) { closeModal(); S.revision = -1; load(); } }}, 'Elimina') : '',
+      el('div', {class: 'grow'}), el('button', {class: 'btn', onclick: closeModal}, 'Annulla'), el('button', {class: 'btn primary', onclick: save}, 'Salva'))));
+  title.focus();
+}
+
+/* ------------------------------------------------------------ tasks */
+const COLS = [['Da fare', 0], ['Oggi', 1], ['Fatte', 2]];
+let dragId = null;
+function renderBoard() {
+  const b = $('#board'), now = S.state.status.now;
+  b.innerHTML = '';
+  for (const [name, col] of COLS) {
+    const list = S.tasks.filter(t => t.column === col).sort((a, c) => a.order - c.order);
+    const lane = el('div', {class: 'lane', 'data-col': col},
+      el('h3', {}, el('span', {}, name), el('span', {class: 'faint'}, list.length)));
+    if (col !== 2) {
+      const input = el('input', {placeholder: '+ Aggiungi attività'});
+      input.addEventListener('keydown', async e => {
+        if (e.key === 'Enter' && input.value.trim()) {
+          const title = input.value.trim(); input.value = '';
+          await kit.try(() => kit.api('/api/task', {body: {title, column: col}}));
+          S.revision = -1; load();
+        }
+      });
+      lane.append(el('div', {class: 'addtask'}, input));
+    }
+    for (const t of col === 2 ? list.slice(0, 30) : list) lane.append(taskCard(t, now));
+    lane.addEventListener('dragover', e => { e.preventDefault(); lane.classList.add('over'); });
+    lane.addEventListener('dragleave', () => lane.classList.remove('over'));
+    lane.addEventListener('drop', async e => {
+      e.preventDefault(); lane.classList.remove('over');
+      if (dragId == null) return;
+      const cards = $$('.task', lane).filter(c => +c.dataset.id !== dragId);
+      let position = cards.findIndex(c => e.clientY < c.getBoundingClientRect().top + c.offsetHeight / 2);
+      if (position < 0) position = cards.length;
+      await kit.try(() => kit.api('/api/task/move', {body: {id: dragId, column: col, position}}));
+      dragId = null; S.revision = -1; load();
+    });
+    b.append(lane);
+  }
+}
+function taskCard(t, now) {
+  const due = t.due ? (Math.floor(t.due / DAY) === Math.floor(now / DAY) ? 'oggi ' + hm(t.due) : dayName(t.due) + ' ' + D(t.due).getUTCDate() + ' ' + hm(t.due)) : '';
+  const late = t.due && t.due < now && t.column !== 2;
+  const card = el('div', {class: 'task' + (t.column === 2 ? ' done' : '') + (t.priority ? ' pri' : ''), draggable: 'true', 'data-id': t.id},
+    el('div', {class: 'ck', title: 'Fatta', onclick: async e => { e.stopPropagation();
+      await kit.api('/api/task/move', {body: {id: t.id, column: t.column === 2 ? 1 : 2, position: t.column === 2 ? -1 : 0}}); S.revision = -1; load(); }}, t.column === 2 ? '✓' : ''),
+    el('div', {class: 'grow'}, el('div', {class: 't'}, t.title),
+      el('div', {class: 'meta'}, due ? el('span', {class: late ? 'bad' : ''}, '⏰ ' + due) : '',
+        t.estimate ? el('span', {class: 'dots'}, ...[...Array(Math.min(8, t.estimate))].map((_, i) => el('i', {class: i < t.sessions ? 'on' : ''}))) : '',
+        t.focus_minutes ? el('span', {}, '◷ ' + t.focus_minutes + ' min') : '')),
+    t.column !== 2 ? el('button', {class: 'play', title: 'Avvia focus sull\'orologio', onclick: async e => { e.stopPropagation();
+      await kit.try(() => kit.api('/api/focus', {body: {action: 'start', task: t.id}}), 'Focus avviato sull\'orologio'); load(); }}, '▶') : '');
+  card.addEventListener('dragstart', () => { dragId = t.id; card.classList.add('dragging'); });
+  card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  card.addEventListener('click', () => editTask(t));
+  return card;
+}
+function editTask(t) {
+  const title = el('input', {value: t.title}), notes = el('textarea', {rows: 3}, t.notes || '');
+  const due = el('input', {type: 'datetime-local', value: t.due ? toInput(t.due) : ''});
+  const est = el('input', {type: 'number', min: 0, max: 20, value: t.estimate || 0});
+  const pri = el('input', {type: 'checkbox'}); pri.checked = !!t.priority;
+  const save = async () => {
+    const body = {id: t.id, title: title.value.trim(), notes: notes.value.trim(), due: due.value ? fromInput(due.value) : 0, estimate: +est.value, priority: pri.checked ? 1 : 0};
+    if (await kit.try(() => kit.api('/api/task', {body}), 'Salvato')) { closeModal(); S.revision = -1; load(); }
+  };
+  modal(el('div', {class: 'grid', style: {gap: '12px'}}, el('div', {class: 'big'}, 'Attività'), title, notes,
+    el('div', {class: 'grid g2'}, el('label', {class: 'field'}, 'Scadenza (avviso sull\'orologio)', due), el('label', {class: 'field'}, 'Sessioni di focus previste', est)),
+    el('label', {class: 'row'}, pri, 'Importante'),
+    el('p', {class: 'dim'}, `${t.sessions} sessioni · ${t.focus_minutes} minuti di focus` + (t.completed ? ' · fatta ' + kit.ago(Math.round(Date.now() / 1000 - t.completed)) : '')),
+    el('div', {class: 'row end'},
+      el('button', {class: 'btn danger', onclick: async () => { if (await kit.try(() => kit.api('/api/task/delete', {body: {id: t.id}}), 'Eliminata')) { closeModal(); S.revision = -1; load(); } }}, 'Elimina'),
+      el('div', {class: 'grow'}), el('button', {class: 'btn', onclick: closeModal}, 'Annulla'), el('button', {class: 'btn primary', onclick: save}, 'Salva'))));
+}
+
+/* ------------------------------------------------------------ focus */
+function renderFocusNow() {
+  const f = S.state.focus, box = $('#focusnow');
+  if (!box) return;
+  const left = f.state ? f.remaining : S.state.settings.focus_minutes * 60;
+  const p = f.length ? (f.length - left) / f.length : 0;
+  const label = ['Pronto', 'Focus', 'In pausa', 'Pausa'][f.state];
+  box.innerHTML = '';
+  const btn = (text, action, cls) => el('button', {class: 'btn ' + (cls || ''), onclick: async () => { await kit.try(() => kit.api('/api/focus', {body: {action, task: f.task}})); load(); }}, text);
+  box.append(el('div', {class: 'ring', style: {'--p': p}}, el('div', {}, el('div', {}, el('div', {class: 'dim'}, label),
+      el('b', {}, String(Math.floor(left / 60)).padStart(2, '0') + ':' + String(left % 60).padStart(2, '0'))))),
+    el('div', {}, el('div', {class: 'big'}, f.title || (f.state ? 'Senza attività' : 'Nessuna sessione')),
+      el('p', {class: 'dim'}, `${f.done_today} sessioni oggi · sessione da ${S.state.settings.focus_minutes} min`),
+      el('div', {class: 'row'}, f.state === 0 ? btn('▶ Avvia', 'start', 'primary') : f.state === 1 ? btn('❚❚ Pausa', 'pause') :
+        f.state === 2 ? btn('▶ Riprendi', 'start', 'primary') : btn('Salta la pausa', 'skip'), f.state === 1 || f.state === 2 ? btn('■ Stop', 'stop', 'danger') : ''),
+      el('p', {class: 'faint'}, 'Il timer gira sull\'orologio: suona alla fine di sessione e pausa.')));
+}
+async function renderFocusStats() {
+  const days = await kit.try(() => kit.api('/api/focus/days?days=112')) || [];
+  const heat = $('#heat'), max = Math.max(30, ...days);
+  heat.innerHTML = '';
+  const today = Math.floor(S.state.status.now / DAY);
+  /* align the first column on a Monday */
+  const firstDay = today - days.length + 1, pad = (((firstDay + 3) % 7) + 7) % 7;
+  for (let i = 0; i < pad; i++) heat.append(el('i', {style: {visibility: 'hidden'}}));
+  days.forEach((m, i) => heat.append(el('i', {title: `${D((firstDay + i) * DAY).toLocaleDateString('it-IT', {day: 'numeric', month: 'short', timeZone: 'UTC'})}: ${m} min`,
+    style: {background: m ? `color-mix(in srgb,var(--warn) ${Math.round(25 + 75 * m / max)}%,var(--panel2))` : ''}})));
+  const sum = a => a.reduce((x, y) => x + y, 0);
+  let streak = 0; for (let i = days.length - 1; i >= 0 && days[i] > 0; i--) streak++;
+  const best = Math.max(0, ...days);
+  const st = $('#focusstats'), kpi = (v, t) => el('div', {class: 'kpi'}, el('b', {}, v), el('span', {}, t));
+  st.innerHTML = '';
+  st.append(kpi(days[days.length - 1] || 0, 'minuti oggi'), kpi(Math.round(sum(days.slice(-7)) / 6) / 10 + ' h', 'questa settimana'),
+    kpi(streak + (streak === 1 ? ' giorno' : ' giorni'), 'di fila con almeno una sessione'), kpi(best, 'minuti nel giorno migliore'));
+  const top = $('#toptasks'), list = S.tasks.filter(t => t.focus_minutes > 0).sort((a, b) => b.focus_minutes - a.focus_minutes).slice(0, 8);
+  top.innerHTML = '';
+  const most = list.length ? list[0].focus_minutes : 1;
+  for (const t of list) top.append(el('div', {style: {margin: '8px 0'}}, el('div', {class: 'row'}, el('span', {class: 'grow'}, t.title), el('b', {}, t.focus_minutes + ' min')),
+    el('div', {class: 'bar'}, el('i', {style: {width: (t.focus_minutes / most * 100) + '%', background: 'var(--warn)'}}))));
+  if (!list.length) top.append(el('div', {class: 'empty'}, 'Avvia una sessione su un\'attività (▶ nella board o sull\'orologio): qui vedrai dove va il tempo.'));
+}
+
+/* -------------------------------------------------------- calendars */
+function renderSources() {
+  const box = $('#sources');
+  box.innerHTML = '';
+  S.state.sources.forEach((s, i) => {
+    const toggle = el('input', {type: 'checkbox'}); toggle.checked = s.enabled;
+    toggle.onchange = () => kit.try(() => kit.api('/api/source', {body: {index: i, name: s.name, url: '', color: s.color, enabled: toggle.checked}})).then(() => { S.revision = -1; load(); });
+    box.append(el('div', {class: 'src'}, el('span', {class: 'swatch', style: {background: hex(s.color)}}),
+      el('div', {}, el('b', {}, s.name), el('div', {class: 'faint', style: {fontSize: '12px'}}, s.hint),
+        el('div', {class: s.error ? 'warn' : 'dim', style: {fontSize: '13px'}}, s.error || (s.synced ? `${s.count} impegni nei prossimi 14 giorni · ${kit.ago(Math.round(Date.now() / 1000 - s.synced))}` : 'in attesa del primo aggiornamento'))),
+      el('div', {class: 'row'}, el('label', {class: 'row dim'}, toggle, 'attivo'),
+        el('button', {class: 'btn sm danger', onclick: async () => { if (confirm('Scollegare "' + s.name + '"?')) { await kit.try(() => kit.api('/api/source/delete', {body: {index: i}}), 'Scollegato'); S.revision = -1; load(); } }}, '✕'))));
+  });
+  if (!S.state.sources.length) box.append(el('div', {class: 'empty'}, 'Nessun calendario collegato.'));
+}
+$('#c-colors').append(colorPicker(S.color, c => S.color = c));
+$('#c-add').onclick = async () => {
+  const body = {index: -1, name: $('#c-name').value.trim() || 'Calendario', url: $('#c-url').value.trim(), color: S.color, enabled: true};
+  if (await kit.try(() => kit.api('/api/source', {body}), 'Collegato: lo scarico ora')) { $('#c-url').value = ''; $('#c-name').value = ''; S.revision = -1; load(); }
+};
+
+/* --------------------------------------------------------- settings */
+function renderSettings() {
+  if (document.activeElement && document.activeElement.closest('#v-set')) return;
+  const s = S.state.settings;
+  $('#s-remind').value = s.remind_minutes; $('#s-sound').value = s.sound ? 1 : 0; $('#s-qf').value = s.quiet_from; $('#s-qt').value = s.quiet_to;
+  $('#s-focus').value = s.focus_minutes; $('#s-short').value = s.short_break; $('#s-long').value = s.long_break; $('#s-per').value = s.sessions_per_long;
+}
+$('#s-save').onclick = () => kit.try(() => kit.api('/api/settings', {body: {remind_minutes: +$('#s-remind').value, sound: $('#s-sound').value === '1',
+  quiet_from: +$('#s-qf').value, quiet_to: +$('#s-qt').value, focus_minutes: +$('#s-focus').value, short_break: +$('#s-short').value,
+  long_break: +$('#s-long').value, sessions_per_long: +$('#s-per').value}}), 'Salvato').then(() => { S.revision = -1; load(); });
+
+/* ------------------------------------------------------------ modal */
+function modal(content) { const c = $('#modalcard'); c.innerHTML = ''; c.append(content); $('#modal').classList.add('on'); }
+function closeModal() { $('#modal').classList.remove('on'); }
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+kit.views(id => { if (id === 'v-focus' && S.state) renderFocusStats(); });
+kit.start({onReady: () => kit.poll(load, 3000)});
+</script>
+</body>
+</html>

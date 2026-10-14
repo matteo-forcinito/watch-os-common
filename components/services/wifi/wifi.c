@@ -679,15 +679,17 @@ bool wifi_get_ip(char *out, size_t size)
     return true;
 }
 
-int wifi_scan(wifi_ap_t *out, int max)
+/* One scan: the raw records (free them), *found their count. NULL if none. */
+static wifi_ap_record_t *scan_run(bool hidden, uint16_t *found)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     bool was_started = s_started;
     radio_on(wanted_mode(true));
     xSemaphoreGive(s_mutex);
 
-    wifi_scan_config_t scan = {.show_hidden = false};
-    int count = 0;
+    wifi_scan_config_t scan = {.show_hidden = hidden};
+    wifi_ap_record_t *records = NULL;
+    *found = 0;
 
     /* Two jobs asking for the network at once (weather + market) used to scan
      * together: the driver ends the first scan early and both found nothing. */
@@ -699,63 +701,78 @@ int wifi_scan(wifi_ap_t *out, int max)
     }
     else
     {
-        uint16_t found = WIFI_SCAN_MAX;
-        wifi_ap_record_t *records = calloc(found, sizeof(wifi_ap_record_t));
-
+        uint16_t count = WIFI_SCAN_MAX;
+        records = calloc(count, sizeof(wifi_ap_record_t));
         if (records != NULL)
         {
-            esp_wifi_scan_get_ap_records(&found, records);
-
-            for (int i = 0; i < found && count < max; i++)
-            {
-                const char *ssid = (const char *)records[i].ssid;
-                bool duplicate = ssid[0] == '\0';
-
-                for (int j = 0; j < count && !duplicate; j++)
-                {
-                    duplicate = strcmp(out[j].ssid, ssid) == 0;
-                }
-
-                if (duplicate)
-                {
-                    continue;
-                }
-
-                snprintf(out[count].ssid, sizeof(out[count].ssid), "%s", ssid);
-                out[count].rssi = records[i].rssi;
-                out[count].open = records[i].authmode == WIFI_AUTH_OPEN;
-                out[count].known = known_find(ssid) >= 0;
-                count++;
-            }
-
-            free(records);
+            esp_wifi_scan_get_ap_records(&count, records);
+            *found = count;
         }
         else
         {
             esp_wifi_clear_ap_list();
         }
     }
-
     xSemaphoreGive(s_scan_mutex);
 
     /* Switched on just for the scan and nobody else needs it: off again soon. */
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-
     if (s_ap_on)
     {
         radio_on(wanted_mode(false));   /* back to a pure access point */
     }
-
     if (!was_started && s_refs == 0)
     {
         esp_timer_stop(s_off_timer);
         esp_timer_start_once(s_off_timer, OFF_DELAY_US);
     }
-
     xSemaphoreGive(s_mutex);
+    return records;
+}
 
+int wifi_scan(wifi_ap_t *out, int max)
+{
+    uint16_t found = 0;
+    wifi_ap_record_t *records = scan_run(false, &found);
+    int count = 0;
+    for (int i = 0; records != NULL && i < found && count < max; i++)
+    {
+        const char *ssid = (const char *)records[i].ssid;
+        bool duplicate = ssid[0] == '\0';
+        for (int j = 0; j < count && !duplicate; j++)
+        {
+            duplicate = strcmp(out[j].ssid, ssid) == 0;
+        }
+        if (duplicate)
+        {
+            continue;
+        }
+        snprintf(out[count].ssid, sizeof(out[count].ssid), "%s", ssid);
+        out[count].rssi = records[i].rssi;
+        out[count].open = records[i].authmode == WIFI_AUTH_OPEN;
+        out[count].known = known_find(ssid) >= 0;
+        count++;
+    }
+    free(records);
     ESP_LOGI(TAG, "Scan: %d networks", count);
+    return count;
+}
 
+int wifi_scan_detail(wifi_ap_detail_t *out, int max)
+{
+    uint16_t found = 0;
+    wifi_ap_record_t *records = scan_run(true, &found);
+    int count = 0;
+    for (int i = 0; records != NULL && i < found && count < max; i++)
+    {
+        wifi_ap_detail_t *d = &out[count++];
+        snprintf(d->ssid, sizeof(d->ssid), "%s", (const char *)records[i].ssid);
+        memcpy(d->bssid, records[i].bssid, 6);
+        d->channel = records[i].primary;
+        d->rssi = records[i].rssi;
+        d->auth = (uint8_t)records[i].authmode;
+    }
+    free(records);
     return count;
 }
 

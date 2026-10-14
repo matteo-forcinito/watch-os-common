@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Copertura · Wi-Fi di casa</title>
+<link rel="stylesheet" href="/kit.css">
+<style>
+:root{--accent:#34c6f4}
+.mapwrap{position:relative;border-radius:var(--radius);overflow:hidden;border:1px solid var(--line);background:
+  repeating-linear-gradient(0deg,transparent 0 39px,color-mix(in srgb,var(--line) 70%,transparent) 39px 40px),
+  repeating-linear-gradient(90deg,transparent 0 39px,color-mix(in srgb,var(--line) 70%,transparent) 39px 40px),var(--panel2);
+  user-select:none;touch-action:none}
+.mapwrap img{display:block;width:100%;height:auto;opacity:.95}
+.mapwrap canvas.heat{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;mix-blend-mode:normal}
+.spot{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:grab;z-index:3}
+.spot .b{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;color:#06101c;border:3px solid #fff;
+  box-shadow:0 3px 10px rgba(0,0,0,.45)}
+.spot .n{margin-top:3px;font-size:11px;font-weight:700;background:rgba(0,0,0,.6);color:#fff;padding:1px 6px;border-radius:6px;white-space:nowrap}
+.spot.dragging{cursor:grabbing;opacity:.8}
+.tray{display:flex;gap:8px;flex-wrap:wrap}
+.tray .spot{position:static;transform:none}
+.grade{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;font-weight:800;color:#06101c}
+.room{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.room:last-child{border-bottom:0}
+.advice{display:flex;gap:12px;padding:12px 14px;border-radius:12px;background:var(--panel2);margin-bottom:10px;align-items:flex-start}
+.advice .i{font-size:22px;line-height:1}
+.gauge{--p:0;--c:var(--accent);width:220px;height:220px;border-radius:50%;margin:0 auto;display:grid;place-items:center;
+  background:conic-gradient(from 225deg,var(--c) calc(var(--p)*.75turn),var(--panel2) 0 .75turn,transparent 0)}
+.gauge>div{width:184px;height:184px;border-radius:50%;background:var(--panel);display:grid;place-items:center;text-align:center}
+.gauge b{font-size:48px;letter-spacing:-.03em}
+.heatbar{height:16px;border-radius:99px;background:linear-gradient(90deg,#1d4ed8,#7c3aed,#f97316,#ef4444);position:relative;margin:14px 0}
+.heatbar i{position:absolute;top:-6px;width:6px;height:28px;border-radius:3px;background:#fff;box-shadow:0 0 0 2px #000;transform:translateX(-50%)}
+.channels{display:flex;align-items:flex-end;gap:6px;height:180px;padding-top:10px}
+.channels div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;font-size:12px;color:var(--dim)}
+.channels i{width:100%;border-radius:6px 6px 0 0;background:var(--line);min-height:3px}
+.channels .cur i{background:var(--accent)}.channels .best i{background:var(--good)}
+.legendbar{height:10px;width:220px;border-radius:99px}
+.chips .x{margin-left:6px;opacity:.6}
+</style>
+</head>
+<body>
+<header class="kit-top">
+  <div class="kit-brand"><div class="kit-logo">⌔</div>Copertura</div>
+  <nav class="kit-nav">
+    <button data-view="v-map">Mappa</button>
+    <button data-view="v-rooms">Stanze</button>
+    <button data-view="v-live">Live</button>
+    <button data-view="v-air">Reti vicine</button>
+    <button data-view="v-set">Impostazioni</button>
+  </nav>
+  <div class="kit-dev"></div>
+</header>
+<main>
+  <section class="view" id="v-map">
+    <div class="row" style="margin-bottom:12px">
+      <div class="pill-toggle" id="floors"></div>
+      <div class="pill-toggle" id="metric"><button data-m="rssi" class="on">Segnale</button><button data-m="ping">Latenza</button></div>
+      <div class="legend row dim" style="font-size:12px"><span id="lg-a"></span><div class="legendbar" id="lg"></div><span id="lg-b"></span></div>
+      <div class="grow"></div>
+      <label class="btn sm">⤒ Piantina<input type="file" id="planfile" accept="image/*" hidden></label>
+      <button class="btn sm danger" id="planremove" title="Rimuovi la piantina di questo piano">✕</button>
+    </div>
+    <div class="grid" style="grid-template-columns:minmax(0,1fr) 280px;gap:16px" id="mapgrid">
+      <div class="mapwrap" id="map"><img id="plan" alt=""><canvas class="heat" id="heat"></canvas>
+        <div id="maphint" class="empty" style="position:absolute;inset:0;display:none;place-items:center;pointer-events:none">
+          <div>Carica la piantina di casa (una foto del disegno va benissimo) con <b>⤒ Piantina</b>,<br>oppure usa la griglia: trascina qui le misure dove le hai fatte.</div></div></div>
+      <div class="card">
+        <h2>Da posizionare</h2>
+        <p class="dim" style="margin-top:-6px">Trascina ogni misura nel punto della piantina in cui l'hai fatta.</p>
+        <div class="tray" id="tray"></div>
+        <h2 style="margin-top:18px">Misura dall'orologio</h2>
+        <p class="dim" style="margin-top:-6px">Vai nella stanza con l'orologio e tocca:</p>
+        <div class="chips" id="quickrooms"></div>
+        <div id="measuring" class="dim" style="margin-top:10px"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="v-rooms">
+    <div class="grid g2">
+      <div class="card"><h2>Le stanze</h2><div id="roomlist"></div></div>
+      <div class="card"><h2>Cosa fare</h2><div id="advice"></div></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-live">
+    <div class="grid g2">
+      <div class="card" style="text-align:center"><h2 style="text-align:left">Adesso</h2>
+        <div class="gauge" id="gauge"><div><div><b id="g-dbm">--</b><div class="dim">dBm</div></div></div></div>
+        <div class="big" id="g-word" style="margin-top:12px"></div>
+        <div class="dim" id="g-net"></div>
+      </div>
+      <div class="card"><h2>Cerca il punto</h2>
+        <p class="dim">L'orologio ticchetta più veloce man mano che ti avvicini. Qui vedi lo stesso calore.</p>
+        <div class="row"><button class="btn primary" id="f-strong">Segnale più forte</button><button class="btn" id="f-rep">Posto per il ripetitore</button><button class="btn danger" id="f-stop">Stop</button></div>
+        <div class="heatbar"><i id="heatmark" style="left:0"></i></div>
+        <div class="dim" id="f-text">Fermo</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>Ultimi due minuti</h2><div id="livechart"></div></div>
+  </section>
+
+  <section class="view" id="v-air">
+    <div class="card"><div class="row"><h2 class="grow" style="margin:0">Affollamento dei canali 2,4 GHz</h2><button class="btn sm" id="rescan">↻ Ascolta di nuovo</button></div>
+      <div class="channels" id="channels"></div><p id="chadvice"></p></div>
+    <div class="card" style="margin-top:16px"><h2>Reti sentite</h2><div class="scroll"><table><thead><tr><th>Rete</th><th>Canale</th><th>Segnale</th><th>Radio</th></tr></thead><tbody id="aplist"></tbody></table></div></div>
+  </section>
+
+  <section class="view" id="v-set">
+    <div class="grid g2">
+      <div class="card"><h2>Stanze</h2><div class="chips" id="roomchips"></div>
+        <div class="row" style="margin-top:10px"><input id="newroom" maxlength="20" placeholder="Nuova stanza"><button class="btn" id="addroom">Aggiungi</button></div></div>
+      <div class="card"><h2>Piani</h2><div class="grid" id="floornames"></div>
+        <div class="row end" style="margin-top:10px"><button class="btn sm" id="addfloor">+ Piano</button><button class="btn primary" id="savefloors">Salva</button></div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>Dati</h2><div class="row"><button class="btn" id="export">⤓ Esporta CSV</button><button class="btn danger" id="clear">Cancella tutte le misure</button></div></div>
+  </section>
+</main>
+
+<script src="/kit.js"></script>
+<script>
+'use strict';
+const {el, $, $$, num} = kit;
+const GRADES = ['A', 'B', 'C', 'D', 'E', 'F'], GCOL = ['#2ee39a', '#9be15d', '#ffd166', '#ffa34d', '#ff6b6b', '#c2185b'];
+const VERDICT = ['Ottimo: videochiamate e 4K', 'Buono: streaming HD', 'Discreto: navigazione e musica', 'Debole: video a scatti', 'Scarso: solo messaggi', 'Zona morta'];
+const S = {state: null, points: [], aps: null, floor: 0, metric: 'rssi', revision: -1, planVersion: 0};
+
+/* colour scales */
+function rssiColor(v) {   /* -50 green ... -85 red */
+  const stops = [[-50, [46, 227, 154]], [-60, [155, 225, 93]], [-67, [255, 209, 102]], [-74, [255, 163, 77]], [-80, [255, 107, 107]], [-88, [194, 24, 91]]];
+  return scale(stops, v, true);
+}
+function pingColor(v) {   /* 5 ms green ... 150 ms red */
+  const stops = [[5, [46, 227, 154]], [20, [155, 225, 93]], [40, [255, 209, 102]], [70, [255, 163, 77]], [110, [255, 107, 107]], [160, [194, 24, 91]]];
+  return scale(stops, v, false);
+}
+function scale(stops, v, descending) {
+  const s = descending ? stops : stops;
+  for (let i = 0; i < s.length - 1; i++) {
+    const [a, ca] = s[i], [b, cb] = s[i + 1];
+    if (descending ? v >= b : v <= b) {
+      const t = Math.max(0, Math.min(1, (v - a) / (b - a)));
+      return ca.map((x, k) => Math.round(x + (cb[k] - x) * t));
+    }
+  }
+  return s[s.length - 1][1];
+}
+const css = c => `rgb(${c.join(',')})`;
+
+async function load() {
+  const st = await kit.api('/api/state');
+  S.state = st;
+  renderLive(); renderMeasuring();
+  if (st.revision !== S.revision) {
+    S.revision = st.revision;
+    [S.points, S.aps] = await Promise.all([kit.api('/api/points'), kit.api('/api/aps')]);
+    renderFloors(); renderMap(); renderRooms(); renderAir(); renderSettings();
+  }
+}
+
+/* --------------------------------------------------------------- map */
+function renderFloors() {
+  const box = $('#floors');
+  box.innerHTML = '';
+  S.state.floors.forEach((f, i) => box.append(el('button', {class: i === S.floor ? 'on' : '', onclick: () => { S.floor = i; S.planVersion++; renderFloors(); renderMap(); }}, f)));
+  const q = $('#quickrooms');
+  q.innerHTML = '';
+  S.state.rooms.forEach(r => q.append(el('button', {class: 'chip', onclick: () => kit.try(() => kit.api('/api/measure', {body: {room: r, floor: S.floor}}), 'Misuro ' + r + ' (10 s)').then(load)}, r)));
+}
+$$('#metric button').forEach(b => b.onclick = () => { S.metric = b.dataset.m; $$('#metric button').forEach(x => x.classList.toggle('on', x === b)); renderMap(); });
+
+function loadPlan() {
+  const img = $('#plan');
+  const has = S.state.plans[S.floor];
+  if (!has) { img.removeAttribute('src'); img.style.height = '560px'; img.style.visibility = 'hidden'; return Promise.resolve(); }
+  img.style.visibility = 'visible'; img.style.height = 'auto';
+  if (img.dataset.v === S.floor + ':' + S.planVersion) return Promise.resolve();
+  return kit.api('/api/plan?floor=' + S.floor, {raw: true}).then(r => r.blob()).then(b => new Promise(ok => {
+    img.onload = ok; img.src = URL.createObjectURL(b); img.dataset.v = S.floor + ':' + S.planVersion;
+  })).catch(() => {});
+}
+
+async function renderMap() {
+  await loadPlan();
+  const map = $('#map'), canvas = $('#heat');
+  $$('.spot', map).forEach(s => s.remove());
+  const pts = S.points.filter(p => p.floor === S.floor && p.x >= 0);
+  const W = map.clientWidth, H = map.clientHeight;
+  /* heatmap: inverse-distance weighting on a small grid, faded far from any spot */
+  const gw = 140, gh = Math.max(40, Math.round(gw * H / Math.max(1, W)));
+  canvas.width = gw; canvas.height = gh;
+  const ctx = canvas.getContext('2d'), image = ctx.createImageData(gw, gh);
+  const value = p => S.metric === 'rssi' ? p.rssi : (p.ping || 200);
+  for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+    let wsum = 0, vsum = 0, nearest = 1e9;
+    const fx = x / gw * 1000, fy = y / gh * 1000;
+    for (const p of pts) {
+      const d2 = (fx - p.x) ** 2 + ((fy - p.y) * H / Math.max(1, W)) ** 2 + 1;
+      nearest = Math.min(nearest, d2);
+      const w = 1 / d2; wsum += w; vsum += w * value(p);
+    }
+    const i = (y * gw + x) * 4;
+    if (!pts.length) { image.data[i + 3] = 0; continue; }
+    const v = vsum / wsum, c = S.metric === 'rssi' ? rssiColor(v) : pingColor(v);
+    const reach = Math.sqrt(nearest) / 1000;                 /* fraction of the plan width */
+    const alpha = Math.max(0, Math.min(1, 1.25 - reach / 0.28)) * 0.62;
+    image.data[i] = c[0]; image.data[i + 1] = c[1]; image.data[i + 2] = c[2]; image.data[i + 3] = Math.round(alpha * 255);
+  }
+  ctx.putImageData(image, 0, 0);
+  $('#maphint').style.display = !S.state.plans[S.floor] && !pts.length ? 'grid' : 'none';
+  $('#planremove').style.display = S.state.plans[S.floor] ? '' : 'none';
+  for (const p of pts) map.append(spot(p, true));
+  const tray = $('#tray');
+  tray.innerHTML = '';
+  const unplaced = S.points.filter(p => p.x < 0);
+  for (const p of unplaced) tray.append(spot(p, false));
+  if (!unplaced.length) tray.append(el('div', {class: 'faint'}, S.points.length ? 'Tutte le misure sono sulla piantina.' : 'Ancora nessuna misura: tocca una stanza qui sotto o + sull\'orologio.'));
+  const lg = $('#lg');
+  lg.style.background = S.metric === 'rssi' ? 'linear-gradient(90deg,#c2185b,#ff6b6b,#ffa34d,#ffd166,#9be15d,#2ee39a)' : 'linear-gradient(90deg,#2ee39a,#9be15d,#ffd166,#ffa34d,#ff6b6b,#c2185b)';
+  $('#lg-a').textContent = S.metric === 'rssi' ? '-88 dBm' : '5 ms'; $('#lg-b').textContent = S.metric === 'rssi' ? '-50 dBm' : '150 ms';
+}
+
+function spot(p, placed) {
+  const s = el('div', {class: 'spot', title: `${p.room}: ${p.rssi} dBm, ${p.ping} ms, ${p.loss}% persi`},
+    el('div', {class: 'b', style: {background: GCOL[p.grade]}}, GRADES[p.grade]), el('div', {class: 'n'}, `${p.room} ${p.rssi}`));
+  if (placed) { s.style.left = p.x / 10 + '%'; s.style.top = p.y / 10 + '%'; }
+  s.addEventListener('pointerdown', e => startDrag(e, p, s));
+  return s;
+}
+
+function startDrag(e, p, node) {
+  e.preventDefault();
+  const map = $('#map');
+  let ghost = node;
+  if (!node.parentElement || node.parentElement.id !== 'map') { ghost = spot(p, false); ghost.style.position = 'absolute'; map.append(ghost); }
+  ghost.classList.add('dragging');
+  const move = ev => {
+    const r = map.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)), y = Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height));
+    ghost.style.left = x * 100 + '%'; ghost.style.top = y * 100 + '%'; ghost.dataset.x = Math.round(x * 1000); ghost.dataset.y = Math.round(y * 1000);
+    ghost.style.transform = 'translate(-50%,-50%)';
+  };
+  const up = async ev => {
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+    const r = map.getBoundingClientRect();
+    const inside = ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+    if (inside && ghost.dataset.x) await kit.try(() => kit.api('/api/point/place', {body: {id: p.id, x: +ghost.dataset.x, y: +ghost.dataset.y, floor: S.floor}}));
+    S.revision = -1; load();
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  move(e);
+}
+
+/* Floor plan upload: resized in the browser to keep the watch's memory free. */
+$('#planremove').onclick = async () => {
+  if (!confirm('Rimuovere la piantina di questo piano? Le misure restano.')) return;
+  if (await kit.try(() => kit.api('/api/plan/delete?floor=' + S.floor, {body: {}}), 'Piantina rimossa')) { S.planVersion++; S.revision = -1; load(); }
+};
+$('#planfile').onchange = async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  await img.decode();
+  const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+  const c = el('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const blob = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.82));
+  if (await kit.try(() => kit.api('/api/plan?floor=' + S.floor, {method: 'POST', body: blob}), 'Piantina salvata sull\'orologio')) { S.planVersion++; S.revision = -1; load(); }
+  e.target.value = '';
+};
+
+function renderMeasuring() {
+  const m = S.state.measure, box = $('#measuring');
+  box.textContent = m.phase === 1 ? `Misuro ${m.room}... ${m.percent}%` : m.phase === 2 ? `${m.room}: ascolto le reti...` : '';
+}
+
+/* ------------------------------------------------------------- rooms */
+function latestByRoom() {
+  const rooms = new Map();
+  for (const p of S.points) { const r = rooms.get(p.room) || {room: p.room, spots: []}; r.spots.push(p); r.latest = p; rooms.set(p.room, r); }
+  return [...rooms.values()].sort((a, b) => a.latest.rssi - b.latest.rssi);
+}
+function renderRooms() {
+  const list = $('#roomlist'), rooms = latestByRoom();
+  list.innerHTML = '';
+  for (const r of rooms) {
+    const p = r.latest;
+    list.append(el('div', {class: 'room'}, el('span', {class: 'grade', style: {background: GCOL[p.grade]}}, GRADES[p.grade]),
+      el('div', {}, el('b', {}, r.room), el('div', {class: 'dim'}, VERDICT[p.grade]),
+        el('div', {class: 'faint', style: {fontSize: '12px'}}, `${p.rssi} dBm (${p.min}…${p.max}) · ${p.ping} ms · ${p.loss}% persi` + (p.radios > 1 ? ` · ${p.radios} radio` : '') + ` · ${r.spots.length} misur${r.spots.length > 1 ? 'e' : 'a'}`)),
+      el('button', {class: 'btn sm', title: 'Elimina l\'ultima misura', onclick: async () => { await kit.try(() => kit.api('/api/point/delete', {body: {id: p.id}})); S.revision = -1; load(); }}, '✕')));
+  }
+  if (!rooms.length) list.append(el('div', {class: 'empty'}, 'Nessuna stanza misurata.'));
+  renderAdvice(rooms);
+}
+function renderAdvice(rooms) {
+  const box = $('#advice');
+  box.innerHTML = '';
+  const tip = (icon, title, text) => box.append(el('div', {class: 'advice'}, el('div', {class: 'i'}, icon), el('div', {}, el('b', {}, title), el('div', {class: 'dim'}, text))));
+  if (!rooms.length) { tip('📍', 'Misura le stanze', 'Almeno le principali: il router, dove lavori, dove guardi la TV, le camere.'); return; }
+  const weak = rooms.filter(r => r.latest.rssi < -72 || r.latest.loss >= 10);
+  const dead = rooms.filter(r => r.latest.rssi < -82);
+  if (!weak.length) tip('✅', 'Copertura completa', 'Tutte le stanze misurate sono coperte bene. Non serve un ripetitore.');
+  else {
+    const candidates = rooms.filter(r => !weak.includes(r) && r.latest.rssi <= -50 && r.latest.rssi >= -70).sort((a, b) => Math.abs(a.latest.rssi + 62) - Math.abs(b.latest.rssi + 62));
+    tip('📶', `${weak.length} stanz${weak.length > 1 ? 'e deboli' : 'a debole'}`, weak.map(r => `${r.room} (${r.latest.rssi} dBm)`).join(', '));
+    if (candidates.length) tip('🔁', `Ripetitore in ${candidates[0].room}`, `Lì il router arriva a ${candidates[0].latest.rssi} dBm: abbastanza per ricevere bene e abbastanza lontano per coprire ${weak[0].room}. Sull'orologio: Cerca → Posto per il ripetitore per trovare il punto preciso.`);
+    else tip('🔁', 'Cerca il posto del ripetitore', 'Nessuna stanza misurata è a metà strada (-55…-68 dBm): misura i passaggi tra il router e le zone deboli.');
+  }
+  if (dead.length) tip('⛔', 'Zone morte', dead.map(r => r.room).join(', ') + ': qui serve un punto di accesso (o un ripetitore mesh) dedicato, non basta spostare il router.');
+  const slow = rooms.filter(r => r.latest.ping > 60 && r.latest.rssi > -70);
+  if (slow.length) tip('🐢', 'Lento anche con buon segnale', slow.map(r => r.room).join(', ') + ': il router è sovraccarico o il canale è affollato (vedi Reti vicine).');
+  const mesh = rooms.find(r => r.latest.alt && r.latest.alt > r.latest.rssi + 6);
+  if (mesh) tip('🧭', 'Il roaming non scatta', `In ${mesh.room} un'altra radio della tua rete arriva a ${mesh.latest.alt} dBm, ma l'orologio resta su quella a ${mesh.latest.rssi}. Attiva 802.11k/v o lo "steering" nella rete mesh.`);
+  if (S.aps && S.aps.channels && S.aps.channels.change) tip('📻', `Passa al canale ${S.aps.channels.best}`, `Il ${S.aps.channels.current} è affollato dai vicini. Si cambia dalle impostazioni Wi-Fi del router.`);
+}
+
+/* -------------------------------------------------------------- live */
+let liveTick = 0;
+function renderLive() {
+  const l = S.state.live, f = S.state.finder;
+  const g = $('#gauge');
+  if (l.connected) {
+    g.style.setProperty('--p', Math.max(0, Math.min(1, (l.rssi + 90) / 50)));
+    g.style.setProperty('--c', GCOL[l.grade]);
+    $('#g-dbm').textContent = l.rssi;
+    $('#g-word').textContent = VERDICT[l.grade];
+    $('#g-word').style.color = GCOL[l.grade];
+    $('#g-net').textContent = `${l.ssid} · canale ${l.channel} · ${l.phy} · ${l.ping_avg} ms · ${l.loss}% persi`;
+  }
+  $('#heatmark').style.left = (f.on ? f.heat : 0) + '%';
+  $('#f-text').textContent = !f.on ? 'Fermo' : (f.mode ? `Ripetitore: obiettivo -62 dBm · calore ${f.heat}%` : `Segnale più forte: migliore ${f.best} dBm · calore ${f.heat}%`);
+  if ($('#v-live').classList.contains('on') && ++liveTick % 2 === 0) kit.api('/api/history').then(h => {
+    const t0 = Date.now() / 1000 - h.rssi.length / 2;
+    kit.chart($('#livechart'), [
+      {points: h.rssi.map((v, i) => [t0 + i / 2, v]), color: '#34c6f4', label: 'segnale dBm', fill: true},
+    ], {height: 220, yfmt: v => Math.round(v), xfmt: t => kit.time(t), ymin: -95, ymax: -30});
+  }).catch(() => {});
+}
+$('#f-strong').onclick = () => kit.try(() => kit.api('/api/finder', {body: {mode: 0}}), 'Cerca avviato sull\'orologio');
+$('#f-rep').onclick = () => kit.try(() => kit.api('/api/finder', {body: {mode: 1}}), 'Cerca avviato sull\'orologio');
+$('#f-stop').onclick = () => kit.try(() => kit.api('/api/finder', {body: {mode: -1}}));
+
+/* --------------------------------------------------------------- air */
+function renderAir() {
+  const a = S.aps;
+  if (!a || !a.channels) return;
+  const box = $('#channels'), max = Math.max(10, ...a.channels.score);
+  box.innerHTML = '';
+  a.channels.score.forEach((s, i) => {
+    const ch = i + 1;
+    box.append(el('div', {class: (ch === a.channels.current ? 'cur' : '') + (ch === a.channels.best ? ' best' : ''), title: 'affollamento ' + s},
+      el('span', {}, s), el('i', {style: {height: Math.max(2, s / max * 100) + '%'}}), el('b', {}, ch)));
+  });
+  $('#chadvice').innerHTML = a.channels.change ? `<b class="good">Consiglio: canale ${a.channels.best}</b> <span class="dim">— il ${a.channels.current} è affollato dai vicini.</span>`
+    : `<span class="dim">Il tuo canale (${a.channels.current}, in azzurro) va bene. In verde il più libero.</span>`;
+  const list = $('#aplist');
+  list.innerHTML = '';
+  for (const ap of a.aps) list.append(el('tr', {}, el('td', {}, ap.ours ? el('b', {class: 'good'}, ap.ssid || '(nascosta)') : (ap.ssid || el('span', {class: 'faint'}, '(nascosta)'))),
+    el('td', {}, ap.channel), el('td', {}, el('span', {style: {color: css(rssiColor(ap.rssi))}}, ap.rssi + ' dBm')), el('td', {class: 'faint kbd'}, ap.bssid)));
+}
+$('#rescan').onclick = () => kit.try(() => kit.api('/api/scan', {body: {}}), 'Ascolto le reti...');
+
+/* ---------------------------------------------------------- settings */
+function renderSettings() {
+  const chips = $('#roomchips');
+  chips.innerHTML = '';
+  S.state.rooms.forEach((r, i) => chips.append(el('span', {class: 'chip'}, r, el('span', {class: 'x', onclick: () => saveRooms(S.state.rooms.filter((_, k) => k !== i))}, '✕'))));
+  const fl = $('#floornames');
+  if (document.activeElement && document.activeElement.closest('#floornames')) return;
+  fl.innerHTML = '';
+  S.state.floors.forEach(f => fl.append(el('input', {value: f, maxlength: 20})));
+}
+function saveRooms(rooms) { return kit.try(() => kit.api('/api/rooms', {body: {rooms}}), 'Salvato').then(() => { S.revision = -1; load(); }); }
+$('#addroom').onclick = () => { const v = $('#newroom').value.trim(); if (v) { $('#newroom').value = ''; saveRooms([...S.state.rooms, v]); } };
+$('#addfloor').onclick = () => { if ($$('#floornames input').length < 3) $('#floornames').append(el('input', {value: 'Piano ' + ($$('#floornames input').length + 1), maxlength: 20})); };
+$('#savefloors').onclick = () => kit.try(() => kit.api('/api/rooms', {body: {floors: $$('#floornames input').map(i => i.value.trim()).filter(Boolean)}}), 'Salvato').then(() => { S.revision = -1; load(); });
+$('#clear').onclick = () => confirm('Cancellare tutte le misure?') && kit.try(() => kit.api('/api/points/clear', {body: {}}), 'Cancellate').then(() => { S.revision = -1; load(); });
+$('#export').onclick = () => kit.download('copertura.csv', 'stanza;piano;dBm;min;max;ping ms;persi %;canale;radio;voto;data\n' +
+  S.points.map(p => [p.room, S.state.floors[p.floor] || p.floor, p.rssi, p.min, p.max, p.ping, p.loss, p.channel, p.radios, GRADES[p.grade], new Date(p.when * 1000).toLocaleString('it-IT')].join(';')).join('\n'), 'text/csv');
+
+window.addEventListener('resize', () => S.state && renderMap());
+kit.views(id => { if (id === 'v-map' && S.state) setTimeout(renderMap, 20); });
+kit.start({onReady: () => kit.poll(load, 1000)});
+</script>
+</body>
+</html>

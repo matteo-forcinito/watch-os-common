@@ -71,6 +71,17 @@ int wifi_rssi(void);
 /* Scan (blocks ~2 s). Strongest first, one entry per name. Returns the count. */
 int wifi_scan(wifi_ap_t *out, int max);
 
+/* Every access point heard (one entry per radio, hidden ones included), strongest first. */
+typedef struct
+{
+    char ssid[33];
+    uint8_t bssid[6];
+    uint8_t channel;
+    int8_t rssi;
+    uint8_t auth;    /* wifi_auth_mode_t */
+} wifi_ap_detail_t;
+int wifi_scan_detail(wifi_ap_detail_t *out, int max);
+
 /* Try a network; on success it is saved as known. Holds Wi-Fi like wifi_acquire(). */
 esp_err_t wifi_connect_new(const char *ssid, const char *password, uint32_t timeout_ms);
 
