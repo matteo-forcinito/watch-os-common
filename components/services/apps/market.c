@@ -103,8 +103,21 @@ void market_set_view(int view)
     sys_post(save_preferences, NULL);
 }
 
+/* cJSON nodes are small: by default they land in the scarce internal RAM. Keep them in PSRAM. */
+static void *json_malloc(size_t size)
+{
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
+static void json_hooks(void)
+{
+    cJSON_Hooks hooks = {.malloc_fn = json_malloc, .free_fn = free};
+    cJSON_InitHooks(&hooks);
+}
+
 esp_err_t market_init(void)
 {
+    json_hooks();
     if (s_initialized) return ESP_OK;
     nvs_handle_t handle;
     if (nvs_open("market", NVS_READONLY, &handle) == ESP_OK)

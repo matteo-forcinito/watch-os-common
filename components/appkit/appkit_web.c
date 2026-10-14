@@ -392,8 +392,21 @@ static void web_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* cJSON nodes are small: by default they land in the scarce internal RAM. Keep them in PSRAM. */
+static void *json_malloc(size_t size)
+{
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
+static void json_hooks(void)
+{
+    cJSON_Hooks hooks = {.malloc_fn = json_malloc, .free_fn = free};
+    cJSON_InitHooks(&hooks);
+}
+
 esp_err_t appkit_web_start(const appkit_web_config_t *config)
 {
+    json_hooks();
     if (s_config != NULL)
     {
         return ESP_OK;

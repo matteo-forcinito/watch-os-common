@@ -11,7 +11,7 @@
 
 #define MARKET_MAX_APPS 32
 #define MARKET_URL_MAX 320
-#define MARKET_CATALOG_MAX (48 * 1024)
+#define MARKET_CATALOG_MAX (128 * 1024)   /* PSRAM; the tools still cap catalogues at 48 KB for older firmware */
 #define MARKET_ICON_MAX (64 * 1024)
 #define MARKET_CATALOG_URL "https://raw.githubusercontent.com/matteo-forcinito/watch-firmware-releases/main/market/catalog.json"
 
