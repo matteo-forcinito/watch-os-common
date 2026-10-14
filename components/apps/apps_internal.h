@@ -37,6 +37,8 @@ extern const app_t call_app;
 extern const app_t update_app;          /* hidden: Settings > Aggiornamento */
 extern const app_t versions_app;        /* hidden: every release online + on the SD card */
 extern const app_t folder_app;          /* hidden: one folder of versions_app, arg = folder id */
+extern const app_t news_app;            /* CONFIG_APPKIT_HOSTED: newspaper from RSS feeds (watch-os-common/news) */
+void news_service_start(void);
 extern const app_t giornata_app;        /* CONFIG_APPKIT_HOSTED: agenda (watch-os-common/giornata) */
 void giornata_service_start(void);
 extern const app_t pieno_app;

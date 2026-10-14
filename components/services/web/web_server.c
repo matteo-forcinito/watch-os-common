@@ -69,12 +69,31 @@ typedef struct
 static folder_t s_folders[FOLDERS_MAX];
 static int s_folder_count;
 
+/* "/news" (typed without the slash) -> "/news/" */
+static esp_err_t folder_redirect(httpd_req_t *req)
+{
+    char location[40];
+    snprintf(location, sizeof(location), "%.36s/", req->uri);
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", location);
+    return httpd_resp_send(req, NULL, 0);
+}
+
 static void register_folder(const folder_t *folder)
 {
     httpd_uri_t route = {.uri = folder->uri, .method = HTTP_GET, .handler = folder->handler};
     httpd_register_uri_handler(s_server, &route);
     route.method = HTTP_POST;
     httpd_register_uri_handler(s_server, &route);
+    char bare[sizeof(folder->uri)];
+    snprintf(bare, sizeof(bare), "%s", folder->uri);
+    char *star = strstr(bare, "/*");
+    if (star != NULL)
+    {
+        *star = '\0';
+        httpd_uri_t redirect = {.uri = bare, .method = HTTP_GET, .handler = folder_redirect};
+        httpd_register_uri_handler(s_server, &redirect);   /* the server copies the text */
+    }
 }
 static bool s_ap_mode = false;
 static char s_ap_name[33] = "";

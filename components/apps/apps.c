@@ -35,6 +35,7 @@ static const app_t *const s_apps[] = {
     &battery_app,
     &market_app,
 #if CONFIG_APPKIT_HOSTED
+    &news_app,
     &giornata_app,
     &pieno_app,
     &copertura_app,
@@ -257,6 +258,7 @@ void apps_init(void)
     market_init();
 #if CONFIG_APPKIT_HOSTED
     giornata_service_start();   /* reminders ring with the app closed too */
+    news_service_start();       /* background rounds keep the archive growing */
 #endif
     for (size_t i = 0; i < sizeof(s_apps) / sizeof(s_apps[0]); i++)
     {
