@@ -17,6 +17,7 @@
 #include "freertos/task.h"
 #include "hardware/audio.h"
 #include "hardware/board.h"
+#include "services/sound.h"
 
 #include <stdatomic.h>
 #include <string.h>
@@ -80,6 +81,13 @@ static void sound_task(void *arg)
     int32_t amplitude = 0;
     for (;;)
     {
+        if (sound_alarm_playing())
+        {
+            /* An alarm owns the speaker: stay silent, never stop it (the sound service does). */
+            running = false;
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
+        }
         if (atomic_exchange(&s_alert, false) && atomic_load(&s_enabled))
         {
             open_speaker(&running);

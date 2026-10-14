@@ -5,7 +5,9 @@
  */
 #include "deck.h"
 
+#include "appkit.h"
 #include "core/app.h"
+#include "core/clock.h"
 #include "core/devcon.h"
 #include "core/lv_port.h"
 #include "core/power.h"
@@ -34,6 +36,8 @@ void app_main(void)
     if (storage != ESP_OK && storage != ESP_ERR_NOT_FOUND)
         ESP_LOGW("deck", "Flash storage unavailable: %s", esp_err_to_name(storage));
     ESP_ERROR_CHECK(lv_port_init());
+    clock_init();
+    appkit_alarms_prepare(); /* the OS alarms keep ringing in the app */
     deck_profiles_load();
 
     /* Configuration mode lasts one start: leaving it (or a crash) gives the keys back. */
@@ -70,6 +74,7 @@ void app_main(void)
     lv_port_unlock();
     ESP_ERROR_CHECK(power_init());
     app_manager_init();
+    appkit_alarms_start();
     if (config_mode || hid_link_transport() != HID_LINK_USB)
         devcon_start(); /* QA builds only; the USB port belongs to the keyboard in USB mode */
     sys_heap_log("Deck ready");

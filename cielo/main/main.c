@@ -1,6 +1,7 @@
 /* Cielo external app: boot order as the other apps, then the Wi-Fi feed and the UI. */
 #include "cielo.h"
 
+#include "appkit.h"
 #include "core/app.h"
 #include "core/devcon.h"
 #include "core/clock.h"
@@ -27,6 +28,7 @@ void app_main(void)
         ESP_LOGW("cielo", "Flash storage unavailable: %s", esp_err_to_name(storage));
     ESP_ERROR_CHECK(lv_port_init());
     clock_init();
+    appkit_alarms_prepare(); /* the OS alarms keep ringing in the app */
     ESP_ERROR_CHECK(wifi_service_init());
     ESP_ERROR_CHECK(cielo_start());
     lv_port_lock();
@@ -39,6 +41,7 @@ void app_main(void)
     lv_port_unlock();
     ESP_ERROR_CHECK(power_init());
     app_manager_init();
+    appkit_alarms_start();
     devcon_start(); /* development console: QA builds only, a no-op otherwise */
     sys_heap_log("Cielo ready");
 }

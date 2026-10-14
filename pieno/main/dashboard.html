@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pieno · carburante conveniente</title>
+<link rel="stylesheet" href="/kit.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<style>
+:root{--accent:#18c47f}
+.fuelbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.besthero{display:grid;grid-template-columns:1.3fr 1fr;gap:16px}
+@media(max-width:900px){.besthero{grid-template-columns:1fr}}
+.price{font-variant-numeric:tabular-nums}
+.hero small{font-size:18px;color:var(--dim);font-weight:600;margin-left:6px}
+.spectrum{position:relative;height:66px;margin-top:16px}
+.spectrum .strip{position:absolute;left:0;right:0;top:24px;height:12px;border-radius:99px;background:linear-gradient(90deg,var(--good),var(--warn),var(--bad))}
+.spectrum .med{position:absolute;top:0;transform:translateX(-50%);font-size:12px;color:var(--ink);white-space:nowrap}
+.spectrum .tick{position:absolute;top:18px;width:4px;height:24px;border-radius:2px;background:var(--ink);transform:translateX(-50%)}
+.spectrum .best{position:absolute;top:20px;width:20px;height:20px;border-radius:50%;background:var(--panel);border:4px solid var(--good);transform:translateX(-50%)}
+.spectrum .ends{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;font-size:12px;color:var(--dim)}
+.fuelcard{cursor:pointer;transition:.15s}.fuelcard:hover{border-color:var(--accent)}
+.fuelcard.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--shadow)}
+.rank{display:flex;flex-direction:column;gap:8px}
+.rankrow{display:grid;grid-template-columns:28px 1fr auto;gap:12px;align-items:center;padding:10px 12px;border-radius:12px;background:var(--panel2);cursor:pointer}
+.rankrow:hover{outline:1px solid var(--accent)}
+.rankrow .n{font-weight:800;color:var(--faint);text-align:center}
+.rankrow .p{font-size:20px;font-weight:750}
+.age{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+#map{height:calc(100vh - 210px);min-height:420px;border-radius:var(--radius);border:1px solid var(--line)}
+@media (prefers-color-scheme:dark){html:not([data-theme=light]) .dark-tiles .leaflet-tile{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}}
+html[data-theme=dark] .dark-tiles .leaflet-tile{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
+.pin{width:auto;padding:3px 7px;border-radius:9px;color:#fff;font:700 12px/1.2 system-ui;box-shadow:0 2px 8px rgba(0,0,0,.4);white-space:nowrap;border:2px solid rgba(255,255,255,.85)}
+.leaflet-popup-content{font:14px/1.4 system-ui}
+.pop b{font-size:15px}.pop table td{padding:2px 8px 2px 0;border:0}
+.legend{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--dim)}
+.legend .g{width:160px;height:10px;border-radius:99px;background:linear-gradient(90deg,var(--good),var(--warn),var(--bad))}
+.delta.up{color:var(--bad)}.delta.down{color:var(--good)}
+.kpi{display:flex;flex-direction:column;gap:3px}.kpi b{font-size:26px;letter-spacing:-.02em}.kpi span{font-size:13px;color:var(--dim)}
+.progress{height:4px;background:var(--panel2);border-radius:99px;overflow:hidden;margin-top:10px;display:none}
+.progress i{display:block;height:100%;background:var(--accent);transition:width .4s}
+.calc-out td{font-variant-numeric:tabular-nums}
+.searchres{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.searchres button{text-align:left}
+</style>
+</head>
+<body>
+<header class="kit-top">
+  <div class="kit-brand"><div class="kit-logo">⛽</div>Pieno</div>
+  <nav class="kit-nav">
+    <button data-view="v-today">Oggi</button>
+    <button data-view="v-map">Mappa</button>
+    <button data-view="v-list">Distributori</button>
+    <button data-view="v-trend">Andamento</button>
+    <button data-view="v-calc">Calcolatore</button>
+    <button data-view="v-set">Impostazioni</button>
+  </nav>
+  <div class="kit-dev"></div>
+</header>
+<main>
+  <div class="row" style="margin-bottom:14px">
+    <div class="fuelbar" id="fuelbar"></div>
+    <div class="pill-toggle" id="modebar"><button data-self="1">Self</button><button data-self="0">Servito</button></div>
+    <div class="grow"></div>
+    <span class="dim" id="dataline"></span>
+    <button class="btn sm" id="refresh">↻ Aggiorna</button>
+  </div>
+  <div class="progress" id="progress"><i></i></div>
+
+  <!-- TODAY -->
+  <section class="view" id="v-today">
+    <div class="besthero">
+      <div class="card">
+        <h2 id="herocap">Il pieno che costa meno</h2>
+        <div id="hero"></div>
+      </div>
+      <div class="card">
+        <h2>Zona</h2>
+        <div class="grid g2" id="kpis"></div>
+      </div>
+    </div>
+    <div class="grid g4" style="margin-top:16px" id="fuelcards"></div>
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card"><h2>Classifica</h2><div class="rank" id="rank"></div></div>
+      <div class="card"><h2>Ultime variazioni</h2><div id="moves"></div></div>
+    </div>
+  </section>
+
+  <!-- MAP -->
+  <section class="view" id="v-map">
+    <div class="row" style="margin-bottom:10px">
+      <div class="legend"><span id="lmin"></span><div class="g"></div><span id="lmax"></span></div>
+      <div class="grow"></div>
+      <span class="dim">Trascina la casetta per spostare il centro della ricerca.</span>
+    </div>
+    <div id="map"></div>
+  </section>
+
+  <!-- LIST -->
+  <section class="view" id="v-list">
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <input id="q" placeholder="Cerca marchio, comune, indirizzo..." class="grow" style="max-width:360px">
+        <select id="agefilter">
+          <option value="0">Qualsiasi data</option><option value="1">Prezzi di oggi</option>
+          <option value="3">Ultimi 3 giorni</option><option value="7">Ultima settimana</option>
+        </select>
+        <div class="grow"></div>
+        <button class="btn sm" id="csv">⤓ Esporta CSV</button>
+      </div>
+      <div class="scroll">
+        <table id="table">
+          <thead><tr>
+            <th data-sort="rank">#</th><th data-sort="brand">Distributore</th><th data-sort="town">Comune</th>
+            <th data-sort="km">Distanza</th><th data-sort="price">Prezzo</th><th data-sort="real">Costo reale</th>
+            <th data-sort="age">Aggiornato</th><th>Altri</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- TREND -->
+  <section class="view" id="v-trend">
+    <div class="grid g4" id="trendkpis"></div>
+    <div class="card" style="margin-top:16px">
+      <h2>Distribuzione dei prezzi oggi</h2>
+      <div id="histo"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Prezzi della zona giorno per giorno</h2>
+      <div id="trendchart"></div>
+      <p class="faint">Ogni giorno, dopo le 8, il ministero pubblica i prezzi: l'orologio registra minimo, mediana e massimo della tua zona. Lo storico cresce finché l'app viene usata.</p>
+    </div>
+  </section>
+
+  <!-- CALC -->
+  <section class="view" id="v-calc">
+    <div class="grid g2">
+      <div class="card">
+        <h2>La tua auto</h2>
+        <div class="grid g2">
+          <label class="field">Pieno (litri)<input id="c-litres" type="number" min="5" max="150" step="1"></label>
+          <label class="field">Consumo (km con un litro)<input id="c-kpl" type="number" min="3" max="40" step="0.5"></label>
+        </div>
+        <p class="dim" style="margin-top:14px">Il costo reale aggiunge il carburante bruciato per andare e tornare (strada ≈ 1,3 × linea d'aria). Un distributore lontano conviene solo se lo sconto copre il viaggio.</p>
+        <div id="breakeven"></div>
+        <div class="row end"><button class="btn primary" id="c-save">Usa questi valori anche sull'orologio</button></div>
+      </div>
+      <div class="card">
+        <h2>Quanto risparmi</h2>
+        <div id="savings"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Costo del pieno per distributore</h2>
+      <div class="scroll"><table class="calc-out"><thead><tr><th>Distributore</th><th>Distanza</th><th>Prezzo</th><th>Rifornimento</th><th>Viaggio</th><th>Totale</th><th>vs mediana</th></tr></thead><tbody id="calcbody"></tbody></table></div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="view" id="v-set">
+    <div class="grid g2">
+      <div class="card">
+        <h2>Dove cerchi</h2>
+        <label class="field">Città o indirizzo<input id="s-search" placeholder="es. Civita Castellana"></label>
+        <div class="searchres" id="s-results"></div>
+        <p class="dim" id="s-where"></p>
+        <label class="field">Raggio: <b id="s-rlabel"></b><input id="s-radius" type="range" min="3" max="30" step="1"></label>
+        <p class="faint">Puoi anche trascinare la casetta sulla mappa.</p>
+      </div>
+      <div class="card">
+        <h2>Preferenze</h2>
+        <div class="grid g2">
+          <label class="field">Carburante<select id="s-fuel"></select></label>
+          <label class="field">Rifornimento<select id="s-self"><option value="1">Self</option><option value="0">Servito</option></select></label>
+          <label class="field">Classifica per<select id="s-real"><option value="1">Costo reale</option><option value="0">Prezzo</option></select></label>
+          <label class="field">Prezzo obiettivo (€/L, 0 = nessuno)<input id="s-target" type="number" min="0" max="4" step="0.001"></label>
+          <label class="field">Prezzi validi per<select id="s-age"><option value="2">2 giorni</option><option value="4">4 giorni</option><option value="7">7 giorni</option><option value="14">14 giorni</option><option value="0">sempre</option></select></label>
+        </div>
+        <div class="row end" style="margin-top:16px"><button class="btn primary" id="s-save">Salva</button></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>I dati</h2>
+      <p class="dim">Prezzi comunicati dai gestori all'Osservatorio prezzi carburanti del Ministero delle Imprese e del Made in Italy (open data, aggiornati ogni mattina). L'orologio scarica i file completi (~7,5 MB), tiene solo i distributori nel raggio e funziona anche senza rete con l'ultima copia.</p>
+      <p class="dim">Un prezzo vecchio di giorni può non essere più valido: il pallino lo segnala (verde oggi, giallo pochi giorni, rosso più vecchio). Oltre il limite scelto nelle preferenze il prezzo è "non confermato": resta visibile ma esce da classifica, statistiche e calcoli. Capita spesso con prezzi bassissimi mai aggiornati.</p>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="modal"><div class="card" id="modalcard"></div></div>
+
+<script src="/kit.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+'use strict';
+const FUELS = ['Benzina', 'Gasolio', 'GPL', 'Metano'];
+const S = {state: null, stations: [], settings: null, fuel: 0, self: 1, revision: -1, map: null, layer: null, home: null, circle: null, history: {}};
+const {el, $, $$, num, euro} = kit;
+
+const price3 = v => v > 0 ? num(v, 3) : '–';
+const ageOf = when => { const now = S.state && S.state.status.now; return now && when ? now - when : null; };
+const ageColor = s => s == null ? 'var(--faint)' : s < 30 * 3600 ? 'var(--good)' : s < 96 * 3600 ? 'var(--warn)' : 'var(--bad)';
+const priceOf = (st, f = S.fuel, m = S.self) => st.p[f][m];
+const whenOf = (st, f = S.fuel, m = S.self) => st.p[f][2 + m];
+const prevOf = (st, f = S.fuel, m = S.self) => st.p[f][4 + m];
+function realOf(st, f = S.fuel, m = S.self, set = S.settings) {
+  const p = priceOf(st, f, m);
+  if (!(p > 0)) return 0;
+  return p * (set.litres + st.km * 2 * 1.3 / set.km_per_litre) / set.litres;
+}
+const rankValue = st => S.settings.real_cost ? realOf(st) : priceOf(st);
+/* A price older than the limit is "not confirmed": shown, never ranked (as on the watch). */
+function fresh(st, f = S.fuel, m = S.self) {
+  const d = S.settings.max_age_days, a = ageOf(whenOf(st, f, m));
+  return priceOf(st, f, m) > 0 && (!d || a == null || a <= d * 86400);
+}
+function ranked() {
+  return S.stations.filter(s => fresh(s)).sort((a, b) => rankValue(a) - rankValue(b));
+}
+function areaNow() { return S.state ? S.state.area[S.fuel][S.self] : {}; }
+const ageDot = st => el('span', {class: 'age', style: {background: ageColor(ageOf(whenOf(st)))}});
+function colorFor(p, lo, hi) {
+  const t = hi > lo ? Math.min(1, Math.max(0, (p - lo) / (hi - lo))) : 0;
+  const a = [24, 196, 127], b = [255, 181, 71], c = [255, 93, 108];
+  const mix = (x, y, k) => x.map((v, i) => Math.round(v + (y[i] - v) * k));
+  const rgb = t < .5 ? mix(a, b, t * 2) : mix(b, c, (t - .5) * 2);
+  return `rgb(${rgb.join(',')})`;
+}
+
+/* ---------------------------------------------------------- loading */
+async function loadState() {
+  const st = await kit.api('/api/state');
+  const first = !S.state;
+  S.state = st;
+  if (first || !S.dirtySettings) S.settings = st.settings;
+  if (first) { S.fuel = st.settings.fuel; S.self = st.settings.self; }
+  const busy = st.status.phase >= 1 && st.status.phase <= 3;
+  $('#progress').style.display = busy ? 'block' : 'none';
+  $('#progress i').style.width = st.status.percent + '%';
+  const when = st.status.extraction ? new Date(st.status.extraction + 'T08:00').toLocaleDateString('it-IT', {weekday: 'short', day: 'numeric', month: 'short'}) : '–';
+  $('#dataline').textContent = busy ? st.status.message + ' ' + st.status.percent + '%' :
+    `Dati del ${when} · ${st.status.count} distributori entro ${st.settings.radius_km} km`;
+  if (st.status.phase === 4) $('#dataline').textContent = st.status.message;
+  if (st.status.revision !== S.revision) {
+    S.revision = st.status.revision;
+    S.stations = await kit.api('/api/stations');
+    S.history = {};
+    renderAll();
+  }
+}
+
+function renderAll() {
+  renderBars(); renderToday(); renderTable(); renderCalc(); renderSettings();
+  if (S.map) renderMap();
+  if ($('#v-trend').classList.contains('on')) renderTrend();
+}
+
+/* ------------------------------------------------------------- bars */
+function renderBars() {
+  const bar = $('#fuelbar');
+  bar.innerHTML = '';
+  FUELS.forEach((f, i) => {
+    const a = S.state.area[i][S.self];
+    if (!a.count && i > 1 && i !== S.fuel) return;
+    bar.append(el('button', {class: 'chip' + (i === S.fuel ? ' on' : ''), onclick: () => { S.fuel = i; renderAll(); }}, f));
+  });
+  $$('#modebar button').forEach(b => {
+    b.classList.toggle('on', +b.dataset.self === S.self);
+    b.onclick = () => { S.self = +b.dataset.self; renderAll(); };
+  });
+}
+
+/* ------------------------------------------------------------ today */
+function renderToday() {
+  const list = ranked(), a = areaNow(), set = S.settings, hero = $('#hero');
+  $('#herocap').textContent = set.real_cost ? 'Il pieno che costa meno' : 'Il prezzo più basso';
+  hero.innerHTML = '';
+  if (!list.length) {
+    hero.append(el('div', {class: 'empty'}, S.state.status.count ? 'Nessun distributore vende ' + FUELS[S.fuel] + ' nel raggio.' : 'In attesa dei primi dati...'));
+  } else {
+    const b = list[0], p = priceOf(b);
+    const saving = (a.median - p) * set.litres - (set.real_cost ? (realOf(b) - p) * set.litres : 0);
+    hero.append(
+      el('div', {class: 'hero price'}, num(p, 3), el('small', {}, '€/L')),
+      el('div', {class: 'big', style: {marginTop: '8px'}}, b.brand, el('span', {class: 'dim', style: {fontWeight: 500}}, ' · ' + num(b.km, 1) + ' km')),
+      el('div', {class: 'dim'}, ageDot(b), `${b.address}, ${b.town} · aggiornato ${kit.ago(ageOf(whenOf(b)))}`),
+      el('div', {style: {marginTop: '10px', fontSize: '18px', fontWeight: 650}, class: saving > .05 ? 'good' : 'dim'},
+        saving > .05 ? `Risparmi ${euro(saving)} su un pieno da ${set.litres} L rispetto alla mediana` : 'Prezzi allineati in zona'),
+      set.target > 0 ? el('div', {class: p <= set.target ? 'good' : 'dim'}, p <= set.target ? '✓ Sotto il tuo obiettivo di ' + price3(set.target) : 'Obiettivo ' + price3(set.target) + ': mancano ' + num((p - set.target) * 1000, 0) + ' millesimi') : '',
+      spectrum(a.min, a.median, a.max, p),
+      el('div', {class: 'row', style: {marginTop: '10px'}},
+        el('a', {class: 'btn sm', target: '_blank', rel: 'noopener', href: `https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lon}`}, '➜ Portami lì'),
+        el('button', {class: 'btn sm', onclick: () => openStation(b.id)}, 'Dettagli')));
+  }
+  const k = $('#kpis');
+  k.innerHTML = '';
+  const kpi = (v, t, cls) => el('div', {class: 'kpi'}, el('b', {class: 'price ' + (cls || '')}, v), el('span', {}, t));
+  k.append(kpi(price3(a.min), 'minimo', 'good'), kpi(price3(a.median), 'mediana'), kpi(price3(a.max), 'massimo', 'bad'),
+    kpi(a.count || 0, 'distributori con ' + FUELS[S.fuel]));
+  if (a.max > 0) k.append(el('div', {class: 'dim', style: {gridColumn: '1/-1'}},
+    `Tra il più caro e il più economico ci sono ${euro((a.max - a.min) * S.settings.litres)} su un pieno.`));
+
+  const cards = $('#fuelcards');
+  cards.innerHTML = '';
+  FUELS.forEach((f, i) => {
+    const x = S.state.area[i][S.self];
+    cards.append(el('div', {class: 'card fuelcard' + (i === S.fuel ? ' on' : ''), onclick: () => { S.fuel = i; renderAll(); }},
+      el('h3', {}, f),
+      x.count ? el('div', {class: 'big price'}, price3(x.min)) : el('div', {class: 'big faint'}, '–'),
+      el('div', {class: 'dim'}, x.count ? `mediana ${price3(x.median)} · ${x.count} punti` : 'non disponibile in zona')));
+  });
+
+  const r = $('#rank');
+  r.innerHTML = '';
+  list.slice(0, 6).forEach((s, i) => r.append(rankRow(s, i)));
+  if (!list.length) r.append(el('div', {class: 'empty'}, '–'));
+
+  const moves = $('#moves');
+  moves.innerHTML = '';
+  const changed = S.stations.filter(s => prevOf(s) > 0 && fresh(s))
+    .map(s => ({s, d: priceOf(s) - prevOf(s)})).sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 8);
+  if (!changed.length) moves.append(el('div', {class: 'empty'}, 'Le variazioni appaiono dal secondo aggiornamento in poi.'));
+  for (const {s, d} of changed) moves.append(el('div', {class: 'rankrow', onclick: () => openStation(s.id)},
+    el('span', {class: 'n delta ' + (d > 0 ? 'up' : 'down')}, d > 0 ? '▲' : '▼'),
+    el('div', {}, el('b', {}, s.brand), el('div', {class: 'dim'}, `${s.town} · prima ${price3(prevOf(s))}`)),
+    el('div', {class: 'p price delta ' + (d > 0 ? 'up' : 'down')}, (d > 0 ? '+' : '') + num(d, 3))));
+}
+
+function rankRow(s, i) {
+  return el('div', {class: 'rankrow', onclick: () => openStation(s.id)},
+    el('span', {class: 'n'}, i + 1),
+    el('div', {}, el('b', {}, s.brand), el('div', {class: 'dim'}, ageDot(s), `${s.town} · ${num(s.km, 1)} km` +
+      (S.settings.real_cost ? ` · reale ${price3(realOf(s))}` : ''))),
+    el('div', {class: 'p price' + (i === 0 ? ' good' : '')}, price3(priceOf(s))));
+}
+
+function spectrum(lo, mid, hi, best) {
+  if (!(hi > lo)) return '';
+  const pos = v => Math.min(100, Math.max(0, (v - lo) / (hi - lo) * 100));
+  const m = pos(mid);
+  return el('div', {class: 'spectrum'}, el('div', {class: 'strip'}),
+    el('div', {class: 'med', style: {left: Math.min(88, Math.max(12, m)) + '%'}}, 'mediana ' + price3(mid)),
+    el('div', {class: 'tick', style: {left: m + '%'}}),
+    el('div', {class: 'best', style: {left: pos(best) + '%'}, title: 'il migliore'}),
+    el('div', {class: 'ends'}, el('span', {}, 'min ' + price3(lo)), el('span', {}, 'max ' + price3(hi))));
+}
+
+/* -------------------------------------------------------------- map */
+function ensureMap() {
+  if (S.map || !window.L) {
+    if (!window.L) $('#map').append(el('div', {class: 'empty'}, 'La mappa richiede internet sul PC (Leaflet + OpenStreetMap).'));
+    return;
+  }
+  S.map = L.map('map', {zoomControl: true});
+  $('#map').classList.add('dark-tiles');
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '© OpenStreetMap'}).addTo(S.map);
+  S.layer = L.layerGroup().addTo(S.map);
+  const set = S.settings;
+  S.home = L.marker([set.lat, set.lon], {draggable: true, icon: L.divIcon({className: '', html: '<div style="font-size:30px;filter:drop-shadow(0 2px 4px #0008)">🏠</div>', iconSize: [30, 30], iconAnchor: [15, 26]})}).addTo(S.map);
+  S.home.on('dragend', async () => {
+    const p = S.home.getLatLng();
+    if (!confirm('Spostare il centro della ricerca qui? L\'orologio scaricherà i distributori della nuova zona.')) { S.home.setLatLng([S.settings.lat, S.settings.lon]); return; }
+    await saveSettings({lat: +p.lat.toFixed(5), lon: +p.lng.toFixed(5), place: 'Punto sulla mappa'});
+  });
+  S.circle = L.circle([set.lat, set.lon], {radius: set.radius_km * 1000, color: '#18c47f', weight: 1, fillOpacity: .04}).addTo(S.map);
+  S.map.setView([set.lat, set.lon], 12);
+}
+
+function renderMap() {
+  ensureMap();
+  if (!S.map) return;
+  const set = S.settings, a = areaNow();
+  S.home.setLatLng([set.lat, set.lon]);
+  S.circle.setLatLng([set.lat, set.lon]).setRadius(set.radius_km * 1000);
+  S.layer.clearLayers();
+  $('#lmin').textContent = price3(a.min); $('#lmax').textContent = price3(a.max);
+  const best = ranked()[0];
+  for (const s of S.stations) {
+    const p = priceOf(s);
+    if (!(p > 0)) continue;
+    const isBest = best && s.id === best.id, ok = fresh(s);
+    const icon = L.divIcon({className: '', iconSize: null, iconAnchor: [24, 12],
+      html: `<div class="pin" style="background:${ok ? colorFor(p, a.min, a.max) : '#6b7280'};${ok ? '' : 'opacity:.7;'}${isBest ? 'transform:scale(1.25);outline:3px solid #fff' : ''}">${num(p, 3)}${ok ? '' : ' ?'}</div>`});
+    const m = L.marker([s.lat, s.lon], {icon, zIndexOffset: isBest ? 1000 : Math.round((a.max - p) * 1000)});
+    m.bindPopup(() => popup(s));
+    S.layer.addLayer(m);
+  }
+}
+
+function popup(s) {
+  const rows = FUELS.map((f, i) => (s.p[i][0] > 0 || s.p[i][1] > 0) ?
+    `<tr><td>${f}</td><td><b>${price3(s.p[i][1])}</b> self</td><td>${price3(s.p[i][0])} serv.</td></tr>` : '').join('');
+  return `<div class="pop"><b>${kit.esc(s.brand)}</b><br>${kit.esc(s.address)}, ${kit.esc(s.town)}<br>
+    <span style="color:#888">${num(s.km, 1)} km · aggiornato ${kit.ago(ageOf(whenOf(s)))}</span>
+    <table>${rows}</table><a href="#" onclick="openStation(${s.id});return false">Dettagli e storico</a></div>`;
+}
+
+/* ------------------------------------------------------------ table */
+let drawTable = null;
+function tableRows() {
+  const q = $('#q').value.trim().toLowerCase(), days = +$('#agefilter').value;
+  const order = ranked();
+  return S.stations.filter(s => priceOf(s) > 0).filter(s => !q || (s.brand + ' ' + s.name + ' ' + s.town + ' ' + s.address).toLowerCase().includes(q))
+    .filter(s => !days || (ageOf(whenOf(s)) ?? 1e9) < days * 86400)
+    .map(s => ({s, rank: order.indexOf(s) + 1 || null, brand: s.brand, town: s.town, km: s.km, price: priceOf(s), real: realOf(s), age: ageOf(whenOf(s))}))
+    .sort((a, b) => (a.rank || 1e6) - (b.rank || 1e6));
+}
+function renderTable() {
+  const body = $('#table tbody');
+  if (!drawTable) drawTable = kit.sortable($('#table'), tableRows, rows => {
+    body.innerHTML = '';
+    const a = areaNow();
+    for (const r of rows) {
+      const s = r.s, prev = prevOf(s);
+      const others = FUELS.map((f, i) => i !== S.fuel && s.p[i][S.self] > 0 ? `${f} ${num(s.p[i][S.self], 3)}` : '').filter(Boolean).join(' · ');
+      body.append(el('tr', {style: {cursor: 'pointer'}, onclick: () => openStation(s.id)},
+        el('td', {class: 'faint'}, r.rank || el('span', {class: 'tag warn', title: 'Prezzo più vecchio del limite: non confermato'}, 'vecchio')),
+        el('td', {}, el('b', {}, s.brand), el('div', {class: 'faint', style: {fontSize: '12px'}}, s.name)),
+        el('td', {}, s.town, el('div', {class: 'faint', style: {fontSize: '12px'}}, s.address)),
+        el('td', {}, num(s.km, 1) + ' km'),
+        el('td', {class: 'price'}, el('b', {style: {color: colorFor(r.price, a.min, a.max)}}, price3(r.price)),
+          prev > 0 ? el('span', {class: 'delta ' + (r.price > prev ? 'up' : 'down'), style: {fontSize: '12px', marginLeft: '6px'}}, (r.price > prev ? '▲' : '▼')) : ''),
+        el('td', {class: 'price'}, price3(r.real)),
+        el('td', {}, el('span', {class: 'age', style: {background: ageColor(r.age)}}), kit.ago(r.age)),
+        el('td', {class: 'faint', style: {fontSize: '12px'}}, others || '–')));
+    }
+    if (!rows.length) body.append(el('tr', {}, el('td', {colspan: 8, class: 'empty'}, 'Nessun distributore')));
+  });
+  drawTable();
+}
+$('#q').addEventListener('input', () => drawTable && drawTable());
+$('#agefilter').addEventListener('change', () => drawTable && drawTable());
+$('#csv').onclick = async () => {
+  const r = await kit.try(() => kit.api('/api/export.csv', {raw: true}));
+  if (r) kit.download('pieno-' + S.state.status.extraction + '.csv', await r.text(), 'text/csv');
+};
+
+/* ---------------------------------------------------------- station */
+async function openStation(id) {
+  const s = S.stations.find(x => x.id === id);
+  if (!s) return;
+  const card = $('#modalcard');
+  card.innerHTML = '';
+  const close = el('button', {class: 'btn sm', onclick: () => $('#modal').classList.remove('on')}, 'Chiudi');
+  card.append(el('div', {class: 'row'}, el('div', {class: 'big grow'}, s.brand), close),
+    el('div', {class: 'dim'}, `${s.name} · ${s.address}, ${s.town} (${s.prov}) · ${num(s.km, 1)} km`));
+  const t = el('table', {style: {marginTop: '12px'}}, el('thead', {}, el('tr', {}, el('th', {}, 'Carburante'), el('th', {}, 'Self'), el('th', {}, 'Servito'), el('th', {}, 'Aggiornato'))));
+  const tb = el('tbody');
+  FUELS.forEach((f, i) => { if (s.p[i][0] > 0 || s.p[i][1] > 0) tb.append(el('tr', {}, el('td', {}, f), el('td', {class: 'price'}, el('b', {}, price3(s.p[i][1]))), el('td', {class: 'price'}, price3(s.p[i][0])), el('td', {}, kit.ago(ageOf(s.p[i][3] || s.p[i][2]))))); });
+  for (const x of s.x) tb.append(el('tr', {class: 'dim'}, el('td', {}, x[0]), el('td', {class: 'price'}, x[2] ? price3(x[1]) : ''), el('td', {class: 'price'}, x[2] ? '' : price3(x[1])), el('td', {}, '')));
+  t.append(tb);
+  const chart = el('div', {style: {marginTop: '14px'}});
+  card.append(t, el('h3', {style: {marginTop: '18px'}}, 'Storico ' + FUELS[S.fuel] + ' ' + (S.self ? 'self' : 'servito')), chart,
+    el('div', {class: 'row', style: {marginTop: '12px'}}, el('a', {class: 'btn', target: '_blank', rel: 'noopener', href: `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lon}`}, '➜ Indicazioni')));
+  $('#modal').classList.add('on');
+  const text = await kit.try(() => kit.api('/api/changes?id=' + id));
+  const pts = (text || '').trim().split('\n').filter(Boolean).map(l => l.split(',').map(Number))
+    .filter(x => x[1] === S.fuel && x[2] === S.self).map(x => [x[0] * 86400, x[3]]);
+  if (pts.length === 1) pts.push([pts[0][0] + 86400, pts[0][1]]);
+  kit.chart(chart, [{points: pts, color: '#18c47f', label: 'prezzo', fill: true}], {height: 180, yfmt: v => num(v, 3), empty: 'Lo storico di questo distributore comincia dal prossimo aggiornamento.'});
+}
+window.openStation = openStation;
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') e.target.classList.remove('on'); });
+
+/* ------------------------------------------------------------ trend */
+async function renderTrend() {
+  const key = S.fuel + '-' + S.self;
+  if (!S.history[key]) S.history[key] = await kit.try(() => kit.api(`/api/history?fuel=${S.fuel}&self=${S.self}`)) || [];
+  const h = S.history[key];
+  histogram();
+  const series = i => h.map(d => [d[0] * 86400, d[i]]);
+  if (h.length < 2) {
+    $('#trendchart').innerHTML = '';
+    $('#trendchart').append(el('div', {class: 'empty'}, h.length ? 'Primo giorno registrato. La linea compare dal secondo aggiornamento: l\'orologio aggiunge un giorno ogni mattina in cui Pieno viene aperto.' : 'Ancora nessun dato.'));
+  } else kit.chart($('#trendchart'), [
+    {points: series(3), color: '#ff5d6c', label: 'massimo', dash: '4 4', width: 1.6},
+    {points: series(2), color: '#ffb547', label: 'mediana', width: 2.4},
+    {points: series(1), color: '#18c47f', label: 'minimo', fill: true}],
+    {height: 300, yfmt: v => num(v, 3), empty: 'Lo storico parte dal primo aggiornamento: torna domani per vedere la prima linea.'});
+  const k = $('#trendkpis');
+  k.innerHTML = '';
+  const last = h[h.length - 1], card = (v, t, cls) => el('div', {class: 'card kpi'}, el('b', {class: cls || ''}, v), el('span', {}, t));
+  if (!last) { k.append(card('–', 'nessun dato')); return; }
+  const back = n => h[Math.max(0, h.length - 1 - n)];
+  const pct = (a, b) => b ? ((a - b) / b * 100) : 0;
+  const d7 = pct(last[2], back(7)[2]), d30 = pct(last[2], back(30)[2]);
+  const fmt = v => (v > 0 ? '+' : '') + num(v, 1) + '%';
+  const lowest = h.reduce((m, d) => d[1] < m[1] ? d : m, h[0]);
+  k.append(card(price3(last[2]), 'mediana oggi'), card(fmt(d7), 'in 7 giorni', d7 > 0 ? 'bad' : d7 < 0 ? 'good' : ''),
+    card(fmt(d30), 'in 30 giorni', d30 > 0 ? 'bad' : d30 < 0 ? 'good' : ''),
+    card(price3(lowest[1]), 'minimo registrato, ' + kit.date(lowest[0] * 86400)));
+}
+
+/* How many stations sell at each price today (5 thousandths per bar). */
+function histogram() {
+  const host = $('#histo'), prices = S.stations.filter(s => fresh(s)).map(s => priceOf(s));
+  host.innerHTML = '';
+  if (prices.length < 2) { host.append(el('div', {class: 'empty'}, '–')); return; }
+  const lo = Math.floor(Math.min(...prices) * 200) / 200, hi = Math.ceil(Math.max(...prices) * 200) / 200 + 0.005;
+  const bins = Math.max(1, Math.round((hi - lo) / 0.005)), counts = new Array(bins).fill(0);
+  for (const p of prices) counts[Math.min(bins - 1, Math.floor((p - lo) / 0.005 + 1e-6))]++;
+  const top = Math.max(...counts), a = areaNow();
+  const row = el('div', {style: {display: 'flex', alignItems: 'flex-end', gap: '3px', height: '150px'}});
+  counts.forEach((c, i) => {
+    const from = lo + i * 0.005;
+    row.append(el('div', {title: `${price3(from)}–${price3(from + 0.005)}: ${c} distributori`, style: {flex: 1, minWidth: '4px',
+      height: (c ? Math.max(4, c / top * 100) : 1) + '%', borderRadius: '4px 4px 0 0',
+      background: c ? colorFor(from, a.min, a.max) : 'var(--line)'}}));
+  });
+  host.append(row, el('div', {class: 'row', style: {justifyContent: 'space-between', marginTop: '6px'}},
+    el('span', {class: 'faint'}, price3(lo)), el('span', {class: 'dim'}, `${prices.length} prezzi confermati · i più bassi a sinistra`), el('span', {class: 'faint'}, price3(hi))));
+}
+
+/* ------------------------------------------------------------- calc */
+function renderCalc() {
+  const set = S.settings;
+  $('#c-litres').value = set.litres; $('#c-kpl').value = set.km_per_litre;
+  const litres = +$('#c-litres').value || set.litres, kpl = +$('#c-kpl').value || set.km_per_litre;
+  const tmp = Object.assign({}, set, {litres, km_per_litre: kpl});
+  const list = S.stations.filter(s => fresh(s)).map(s => ({s, fill: priceOf(s) * litres, trip: (realOf(s, S.fuel, S.self, tmp) - priceOf(s)) * litres}))
+    .map(r => Object.assign(r, {total: r.fill + r.trip})).sort((a, b) => a.total - b.total);
+  const a = areaNow(), median = a.median * litres, body = $('#calcbody');
+  body.innerHTML = '';
+  for (const r of list.slice(0, 25)) body.append(el('tr', {},
+    el('td', {}, el('b', {}, r.s.brand), ' ', el('span', {class: 'faint'}, r.s.town)), el('td', {}, num(r.s.km, 1) + ' km'),
+    el('td', {}, price3(priceOf(r.s))), el('td', {}, euro(r.fill)), el('td', {class: 'dim'}, '+' + euro(r.trip)),
+    el('td', {}, el('b', {}, euro(r.total))), el('td', {class: r.total < median ? 'good' : 'bad'}, (r.total < median ? '−' : '+') + euro(Math.abs(median - r.total)))));
+  const sv = $('#savings');
+  sv.innerHTML = '';
+  if (list.length) {
+    const near = S.stations.filter(s => fresh(s)).sort((x, y) => x.km - y.km)[0];
+    const nearTotal = priceOf(near) * litres + (realOf(near, S.fuel, S.self, tmp) - priceOf(near)) * litres;
+    const best = list[0];
+    const kpi = (v, t, cls) => el('div', {class: 'kpi', style: {marginBottom: '12px'}}, el('b', {class: cls || ''}, v), el('span', {}, t));
+    const vsMedian = median - best.total;
+    sv.append(kpi(euro(best.total), `il pieno migliore: ${best.s.brand}, ${best.s.town} (${num(best.s.km, 1)} km)`, 'good'),
+      near.id === best.s.id ? kpi('✓', 'il distributore più vicino è già il più conveniente')
+                            : kpi(euro(nearTotal - best.total), `in meno rispetto al più vicino (${near.brand}, ${num(near.km, 1)} km)`),
+      kpi(euro(vsMedian), 'in meno rispetto a un pieno al prezzo mediano della zona', vsMedian > 0 ? 'good' : ''),
+      kpi(euro(Math.max(0, vsMedian) * 26), 'in un anno, con un pieno ogni due settimane'));
+  }
+  const be = $('#breakeven');
+  be.innerHTML = '';
+  const p = a.median || 0;
+  if (p) {
+    const perKm = 2 * 1.3 * p / kpl;  /* € per km of distance (there and back) */
+    be.append(el('p', {}, el('b', {}, `Ogni km di distanza costa ${euro(perKm)}`), ` (andata e ritorno). Un distributore 5 km più lontano conviene solo se costa almeno ${num(perKm * 5 / litres * 1000, 0)} millesimi al litro in meno.`));
+  }
+}
+['#c-litres', '#c-kpl'].forEach(id => $(id).addEventListener('input', () => {
+  const l = +$('#c-litres').value, k = +$('#c-kpl').value;
+  if (l > 0 && k > 0) { const keep = S.settings; S.settings = Object.assign({}, keep, {litres: l, km_per_litre: k}); renderCalc(); S.settings = keep; $('#c-litres').value = l; $('#c-kpl').value = k; }
+}));
+$('#c-save').onclick = () => saveSettings({litres: +$('#c-litres').value, km_per_litre: +$('#c-kpl').value});
+
+/* --------------------------------------------------------- settings */
+function renderSettings() {
+  const set = S.settings;
+  if (!$('#s-fuel').options.length) FUELS.forEach((f, i) => $('#s-fuel').append(el('option', {value: i}, f)));
+  if (document.activeElement && document.activeElement.closest('#v-set')) return;
+  $('#s-fuel').value = set.fuel; $('#s-self').value = set.self ? 1 : 0; $('#s-real').value = set.real_cost ? 1 : 0;
+  $('#s-target').value = set.target || 0; $('#s-age').value = set.max_age_days; $('#s-radius').value = set.radius_km; $('#s-rlabel').textContent = set.radius_km + ' km';
+  $('#s-where').textContent = `Centro: ${set.place || 'punto scelto'} (${num(set.lat, 4)}, ${num(set.lon, 4)})`;
+}
+$('#s-radius').addEventListener('input', e => $('#s-rlabel').textContent = e.target.value + ' km');
+$('#s-radius').addEventListener('change', e => saveSettings({radius_km: +e.target.value}));
+$('#s-save').onclick = () => saveSettings({fuel: +$('#s-fuel').value, self: +$('#s-self').value, real_cost: $('#s-real').value === '1', target: +$('#s-target').value || 0, max_age_days: +$('#s-age').value})
+  .then(() => { S.fuel = S.settings.fuel; S.self = S.settings.self; renderAll(); });
+let searchTimer = null;
+$('#s-search').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (q.length < 3) { $('#s-results').innerHTML = ''; return; }
+  searchTimer = setTimeout(async () => {
+    try {
+      const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=it&q=' + encodeURIComponent(q));
+      const list = await r.json(), box = $('#s-results');
+      box.innerHTML = '';
+      for (const x of list) box.append(el('button', {class: 'btn sm', onclick: () => {
+        box.innerHTML = ''; $('#s-search').value = '';
+        saveSettings({lat: +(+x.lat).toFixed(5), lon: +(+x.lon).toFixed(5), place: x.display_name.split(',')[0]});
+      }}, x.display_name));
+      if (!list.length) box.append(el('span', {class: 'faint'}, 'Nessun risultato'));
+    } catch (err) { $('#s-results').textContent = 'Ricerca non disponibile (serve internet sul PC).'; }
+  }, 400);
+});
+
+async function saveSettings(change) {
+  const body = Object.assign({}, S.settings, change);
+  const set = await kit.try(() => kit.api('/api/settings', {body}), 'Salvato sull\'orologio');
+  if (set) { S.settings = set.settings; renderAll(); if (S.map) S.map.setView([set.settings.lat, set.settings.lon]); }
+}
+
+$('#refresh').onclick = () => kit.try(() => kit.api('/api/refresh', {body: {}}), 'Aggiornamento avviato');
+
+kit.views(id => {
+  if (id === 'v-map') setTimeout(() => { renderMap(); S.map && S.map.invalidateSize(); }, 30);
+  if (id === 'v-trend' && S.state) renderTrend();
+});
+kit.start({onReady: () => kit.poll(loadState, 4000)});
+</script>
+</body>
+</html>

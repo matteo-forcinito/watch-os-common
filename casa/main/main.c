@@ -1,6 +1,7 @@
 /* Casa external app: boot order as the other apps, then Home Assistant and the UI. */
 #include "casa.h"
 
+#include "appkit.h"
 #include "core/app.h"
 #include "core/clock.h"
 #include "core/devcon.h"
@@ -29,6 +30,7 @@ void app_main(void)
         ESP_LOGW("casa", "Flash storage unavailable: %s", esp_err_to_name(storage));
     ESP_ERROR_CHECK(lv_port_init());
     clock_init(); /* "updated 5 min ago" uses Home Assistant's time stamps */
+    appkit_alarms_prepare(); /* the OS alarms keep ringing in the app */
     ESP_ERROR_CHECK(wifi_service_init());
     esp_err_t error = casa_start();
     if (error != ESP_OK)
@@ -43,6 +45,7 @@ void app_main(void)
     lv_port_unlock();
     ESP_ERROR_CHECK(power_init());
     app_manager_init();
+    appkit_alarms_start();
     devcon_start(); /* development console: QA builds only, a no-op otherwise */
     sys_heap_log("Casa ready");
 }
