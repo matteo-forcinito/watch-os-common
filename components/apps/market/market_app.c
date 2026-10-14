@@ -7,6 +7,12 @@
 #include "hardware/sdcard.h"
 #include "ui/ui.h"
 
+#if CONFIG_WATCH_DEV_CONSOLE
+#include "core/sys.h"
+#include "hardware/audio.h"
+#include "services/sound.h"
+#include <math.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -225,7 +231,7 @@ static void download(lv_event_t *event)
     else if (market_install(ui->selected.id) != ESP_OK)
     {
         ui->open_after_download = false;
-        ui_toast("Serve una microSD con spazio libero");
+        ui_toast(sdcard_is_mounted() ? "Serve spazio libero sulla microSD" : "Installazione non avviata");
         return;
     }
     if (market_busy()) ui_border_progress_set(ui->border, 0, 100);
@@ -355,8 +361,8 @@ static void show_catalog(market_ui_t *ui)
     market_status_t state;
     market_status(&state);
     lv_label_set_text(ui->status, state.message[0] != '\0' ? state.message : "App esterne dal tuo catalogo GitHub");
-    if (!board_info()->has_sdcard) ui_text(page, "Installazione senza SD in uno step successivo.", true);
-    else if (!sdcard_is_mounted()) ui_text(page, "Inserisci una microSD per scaricare le app.", true);
+    if (!sdcard_is_mounted())
+        ui_text(page, "Senza microSD c'è posto per una app alla volta: installarne un'altra la sostituisce.", true);
     if (market_development()) ui_text(page, "Il canale dev include versioni di prova.", true);
 
     int count = market_count();
@@ -445,7 +451,9 @@ static void show_information(market_ui_t *ui)
                  entry->installed_version[0] ? entry->installed_version : "versione non indicata");
         ui_text(page, text, true);
     }
-    ui_text(page, "L'app funziona dal suo firmware. Il download viene salvato sulla microSD.", true);
+    ui_text(page, sdcard_is_mounted() ? "L'app funziona dal suo firmware. Il download viene salvato sulla microSD." :
+                                        "L'app funziona dal suo firmware, scritto direttamente nella memoria app. "
+                                        "Sostituisce l'app installata prima.", true);
     if (strcmp(entry->channel, "dev") == 0)
         ui_text(page, "Canale sviluppo: questa versione è ancora in verifica.", true);
     ui->status = ui_text(page, "", true);
@@ -663,9 +671,47 @@ const app_t market_app = {
 };
 
 #if CONFIG_WATCH_DEV_CONSOLE
+static void tone_task(void *arg)
+{
+    (void)arg;
+    esp_err_t err = audio_start(22050, 1);
+    if (err == ESP_OK) err = audio_set_volume(90);
+    int16_t *samples = malloc(441 * sizeof(int16_t));
+    for (int block = 0; err == ESP_OK && samples != NULL && block < 150; block++)
+    {
+        for (int i = 0; i < 441; i++)
+            samples[i] = (int16_t)(14000.0f * sinf(2.0f * 3.14159265f * 880.0f * (block * 441 + i) / 22050.0f));
+        err = audio_write(samples, 441);
+    }
+    free(samples);
+    audio_stop();
+    printf("@TONE %s\n", esp_err_to_name(err));
+    vTaskDelete(NULL);
+}
+
 /* Keep application QA commands above the core/services dependency boundary. */
 bool devcon_app_command(char *line)
 {
+    if (strcmp(line, "beep") == 0)
+    {
+        sound_notification();   /* speaker check on a new board */
+        printf("@OK beep\n");
+        return true;
+    }
+    if (strcmp(line, "sd off") == 0 || strcmp(line, "sd on") == 0)
+    {
+        /* Exercise the card-less paths (market straight into the slot) on a board with a card. */
+        if (line[4] == 'f') sdcard_unmount();
+        else sdcard_mount();
+        printf("@SD mounted=%d\n", sdcard_is_mounted());
+        return true;
+    }
+    if (strcmp(line, "tone") == 0)
+    {
+        /* 3 s at 880 Hz, loud: time to probe the PA pin while it plays. */
+        printf(sys_task_create(tone_task, "tone", 4096, NULL, 4, 0) ? "@OK tone\n" : "@ERR tone\n");
+        return true;
+    }
     if (strncmp(line, "market", 6) != 0 || (line[6] != 0 && line[6] != ' ')) return false;
     char *cmd = strtok(line, " ");
     if (strcmp(cmd, "market") == 0)

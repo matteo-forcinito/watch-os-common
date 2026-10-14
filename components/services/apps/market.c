@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "freertos/FreeRTOS.h"
 #include "nvs.h"
 #include "psa/crypto.h"
@@ -386,21 +387,28 @@ done:
     return err;
 }
 
-static esp_err_t check_image(const char *path, const market_entry_t *entry)
+#define IMAGE_HEADER 288
+
+static esp_err_t check_header(const uint8_t *header, size_t length, const market_entry_t *entry)
 {
-    uint8_t header[288];
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) return ESP_FAIL;
-    size_t length = fread(header, 1, sizeof(header), file);
-    fclose(file);
     uint32_t descriptor;
     memcpy(&descriptor, header + 32, sizeof(descriptor));
-    if (length != sizeof(header) || header[0] != 0xE9 || header[1] < 1 || header[1] > 16 ||
+    if (length != IMAGE_HEADER || header[0] != 0xE9 || header[1] < 1 || header[1] > 16 ||
         header[12] != 9 || header[13] != 0 || descriptor != 0xABCD5432 ||
         memchr(header + 48, 0, 32) == NULL || memchr(header + 80, 0, 32) == NULL ||
         strcmp((char *)header + 48, entry->version) != 0 || strcmp((char *)header + 80, entry->project) != 0)
         return ESP_ERR_INVALID_RESPONSE;
     return ESP_OK;
+}
+
+static esp_err_t check_image(const char *path, const market_entry_t *entry)
+{
+    uint8_t header[IMAGE_HEADER];
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return ESP_FAIL;
+    size_t length = fread(header, 1, sizeof(header), file);
+    fclose(file);
+    return check_header(header, length, entry);
 }
 
 static esp_err_t check_icon(const char *path)
@@ -548,9 +556,155 @@ static void refresh_installed_catalog(void)
     free(previous);
 }
 
+/*
+ * No card (AMOLED 1.75): the app goes straight into the app slot. Only one
+ * app fits there; installing another replaces it. The download is hashed while
+ * it streams and esp_ota_end() checks the image, so a broken download never
+ * becomes launchable. The slot is not touched until the first 288 bytes prove
+ * the image is the right app for this board. The icon goes to the flash disk.
+ */
+static void flash_icon_path(const char *id, char *out, size_t size)
+{
+    snprintf(out, size, STORAGE_FLASH_MOUNT "/apps/%s/icon.png", id);
+}
+
+static void drop_flash_icon(const char *id)
+{
+    if (!storage_flash_mounted() || id[0] == '\0' || !market_safe_id(id)) return;
+    char path[96];
+    flash_icon_path(id, path, sizeof(path));
+    unlink(path);
+    snprintf(path, sizeof(path), STORAGE_FLASH_MOUNT "/apps/%s", id);
+    rmdir(path);   /* only if empty: an app may keep its own files there */
+}
+
+static esp_err_t stream_to_slot(const market_entry_t *entry, const esp_partition_t *slot)
+{
+    connection_t *connection;
+    esp_err_t err = open_connection(entry->binary_url, &connection);
+    if (err != ESP_OK) return err;
+    int64_t length = esp_http_client_get_content_length(connection->client);
+    if (length > 0 && (uint64_t)length != entry->binary_size)
+    {
+        close_connection(connection);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    uint8_t *buffer = heap_caps_malloc(TRANSFER_CHUNK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    uint8_t *header = heap_caps_malloc(IMAGE_HEADER, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
+    esp_ota_handle_t ota = 0;
+    bool writing = false;
+    size_t used = 0;
+    err = ESP_FAIL;
+    if (buffer == NULL || header == NULL || psa_hash_setup(&hash, PSA_ALG_SHA_256) != PSA_SUCCESS) goto done;
+    while (!atomic_load(&s_cancel))
+    {
+        size_t available = entry->binary_size - used + 1;
+        int wanted = available < TRANSFER_CHUNK ? (int)available : TRANSFER_CHUNK;
+        int read = esp_http_client_read(connection->client, (char *)buffer, wanted);
+        if (read < 0) break;
+        if (read == 0)
+        {
+            if (used != entry->binary_size || !writing ||
+                !esp_http_client_is_complete_data_received(connection->client)) break;
+            uint8_t digest[32];
+            size_t digest_size = 0;
+            char hex[65];
+            if (psa_hash_finish(&hash, digest, sizeof(digest), &digest_size) != PSA_SUCCESS || digest_size != 32) break;
+            for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", digest[i]);
+            if (strcmp(hex, entry->binary_sha256) != 0) break;
+            status_set(MARKET_VERIFYING, 90, "Verifica compatibilità");
+            writing = false;
+            err = esp_ota_end(ota);
+            break;
+        }
+        if (used + read > entry->binary_size || psa_hash_update(&hash, buffer, read) != PSA_SUCCESS) break;
+        const uint8_t *data = buffer;
+        size_t rest = read;
+        if (!writing)
+        {
+            /* Collect the header first: the slot is erased only for a matching image. */
+            size_t take = IMAGE_HEADER - used < rest ? IMAGE_HEADER - used : rest;
+            memcpy(header + used, data, take);
+            used += take;
+            data += take;
+            rest -= take;
+            if (used < IMAGE_HEADER) continue;
+            err = check_header(header, IMAGE_HEADER, entry);
+            if (err != ESP_OK) break;
+            err = ESP_FAIL;
+            extapp_slot_forget();
+            if (esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &ota) != ESP_OK) break;
+            writing = true;
+            if (esp_ota_write(ota, header, IMAGE_HEADER) != ESP_OK) break;
+        }
+        if (rest > 0 && esp_ota_write(ota, data, rest) != ESP_OK) break;
+        used += rest;
+        status_set(MARKET_DOWNLOADING, (int)(used * 88 / entry->binary_size), "Scrittura diretta nella memoria app");
+    }
+done:
+    if (writing) esp_ota_abort(ota);
+    psa_hash_abort(&hash);
+    free(buffer);
+    free(header);
+    close_connection(connection);
+    return err;
+}
+
+static esp_err_t install_direct(const market_entry_t *entry)
+{
+    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    if (slot == NULL || entry->binary_size > slot->size) return ESP_ERR_INVALID_SIZE;
+    extapp_t previous;
+    bool had = extapp_slot_app(&previous);
+    esp_err_t err = stream_to_slot(entry, slot);
+    if (err != ESP_OK)
+    {
+        if (had) drop_flash_icon(previous.id);   /* the slot may now be half written */
+        refresh_installed_catalog();
+        return err;
+    }
+    if (had && strcmp(previous.id, entry->id) != 0) drop_flash_icon(previous.id);
+    char icon[64] = "";
+    if (storage_flash_mounted() && !atomic_load(&s_cancel))
+    {
+        char folder[64], temporary[96], path[96];
+        snprintf(folder, sizeof(folder), STORAGE_FLASH_MOUNT "/apps/%s", entry->id);
+        snprintf(temporary, sizeof(temporary), "%s/.market-download", folder);
+        flash_icon_path(entry->id, path, sizeof(path));
+        if ((mkdir(STORAGE_FLASH_MOUNT "/apps", 0775) == 0 || errno == EEXIST) &&
+            (mkdir(folder, 0775) == 0 || errno == EEXIST) &&
+            download_file(entry->icon_url, temporary, entry->icon_size, entry->icon_sha256, 90, 8) == ESP_OK)
+        {
+            if (check_icon(temporary) == ESP_OK && (unlink(path), rename(temporary, path) == 0))
+                snprintf(icon, sizeof(icon), "F:/apps/%s/icon.png", entry->id);
+            else unlink(temporary);
+        }
+    }
+    status_set(MARKET_PUBLISHING, 98, "Aggiunta al launcher");
+    err = extapp_slot_note(entry->id, entry->name, entry->version, icon);
+    refresh_installed_catalog();
+    return err;
+}
+
+static esp_err_t remove_direct(const market_entry_t *entry)
+{
+    extapp_t current;
+    if (!extapp_slot_app(&current) || strcmp(current.id, entry->id) != 0) return ESP_ERR_NOT_FOUND;
+    status_set(MARKET_PUBLISHING, 0, "Rimozione dell'app");
+    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    extapp_slot_forget();
+    /* Erasing the first sector is enough: the slot no longer holds a valid image. */
+    esp_err_t err = esp_partition_erase_range(slot, 0, slot->erase_size);
+    drop_flash_icon(entry->id);
+    refresh_installed_catalog();
+    if (err == ESP_OK) status_set(MARKET_DONE, 100, "App eliminata.");
+    return err;
+}
+
 static esp_err_t remove_entry(const market_entry_t *entry)
 {
-    if (!sdcard_is_mounted()) return ESP_ERR_INVALID_STATE;
+    if (!sdcard_is_mounted()) return remove_direct(entry);
     char folder[80];
     snprintf(folder, sizeof(folder), SDCARD_MOUNT "/apps/%s", entry->id);
     status_set(MARKET_PUBLISHING, 0, "Rimozione dell'app");
@@ -581,7 +735,7 @@ static esp_err_t remove_entry(const market_entry_t *entry)
 
 static esp_err_t install_entry(const market_entry_t *entry)
 {
-    if (!sdcard_is_mounted()) return ESP_ERR_INVALID_STATE;
+    if (!sdcard_is_mounted()) return install_direct(entry);
     const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
     if (slot == NULL || entry->binary_size > slot->size) return ESP_ERR_INVALID_SIZE;
     uint32_t total, available;
@@ -626,19 +780,7 @@ static esp_err_t install_entry(const market_entry_t *entry)
     if (err == ESP_OK)
     {
         /* Workers own catalog mutations. Readers copy under the same lock. */
-        market_entry_t *copy = heap_caps_malloc(MARKET_MAX_APPS * sizeof(*copy), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (copy != NULL)
-        {
-            int count = s_count;
-            memcpy(copy, s_entries, count * sizeof(*copy));
-            installed_entries(copy, count);
-            portENTER_CRITICAL(&s_lock);
-            market_entry_t *previous = s_entries;
-            s_entries = copy;
-            s_status.revision++;
-            portEXIT_CRITICAL(&s_lock);
-            free(previous);
-        }
+        refresh_installed_catalog();
     }
     return err;
 }
@@ -658,9 +800,11 @@ static void worker(void *arg)
     if (atomic_load(&s_cancel)) status_set(MARKET_CANCELLED, 0, "Download annullato. App precedente conservata.");
     else if (job->remove && err == ESP_OK) { /* remove_entry published its outcome. */ }
     else if (err == ESP_OK) status_set(job->refresh ? MARKET_READY : MARKET_DONE, 100,
-                                      job->refresh ? "Catalogo pronto" : "App salvata. Puoi aprirla dalla libreria.");
-    else if (!sdcard_is_mounted() && !job->refresh) status_set(MARKET_FAILED, 0, "Inserisci una microSD prima di installare.");
-    else if (err == ESP_ERR_NO_MEM) status_set(MARKET_FAILED, 0, "Memoria o spazio SD insufficienti.");
+                                      job->refresh ? "Catalogo pronto" :
+                                      sdcard_is_mounted() ? "App salvata. Puoi aprirla dalla libreria." :
+                                                            "App installata. La trovi nel launcher.");
+    else if (err == ESP_ERR_INVALID_SIZE) status_set(MARKET_FAILED, 0, "App troppo grande per questo dispositivo.");
+    else if (err == ESP_ERR_NO_MEM) status_set(MARKET_FAILED, 0, "Memoria o spazio insufficienti.");
     else status_set(MARKET_FAILED, 0, job->remove ? "Rimozione non completata. Riprova." :
                                                 "Download non completato. Controlla rete e riprova.");
     power_keep_screen_on(false);
@@ -712,7 +856,7 @@ esp_err_t market_refresh(void)
 
 esp_err_t market_install(const char *id)
 {
-    if (!sdcard_is_mounted() || !market_safe_id(id)) return ESP_ERR_INVALID_STATE;
+    if (!market_safe_id(id)) return ESP_ERR_INVALID_STATE;
     job_t *job = calloc(1, sizeof(*job));
     if (job == NULL) return ESP_ERR_NO_MEM;
     bool found = false;
@@ -734,7 +878,7 @@ esp_err_t market_install(const char *id)
 
 esp_err_t market_remove(const char *id)
 {
-    if (!sdcard_is_mounted() || !market_safe_id(id)) return ESP_ERR_INVALID_STATE;
+    if (!market_safe_id(id)) return ESP_ERR_INVALID_STATE;
     job_t *job = calloc(1, sizeof(*job));
     if (job == NULL) return ESP_ERR_NO_MEM;
     for (int i = 0; market_entry(i, &job->entry); i++)

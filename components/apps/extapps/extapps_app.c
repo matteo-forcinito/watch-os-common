@@ -13,12 +13,15 @@
 #include <stdlib.h>
 
 /*
- * Start an external app (opened from the launcher's "Scheda SD" section,
- * arg = extapp_t * allocated by the caller, freed here).
+ * Detail page of an external app (opened from the launcher, arg = extapp_t *
+ * allocated by the caller, freed here). It always shows first: name, version,
+ * state, and one button.
  *
- *   already in the app slot  -> restarts into it at once
+ *   already in the app slot  -> "Apri": restarts into it
  *   new or changed           -> "Installa e apri": copies it with a progress
  *                               bar, then restarts into it
+ *
+ * extapps.open (the market's "Apri") starts at once instead.
  *
  * The app comes back to the launcher with BOOT (see components/extapp_sdk;
  * old Arduino apps do it themselves).
@@ -161,8 +164,19 @@ static void run_create_impl(lv_obj_t *screen, void *arg, bool auto_start)
     lv_obj_set_style_text_font(name, ui_font_headline, 0);
 
     bool cached = extapp_is_cached(&s_run->app);
-    char info[64];
-    snprintf(info, sizeof(info), "%u KB  ·  %s", (unsigned)(s_run->app.size / 1024), cached ? "pronta" : "da installare");
+    char info[96];
+    if (s_run->app.in_slot)
+    {
+        /* Slot apps have no file: the size would be the whole slot. */
+        snprintf(info, sizeof(info), "%s%s%s", s_run->app.version[0] != '\0' ? "v" : "", s_run->app.version,
+                 s_run->app.version[0] != '\0' ? "  ·  pronta" : "pronta");
+    }
+    else
+    {
+        snprintf(info, sizeof(info), "%s%s%s%u KB  ·  %s", s_run->app.version[0] != '\0' ? "v" : "", s_run->app.version,
+                 s_run->app.version[0] != '\0' ? "  ·  " : "", (unsigned)(s_run->app.size / 1024),
+                 cached ? "pronta" : "da installare");
+    }
     lv_obj_t *size = lv_label_create(screen);
     lv_label_set_text(size, info);
     lv_obj_set_style_text_color(size, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
@@ -194,9 +208,9 @@ static void run_create_impl(lv_obj_t *screen, void *arg, bool auto_start)
         }
     }
 
-    if (cached || auto_start)
+    if (auto_start)
     {
-        start();   /* nothing to copy: open right away */
+        start();   /* the market's "Apri": the user already chose */
     }
 }
 

@@ -237,7 +237,8 @@ lv_obj_t *ui_icon_bubble(lv_obj_t *parent, const char *icon, uint32_t color, int
         return bubble;
     }
 
-    const void *image_src = (strncmp(icon, "S:", 2) == 0) ? ui_image_src(icon) : NULL;
+    bool file_icon = strncmp(icon, "S:", 2) == 0 || strncmp(icon, "F:", 2) == 0;
+    const void *image_src = file_icon ? ui_image_src(icon) : NULL;
 
     if (image_src != NULL)
     {
@@ -250,7 +251,7 @@ lv_obj_t *ui_icon_bubble(lv_obj_t *parent, const char *icon, uint32_t color, int
         lv_obj_set_style_clip_corner(bubble, true, 0);
         lv_obj_set_style_bg_opa(bubble, LV_OPA_TRANSP, 0);
     }
-    else if (strncmp(icon, "S:", 2) == 0)
+    else if (file_icon)
     {
         lv_obj_t *label = lv_label_create(bubble);   /* unreadable image: generic symbol */
         lv_label_set_text(label, LV_SYMBOL_DIRECTORY);

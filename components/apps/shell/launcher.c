@@ -14,7 +14,8 @@
  *     App                     built-in apps (from the registry)
  *     ( ♪ )  ( ⏰ )  ( ☁ )
  *     Radio  Sveglie Meteo
- *     Scheda SD               external apps found in /sdcard/apps, with their icons
+ *     App esterne             external apps found in /sdcard/apps, with their icons
+ *                             (no card: the one app in the app slot)
  *     ( 🖼 )  ( 🖼 )
  *
  * The SD section is rebuilt every time the launcher tile is shown, so a card

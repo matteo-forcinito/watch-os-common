@@ -16,6 +16,11 @@
  * are remembered), so it starts in about a second.
  *
  * Same layout as the Arduino launcher, so the old apps keep working.
+ *
+ * Without a card (AMOLED 1.75, or a card removed) the market writes an app
+ * straight into the app slot and notes its name, version and icon here: the
+ * scan then lists that one app ("in_slot"), and launching it only boots the
+ * slot. Nothing is kept on a card.
  */
 
 #include <stdbool.h>
@@ -34,6 +39,7 @@ typedef struct
     char icon[EXTAPP_PATH_MAX];   /* "S:/apps/x/icon.png" for LVGL, "" if none */
     size_t size;
     char version[32];
+    bool in_slot;                 /* lives only in the app slot (no file to copy) */
 } extapp_t;
 
 int extapp_scan(extapp_t *out, int max);
@@ -52,6 +58,14 @@ esp_err_t extapp_launch(const extapp_t *app, void (*progress)(int percent, void 
 
 /* The app slot is being overwritten (e.g. firmware update): no app is cached any more. */
 void extapp_forget_cache(void);
+
+/* An app was written straight into the app slot: remember what it is.
+ * icon: LVGL path ("F:/apps/x/icon.png") or "". */
+esp_err_t extapp_slot_note(const char *id, const char *name, const char *version, const char *icon);
+/* The slot app was removed (or replaced by something else). */
+void extapp_slot_forget(void);
+/* The app currently in the app slot, if the slot holds one (not an OS image). */
+bool extapp_slot_app(extapp_t *out);
 
 /* Error text of the last failed launch. */
 const char *extapp_last_error(void);

@@ -5,6 +5,7 @@
 #include "hardware/sdcard.h"
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_app_format.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -13,7 +14,9 @@
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -28,6 +31,16 @@ typedef struct
     uint32_t size;
     int64_t mtime;
 } cache_t;
+
+/* What the market wrote straight into the app slot (boards without a card). */
+typedef struct
+{
+    char id[32];
+    char name[32];
+    char version[32];
+    char project[32];
+    char icon[96];
+} slot_note_t;
 
 static char s_error[48] = "";
 
@@ -158,6 +171,93 @@ esp_err_t extapp_upload_manifest(const char *folder, const char *binary_name)
     return ESP_OK;
 }
 
+bool extapp_slot_app(extapp_t *out)
+{
+    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    esp_app_desc_t desc;
+    if (slot == NULL || esp_ota_get_partition_description(slot, &desc) != ESP_OK)
+    {
+        return false;
+    }
+    /* The other OS image (kept for rollback or a pending update) is not an app. */
+    if (strncmp(desc.project_name, esp_app_get_description()->project_name, sizeof(desc.project_name)) == 0)
+    {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    out->in_slot = true;
+    out->size = slot->size;
+    snprintf(out->bin, sizeof(out->bin), "slot:%s", slot->label);
+    slot_note_t note = {0};
+    size_t size = sizeof(note);
+    nvs_handle_t nvs;
+    bool noted = false;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK)
+    {
+        noted = nvs_get_blob(nvs, "slotapp", &note, &size) == ESP_OK && size == sizeof(note) &&
+                strncmp(note.project, desc.project_name, sizeof(note.project)) == 0;
+        nvs_close(nvs);
+    }
+    if (noted)
+    {
+        snprintf(out->id, sizeof(out->id), "%s", note.id);
+        snprintf(out->name, sizeof(out->name), "%s", note.name);
+        snprintf(out->version, sizeof(out->version), "%s", note.version);
+        snprintf(out->icon, sizeof(out->icon), "%s", note.icon);
+    }
+    else
+    {
+        /* Flashed by hand: the image's own project name, capitalised. */
+        snprintf(out->id, sizeof(out->id), "%.31s", desc.project_name);
+        out->id[0] = (char)toupper((unsigned char)out->id[0]);
+        snprintf(out->name, sizeof(out->name), "%s", out->id);
+        snprintf(out->version, sizeof(out->version), "%.31s", desc.version);
+    }
+    return true;
+}
+
+esp_err_t extapp_slot_note(const char *id, const char *name, const char *version, const char *icon)
+{
+    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    esp_app_desc_t desc;
+    if (slot == NULL || esp_ota_get_partition_description(slot, &desc) != ESP_OK)
+    {
+        return ESP_ERR_NOT_FOUND;
+    }
+    slot_note_t note = {0};
+    snprintf(note.id, sizeof(note.id), "%s", id);
+    snprintf(note.name, sizeof(note.name), "%s", name);
+    snprintf(note.version, sizeof(note.version), "%s", version);
+    snprintf(note.project, sizeof(note.project), "%.31s", desc.project_name);
+    snprintf(note.icon, sizeof(note.icon), "%s", icon != NULL ? icon : "");
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK)
+    {
+        return err;
+    }
+    err = nvs_set_blob(nvs, "slotapp", &note, sizeof(note));
+    if (err == ESP_OK)
+    {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    return err;
+}
+
+void extapp_slot_forget(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
+    {
+        nvs_erase_key(nvs, "slotapp");
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    /* The slot no longer holds the card app it was copied from either. */
+    extapp_forget_cache();
+}
+
 int extapp_scan(extapp_t *out, int max)
 {
     const char *root = storage_dir();
@@ -166,9 +266,15 @@ int extapp_scan(extapp_t *out, int max)
     DIR *dir = root != NULL ? opendir(apps_dir) : NULL;
     int count = 0;
 
+    /* No card: the app written straight into the slot is the library. */
+    if (!sdcard_is_mounted() && max > 0 && extapp_slot_app(&out[0]))
+    {
+        count = 1;
+    }
+
     if (dir == NULL)
     {
-        return 0;
+        return count;
     }
 
     struct dirent *entry;
@@ -206,6 +312,12 @@ int extapp_scan(extapp_t *out, int max)
         }
 
         app->size = (size_t)st.st_size;
+
+        /* The slot app may also have a folder (an icon kept in flash): list it once. */
+        if (count > 0 && out[0].in_slot && strcasecmp(out[0].id, app->id) == 0)
+        {
+            continue;
+        }
 
         char icon[EXTAPP_PATH_MAX + 16];
         if (app->icon[0] != '\0') snprintf(icon, sizeof(icon), "%s", app->icon);
@@ -251,6 +363,12 @@ static bool current_stamp(const extapp_t *app, cache_t *stamp)
 
 bool extapp_is_cached(const extapp_t *app)
 {
+    if (app->in_slot)
+    {
+        extapp_t current;
+        return extapp_slot_app(&current) && strcmp(current.id, app->id) == 0;
+    }
+
     cache_t now;
     cache_t saved = {0};
     size_t size = sizeof(saved);
@@ -338,6 +456,11 @@ static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int perc
         return fail("Nessuno slot app", ESP_ERR_NOT_FOUND);
     }
 
+    if (app->in_slot && !extapp_is_cached(app))
+    {
+        return fail("App non più presente: installala dal Market", ESP_ERR_NOT_FOUND);
+    }
+
     if (extapp_is_cached(app))
     {
         if (progress != NULL)
@@ -394,8 +517,8 @@ static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int perc
         return fail("Firmware per un altro chip", ESP_ERR_INVALID_VERSION);
     }
 
-    /* The slot is about to change: the old "already installed" note is wrong from now on. */
-    extapp_forget_cache();
+    /* The slot is about to change: the old "already installed" notes are wrong from now on. */
+    extapp_slot_forget();
 
     /* Sequential writes: each sector is erased just before it is written, so the
        progress bar moves from the start instead of waiting for a long erase. */

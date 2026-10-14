@@ -49,6 +49,10 @@ static void to_vfs_path(const char *lv_path, char *out, size_t size)
     {
         snprintf(out, size, "/sdcard%s", lv_path + 2);
     }
+    else if (strncmp(lv_path, "F:", 2) == 0)
+    {
+        snprintf(out, size, "/data%s", lv_path + 2);
+    }
     else
     {
         snprintf(out, size, "%s", lv_path);
@@ -188,6 +192,43 @@ fail:
     return NULL;
 }
 
+static lv_image_dsc_t *load_png_file(const char *path)
+{
+    char vfs[PATH_MAX_LEN + 8];
+    to_vfs_path(path, vfs, sizeof(vfs));
+    FILE *file = fopen(vfs, "rb");
+    if (file == NULL)
+    {
+        return NULL;
+    }
+    lv_image_dsc_t *dsc = NULL;
+    uint8_t *data = NULL;
+    long length = 0;
+    if (fseek(file, 0, SEEK_END) == 0 && (length = ftell(file)) > 24 && length <= 96 * 1024 &&
+        fseek(file, 0, SEEK_SET) == 0)
+    {
+        data = heap_caps_malloc((size_t)length, MALLOC_CAP_SPIRAM);
+        dsc = heap_caps_calloc(1, sizeof(*dsc), MALLOC_CAP_SPIRAM);
+    }
+    if (data == NULL || dsc == NULL || fread(data, 1, (size_t)length, file) != (size_t)length ||
+        memcmp(data, "\x89PNG", 4) != 0)
+    {
+        fclose(file);
+        free(data);
+        free(dsc);
+        return NULL;
+    }
+    fclose(file);
+    /* PNG bytes in a variable source: LVGL's PNG decoder reads the size from IHDR. */
+    dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
+    dsc->header.cf = LV_COLOR_FORMAT_RAW_ALPHA;
+    dsc->header.w = ((uint32_t)data[16] << 24) | ((uint32_t)data[17] << 16) | ((uint32_t)data[18] << 8) | data[19];
+    dsc->header.h = ((uint32_t)data[20] << 24) | ((uint32_t)data[21] << 16) | ((uint32_t)data[22] << 8) | data[23];
+    dsc->data = data;
+    dsc->data_size = (uint32_t)length;
+    return dsc;
+}
+
 const void *ui_image_src(const char *path)
 {
     if (path == NULL || path[0] == '\0')
@@ -207,7 +248,13 @@ const void *ui_image_src(const char *path)
     lv_image_dsc_t *dsc = NULL;
     bool ok = true;
 
-    if (ext != NULL && strcasecmp(ext, ".bin") == 0)
+    if (strncmp(path, "F:", 2) == 0)
+    {
+        /* Flash disk: LVGL has no drive for it, so the PNG is read into PSRAM once. */
+        dsc = load_png_file(path);
+        ok = dsc != NULL;
+    }
+    else if (ext != NULL && strcasecmp(ext, ".bin") == 0)
     {
         char vfs[PATH_MAX_LEN + 8];
         to_vfs_path(path, vfs, sizeof(vfs));

@@ -36,6 +36,7 @@ static const char *TAG = "wifi";
 
 static EventGroupHandle_t s_events = NULL;
 static SemaphoreHandle_t s_mutex = NULL;
+static SemaphoreHandle_t s_scan_mutex = NULL;   /* one scan at a time: a second one cancels the first */
 static esp_netif_t *s_sta = NULL;
 static esp_netif_t *s_ap = NULL;
 static esp_timer_handle_t s_off_timer = NULL;
@@ -489,6 +490,14 @@ static esp_err_t join_best_known(uint32_t timeout_ms)
         xSemaphoreTake(s_mutex, portMAX_DELAY);
     }
 
+    /* Another job joined while we scanned without the mutex (its connection
+     * also made our scan fail): joining again would disconnect it. */
+    if (wifi_is_connected())
+    {
+        free(found);
+        return ESP_OK;
+    }
+
     esp_err_t err = ESP_ERR_NOT_FOUND;
 
     /* Strongest first (scan order), only networks we know. */
@@ -519,6 +528,7 @@ esp_err_t wifi_service_init(void)
 {
     s_events = xEventGroupCreate();
     s_mutex = xSemaphoreCreateMutex();
+    s_scan_mutex = xSemaphoreCreateMutex();
 
     ESP_ERROR_CHECK(esp_netif_init());
     esp_err_t err = esp_event_loop_create_default();
@@ -679,7 +689,15 @@ int wifi_scan(wifi_ap_t *out, int max)
     wifi_scan_config_t scan = {.show_hidden = false};
     int count = 0;
 
-    if (esp_wifi_scan_start(&scan, true) == ESP_OK)
+    /* Two jobs asking for the network at once (weather + market) used to scan
+     * together: the driver ends the first scan early and both found nothing. */
+    xSemaphoreTake(s_scan_mutex, portMAX_DELAY);
+    esp_err_t scan_err = esp_wifi_scan_start(&scan, true);
+    if (scan_err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Scan not started: %s", esp_err_to_name(scan_err));
+    }
+    else
     {
         uint16_t found = WIFI_SCAN_MAX;
         wifi_ap_record_t *records = calloc(found, sizeof(wifi_ap_record_t));
@@ -717,6 +735,8 @@ int wifi_scan(wifi_ap_t *out, int max)
             esp_wifi_clear_ap_list();
         }
     }
+
+    xSemaphoreGive(s_scan_mutex);
 
     /* Switched on just for the scan and nobody else needs it: off again soon. */
     xSemaphoreTake(s_mutex, portMAX_DELAY);
