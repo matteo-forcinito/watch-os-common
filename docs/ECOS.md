@@ -1,6 +1,6 @@
 # ECOS: l'ecosistema
 
-> Cinque dispositivi diversi e un'unica intelligenza. Ognuno fa quello che sa
+> Cinque dispositivi diversi, alla pari, e un'unica intelligenza. Ognuno fa quello che sa
 > fare meglio, e insieme diventano una casa che ti conosce.
 
 Questo documento raccoglie la visione, l'architettura e le idee di ECOS.
@@ -20,25 +20,31 @@ qualcosa.
 | **Knob 1.8** | La mano | ghiera, aptica DRV2605, altoparlante Bluetooth (coprocessore A2DP), microfono PDM | **sempre acceso** (USB) |
 | **ePaper 1.54** | La voce silenziosa | display che non consuma, SHTC3 temperatura/umidità, RTC, audio, microSD | dorme, si sveglia ogni minuto |
 
-La regola d'oro: **chi è alimentato lavora, chi è a batteria chiede**.
+La regola d'oro: **tutti uguali; chi ha energia lavora, chi è a batteria chiede**.
 
 ---
 
 ## 2. Architettura
 
-### 2.1 Ruoli
+### 2.1 Tutti alla pari (nessun hub)
 
-- **Hub** (Watcher, con Knob di riserva): sempre acceso, tiene lo *stato di
-  casa*, fa i lavori pesanti (internet, archivi, telecamera) e li serve agli
-  altri in rete locale.
-- **Membro** (orologi, Knob): partecipa quando ha il Wi-Fi acceso. Non tiene il
-  Wi-Fi acceso apposta: approfitta delle sessioni che fa già (dashboard, app,
-  giri in background) e del Bluetooth per la presenza.
-- **Dormiente** (e-paper): non ascolta mai. Alla sua finestra Wi-Fi chiede
-  all'hub "cosa è cambiato da `<versione>`?" e riceve un pacchetto compatto.
+Decisione del 14 ottobre 2026: **nessun nodo è speciale**. Ogni dispositivo
+esegue lo stesso codice ECOS e tiene la sua copia dello stato di casa.
 
-Se l'hub manca, il sistema degrada con grazia: gli orologi tornano a fare da
-soli come oggi. ECOS aggiunge, non toglie.
+- **Gossip**: quando due nodi si vedono in rete, si scambiano un riassunto
+  (per ogni autore, l'ultima versione che conoscono) e si mandano solo le
+  differenze. Le modifiche fanno il giro della casa di nodo in nodo.
+- **Lavori a turno, senza capo**: per un lavoro "per tutti" (scaricare News,
+  il catalogo del Market, un aggiornamento), ogni nodo calcola la stessa regola
+  sugli altri nodi svegli: prima chi è alimentato, poi chi ha più batteria,
+  poi il nome. Chi risulta primo lo fa e pubblica il risultato nello stato
+  condiviso. Se sparisce, al giro dopo tocca al successivo. Nessuna elezione.
+- **Comportamento secondo l'energia, non il ruolo**: chi è alimentato (oggi
+  Watcher e Knob) resta in ascolto e quindi fa da "memoria" della casa;
+  chi è a batteria partecipa quando ha già il Wi-Fi acceso; l'e-paper,
+  alla sua finestra Wi-Fi, chiede le novità a chiunque sia sveglio.
+- Se tutti dormono, i messaggi aspettano il primo incontro tra due nodi:
+  il sistema rallenta ma non si rompe. ECOS aggiunge, non toglie.
 
 ### 2.2 Canali
 
@@ -61,8 +67,9 @@ ecos/device/<nome>      chi c'è, versione, capacità, batteria
 ```
 
 Ogni chiave porta un orologio logico (contatore + nome di chi scrive):
-vince l'ultima scrittura, senza conflitti. L'hub tiene la copia completa;
-i membri ne tengono una parte in PSRAM. Il dormiente riceve solo il "diff".
+vince l'ultima scrittura, senza conflitti; due nodi rimasti separati, quando
+si ritrovano, convergono allo stesso stato. Ogni nodo tiene la copia in PSRAM
+(poche decine di KB, sulla microSD dove c'è); l'e-paper riceve solo il "diff".
 
 ### 2.4 Fiducia
 
@@ -80,7 +87,7 @@ i membri ne tengono una parte in PSRAM. Il dormiente riceve solo il "diff".
   PSRAM per lo stato replicato, e il listener vive solo con il Wi-Fi acceso).
 - Nessun Wi-Fi acceso apposta sugli orologi; nessun impatto sul deep sleep
   dell'e-paper (al massimo qualche centinaio di ms nella sua finestra).
-- Hub: un task di rete (6 KB) + archivio su SD.
+- Nodi alimentati: un task di rete in ascolto (6 KB) + archivio su SD.
 
 ---
 
@@ -91,7 +98,9 @@ Ordinate per "quanto cambiano la vita" rispetto a "quanto costano".
 ### ★ Sveglia di casa
 Imposti la sveglia sull'orologio: suona anche l'e-paper sul comodino e il Knob
 in cucina. La spegni da uno → tacciono tutti. Posticipi da uno → vale per tutti.
-Se l'orologio è scarico, la sveglia suona lo stesso (la tiene l'hub).
+La sveglia è replicata su tutti: ogni dispositivo suona per conto suo, anche
+senza rete e con l'orologio scarico. Lo stop corre via ESP-NOW ai vicini;
+chi era lontano lo riceve al primo incontro.
 
 ### ★ Risveglio dolce intelligente
 L'IMU dell'orologio capisce il sonno leggero nella mezz'ora prima della
@@ -135,8 +144,8 @@ Leggi una notizia sull'orologio, giri la ghiera del Knob: la notizia si apre
 sullo schermo più grande. Un'app interna aperta sull'orologio si "passa" a un
 altro dispositivo con lo stesso stato.
 
-### L'hub che risparmia batteria
-Il Watcher scarica News, meteo, prezzi di Pieno, calendari di Giornata,
+### Lavori a turno che risparmiano batteria
+Il nodo di turno (di solito uno alimentato) scarica News, meteo, prezzi di Pieno, calendari di Giornata,
 catalogo del Market e aggiornamenti firmware. Gli orologi li prendono da lui in
 rete locale in pochi millisecondi invece di andare su internet: meno Wi-Fi,
 meno RAM, più batteria. Gli aggiornamenti si scaricano una volta per tutti.
@@ -170,7 +179,7 @@ riassunto sull'e-paper e nella dashboard.
 |---|---|---|
 | **1. Famiglia** | scoperta, fiducia, dashboard "Ecosistema" (tutti i dispositivi, stato, batteria, link alle dashboard), trova il dispositivo, sensori condivisi | sì |
 | **2. Sveglia di casa** | sveglie replicate, stop/posticipo ovunque, e-paper dormiente sincronizzato | sì |
-| **3. Hub** | cache dei contenuti e degli aggiornamenti, notifiche ovunque, manopola universale | sì |
+| **3. Lavori a turno** | contenuti e aggiornamenti scaricati una volta per tutti, notifiche ovunque, manopola universale | sì |
 | **4. Presenza e voce** | presenza Bluetooth, interfono ESP-NOW, risveglio intelligente | sì |
 | **5. Casa che pensa** | automazioni, aura, diario, occhio sulla porta | sì |
 
@@ -194,8 +203,7 @@ dispositivi reali, misura della RAM (soglie dei margini invariate), release.
 
 ## 6. Domande aperte
 
-1. L'hub: Watcher (consigliato: telecamera, microfono e microSD) con il Knob di
-   riserva?
+1. ~~L'hub~~: deciso, nessun hub, tutti alla pari (2.1).
 2. Ordine delle fasi: la sveglia di casa può passare davanti alla famiglia, se è
    la funzione che si desidera di più.
 3. Interfono: va bene il formato audio "voce" (16 kHz, compresso) per
