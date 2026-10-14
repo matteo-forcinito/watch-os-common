@@ -29,6 +29,7 @@ typedef struct
     lv_obj_t *code;
     lv_obj_t *info;
     lv_obj_t *usage;
+    lv_obj_t *toggle;
     lv_timer_t *timer;
     char shown[64];
     unsigned hits;
@@ -49,6 +50,11 @@ static void refresh(lv_timer_t *timer)
     if (state != p->last)
     {
         p->last = state;
+        if (p->toggle != NULL)
+        {
+            lv_label_set_text(lv_obj_get_child(p->toggle, 0),
+                              state == APPKIT_WEB_OFF || state == APPKIT_WEB_NO_MEMORY ? "Accendi dashboard" : "Spegni dashboard");
+        }
         static const char *const text[] = {
             [APPKIT_WEB_OFF] = "Dashboard spenta",
             [APPKIT_WEB_JOINING] = "Connessione al Wi-Fi...",
@@ -86,6 +92,19 @@ static void refresh(lv_timer_t *timer)
         p->hits = hits;
         lv_label_set_text(p->usage, LV_SYMBOL_OK "  Dashboard collegata");
         lv_obj_set_style_text_color(p->usage, lv_color_hex(0x35D07F), 0);
+    }
+}
+
+static void toggle_dashboard(lv_event_t *event)
+{
+    (void)event;
+    if (appkit_web_state() == APPKIT_WEB_OFF || appkit_web_state() == APPKIT_WEB_NO_MEMORY)
+    {
+        appkit_web_activate();
+    }
+    else
+    {
+        appkit_web_deactivate();
     }
 }
 
@@ -141,6 +160,11 @@ void appkit_dashboard_page(lv_obj_t *parent, lv_color_t accent)
 
     p->usage = ui_text(parent, "Il codice abbina un nuovo browser; quelli abbinati restano validi.", true);
     lv_obj_set_style_text_align(p->usage, LV_TEXT_ALIGN_CENTER, 0);
+
+    if (appkit_web_deactivate_supported())
+    {
+        p->toggle = ui_button(parent, "Spegni dashboard", 0x3A3F4B, toggle_dashboard, NULL);
+    }
 
     p->timer = lv_timer_create(refresh, 1000, p);
     lv_obj_add_event_cb(parent, on_delete, LV_EVENT_DELETE, p);

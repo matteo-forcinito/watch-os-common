@@ -1,6 +1,7 @@
 #ifndef APPKIT_PRIVATE_H
 #define APPKIT_PRIVATE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 /* Shared by appkit's source files only. */
@@ -16,5 +17,10 @@ void appkit_web_activate(void);
 /* The dashboard's name on the network: "tamiro.local/pieno/" (internal app)
  * or "pieno.local" (external app). */
 void appkit_web_host(char *out, size_t size);
+
+/* Internal apps: switch the dashboard off (the app stays open). false for
+ * external apps (their server lives with the app). */
+bool appkit_web_deactivate(void);
+bool appkit_web_deactivate_supported(void);
 
 #endif

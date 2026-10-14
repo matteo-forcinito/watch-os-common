@@ -258,8 +258,34 @@ static void on_focus_changed(bool on)
     ui_toast(on ? "Focus: gira per scegliere; tocca per aprire" : "Rotella: scorrimento");
 }
 
+/* "Back" out of an app asks first (sub-pages close at once). */
+static bool s_asking_close;
+
+static void close_answer(bool confirmed, void *arg)
+{
+    s_asking_close = false;
+    /* Only the app asked about (an alarm may have opened on top meanwhile). */
+    if (confirmed && app_current() == (const app_t *)arg)
+    {
+        app_close_top();
+    }
+}
+
+static void ask_close(const app_t *app)
+{
+    if (s_asking_close)
+    {
+        return;   /* the question is on screen already */
+    }
+    s_asking_close = true;
+    static char title[48];
+    snprintf(title, sizeof(title), "Chiudere %s?", app->name);
+    ui_confirm(title, NULL, "Chiudi", UI_COLOR_RED, close_answer, (void *)app);
+}
+
 void apps_init(void)
 {
+    app_manager_set_close_confirm(ask_close);
     market_init();
 #if CONFIG_APPKIT_HOSTED
     giornata_service_start();   /* reminders ring with the app closed too */

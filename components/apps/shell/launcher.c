@@ -820,9 +820,24 @@ static void sheet_favorite(lv_event_t *e)
     launcher_refresh();
 }
 
+static void sheet_update_confirmed(bool confirmed, void *arg);
+
 static void sheet_update(lv_event_t *e)
 {
     (void)e;
+    if (s_sheet != NULL)
+    {
+        ui_confirm("Aggiornare?", s_sheet->ext.name, "Aggiorna", UI_COLOR_GREEN, sheet_update_confirmed, NULL);
+    }
+}
+
+static void sheet_update_confirmed(bool confirmed, void *arg)
+{
+    (void)arg;
+    if (!confirmed)
+    {
+        return;
+    }
     if (s_sheet != NULL && market_install(s_sheet->ext.id) == ESP_OK)
     {
         ui_toast("Aggiornamento avviato");

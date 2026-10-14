@@ -104,6 +104,7 @@ static esp_err_t system_get(httpd_req_t *req)
     cJSON_AddStringToObject(out, "product", b->product);
     cJSON_AddStringToObject(out, "board", b->name);
     cJSON_AddStringToObject(out, "name", sys_nickname());
+    cJSON_AddBoolToObject(out, "stop", true);   /* kit.js: power button */
     char host[24];
     snprintf(host, sizeof(host), "%s.local", sys_hostname());
     cJSON_AddStringToObject(out, "hostname", host);
@@ -158,6 +159,22 @@ static void restart_job(void *arg)
     (void)arg;
     vTaskDelay(pdMS_TO_TICKS(800));
     esp_restart();
+}
+
+/* The page's power button: close the Web page app on the watch (Wi-Fi off). */
+static esp_err_t kit_off(httpd_req_t *req)
+{
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "ok", true);
+    esp_err_t err = send_out(req, out);
+    lv_port_lock();
+    const app_t *app = app_current();
+    if (app != NULL && strcmp(app->id, "web") == 0)
+    {
+        app_back();
+    }
+    lv_port_unlock();
+    return err;
 }
 
 static esp_err_t reboot_post(httpd_req_t *req)
@@ -229,6 +246,7 @@ static esp_err_t apps_open(httpd_req_t *req)
     if (id != NULL && app_find(id) != NULL)
     {
         lv_port_lock();
+        app_close_others("web");   /* one app at a time from the browser (the Web page app stays) */
         ok = app_open(id, NULL);
         lv_port_unlock();
     }
@@ -245,6 +263,7 @@ static esp_err_t apps_open(httpd_req_t *req)
                 {
                     *copy = list[i];
                     lv_port_lock();
+                    app_close_others("web");
                     ok = app_open("extapps.open", copy);
                     lv_port_unlock();
                     if (!ok)
@@ -438,6 +457,7 @@ void web_system_register(httpd_handle_t server)
     static const httpd_uri_t routes[] = {
         {.uri = "/api/system", .method = HTTP_GET, .handler = system_get},
         {.uri = "/api/kit", .method = HTTP_GET, .handler = system_get},   /* kit.js header */
+        {.uri = "/api/kit/off", .method = HTTP_POST, .handler = kit_off},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post},
         {.uri = "/api/apps", .method = HTTP_GET, .handler = apps_get},
         {.uri = "/api/apps/open", .method = HTTP_POST, .handler = apps_open},

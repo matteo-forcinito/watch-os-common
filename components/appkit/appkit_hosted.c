@@ -150,6 +150,7 @@ static esp_err_t kit_info(httpd_req_t *request)
     cJSON_AddBoolToObject(out, "charging", pmu_present() && pmu_is_charging());
     cJSON_AddNumberToObject(out, "rssi", wifi_rssi());
     cJSON_AddNumberToObject(out, "uptime", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddBoolToObject(out, "stop", true);   /* the page may switch the dashboard off */
     return appkit_json(request, out);
 }
 
@@ -189,6 +190,7 @@ static esp_err_t open_app(httpd_req_t *request, const registered_t *r)
     else
     {
         lv_port_lock();
+        app_close_others("web");   /* one app at a time from the browser (the Web page app stays) */
         opened = app_open(r->app, NULL);
         lv_port_unlock();
     }
@@ -242,6 +244,18 @@ static esp_err_t dispatch(httpd_req_t *request)
     {
         result = kit_info(request);
         found = true;
+    }
+    else if (request->method == HTTP_POST && length == 12 && strncmp(path, "/api/kit/off", 12) == 0)
+    {
+        if (!appkit_authorized(request))
+        {
+            xSemaphoreGive(s_lock);
+            return appkit_unauthorized(request);
+        }
+        result = appkit_json(request, cJSON_CreateObject());
+        xSemaphoreGive(s_lock);
+        appkit_web_deactivate();   /* after the answer: the app stays open on the watch */
+        return result;
     }
     for (size_t i = 0; !found && i < config->route_count; i++)
     {
@@ -386,6 +400,33 @@ static void stop_job(void *arg)
 {
     (void)arg;
     web_server_stop();
+}
+
+bool appkit_web_deactivate_supported(void)
+{
+    return true;
+}
+
+bool appkit_web_deactivate(void)
+{
+    if (s_lock == NULL)
+    {
+        return false;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    atomic_fetch_add(&s_generation, 1);
+    bool held = s_server_held;
+    s_server_held = false;
+    atomic_store(&s_state, APPKIT_WEB_OFF);
+    xSemaphoreGive(s_lock);
+    if (held)
+    {
+        while (!sys_post(stop_job, NULL))
+        {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }
+    return true;
 }
 
 /* Called from the app's close (LVGL task): never blocks on the network. */

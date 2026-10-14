@@ -264,7 +264,7 @@ async function loadMarket() {
     if (!list.length) continue;
     const head = el('div', {class: 'row', style: {margin: '18px 0 10px'}}, el('h3', {class: 'grow', style: {margin: 0}}, title + ' (' + list.length + ')'));
     if (title === 'Da aggiornare' && list.length > 1) head.append(el('button', {class: 'btn primary', disabled: st.busy || st.update_all,
-      onclick: () => act(() => kit.api('/api/market/update_all', {body: {}}), 'Aggiorno tutte, una alla volta')}, '⤓ Aggiorna tutte'));
+      onclick: () => confirm('Aggiornare tutte le app, una alla volta?') && act(() => kit.api('/api/market/update_all', {body: {}}), 'Aggiorno tutte, una alla volta')}, '⤓ Aggiorna tutte'));
     box.append(head);
     const grid = el('div', {class: 'appgrid'});
     for (const a of list) {
@@ -275,8 +275,8 @@ async function loadMarket() {
         el('div', {class: 'about'}, a.summary),
         busyHere ? el('div', {class: 'dim'}, st.percent + '% · ' + st.message) :
         el('div', {class: 'row'},
-          !a.installed ? el('button', {class: 'btn sm primary', disabled: st.busy, onclick: () => act(() => kit.api('/api/market/install', {body: {id: a.id}}), 'Installazione avviata')}, '⤓ Installa') : '',
-          a.update ? el('button', {class: 'btn sm primary', disabled: st.busy, onclick: () => act(() => kit.api('/api/market/install', {body: {id: a.id}}), 'Aggiornamento avviato')}, '⤓ Aggiorna') : '',
+          !a.installed ? el('button', {class: 'btn sm primary', disabled: st.busy, onclick: () => confirm('Installare ' + a.name + ' ' + a.version + ' (' + kb(a.size) + ')?') && act(() => kit.api('/api/market/install', {body: {id: a.id}}), 'Installazione avviata')}, '⤓ Installa') : '',
+          a.update ? el('button', {class: 'btn sm primary', disabled: st.busy, onclick: () => confirm('Aggiornare ' + a.name + ' alla versione ' + a.version + '?') && act(() => kit.api('/api/market/install', {body: {id: a.id}}), 'Aggiornamento avviato')}, '⤓ Aggiorna') : '',
           a.installed ? el('button', {class: 'btn sm', onclick: () => act(() => call('/api/apps/open', {body: {ext: a.id}}), 'Si avvia sull\'orologio')}, '▶ Avvia') : '',
           a.installed ? el('button', {class: 'btn sm danger', disabled: st.busy, onclick: () => confirm('Disinstallare ' + a.name + '?') && act(() => kit.api('/api/market/remove', {body: {id: a.id}}), 'Disinstallazione avviata')}, 'Disinstalla') : '')));
     }

@@ -193,18 +193,24 @@ static void launch_selected(market_ui_t *ui)
 static void install_confirmed(bool confirmed, void *arg)
 {
     char *id = arg;
+    market_ui_t *ui = app_current() != NULL && strcmp(app_current()->id, "market") == 0
+                          ? lv_obj_get_user_data(lv_screen_active()) : NULL;
     if (confirmed)
     {
-        if (market_install(id) != ESP_OK) ui_toast("Inserisci la SD o attendi il download in corso");
-        else if (app_current() != NULL && strcmp(app_current()->id, "market") == 0)
+        if (market_install(id) != ESP_OK)
         {
-            market_ui_t *ui = lv_obj_get_user_data(lv_screen_active());
-            if (ui != NULL && ui->poll != NULL)
-            {
-                ui_border_progress_set(ui->border, 0, 100);
-                lv_timer_resume(ui->poll);
-            }
+            ui_toast(sdcard_is_mounted() ? "Serve spazio libero o un download è già in corso" : "Installazione non avviata");
+            if (ui != NULL) ui->open_after_download = false;
         }
+        else if (ui != NULL && ui->poll != NULL)
+        {
+            ui_border_progress_set(ui->border, 0, 100);
+            lv_timer_resume(ui->poll);
+        }
+    }
+    else if (ui != NULL)
+    {
+        ui->open_after_download = false;
     }
     free(id);
 }
@@ -223,22 +229,18 @@ static void download(lv_event_t *event)
         market_cancel();
         return;
     }
-    if (ui->selected.installed && ui->selected.installed_version[0] != '\0' &&
-        fw_version_compare(ui->selected.version, ui->selected.installed_version) < 0)
-    {
-        char *id = strdup(ui->selected.id);
-        if (id == NULL) return;
-        ui_confirm("Versione precedente", "Sostituire l'app con la versione selezionata?",
-                   "Installa", UI_COLOR_ORANGE, install_confirmed, id);
-    }
-    else if (market_install(ui->selected.id) != ESP_OK)
-    {
-        ui->open_after_download = false;
-        ui_toast(sdcard_is_mounted() ? "Serve spazio libero sulla microSD" : "Installazione non avviata");
-        return;
-    }
-    if (market_busy()) ui_border_progress_set(ui->border, 0, 100);
-    lv_timer_resume(ui->poll);
+    /* Every download asks first: what, which version, how big. */
+    char *id = strdup(ui->selected.id);
+    if (id == NULL) return;
+    static char title[48], text[120];
+    bool downgrade = ui->selected.installed && ui->selected.installed_version[0] != '\0' &&
+                     fw_version_compare(ui->selected.version, ui->selected.installed_version) < 0;
+    bool update = ui->selected.installed && !downgrade;
+    snprintf(title, sizeof(title), "%s %s?", downgrade ? "Tornare a" : update ? "Aggiornare" : "Installare", ui->selected.name);
+    snprintf(text, sizeof(text), "Versione %s, %u KB. Il download richiede il Wi-Fi.", ui->selected.version,
+             (unsigned)((ui->selected.binary_size + 1023) / 1024));
+    ui_confirm(title, text, downgrade ? "Installa" : update ? "Aggiorna" : "Installa",
+               downgrade ? UI_COLOR_ORANGE : UI_COLOR_GREEN, install_confirmed, id);
 }
 
 static void install_and_open(lv_event_t *event)
@@ -365,10 +367,21 @@ static bool queue_step(market_ui_t *ui)
     return false;
 }
 
+static void update_all_confirmed(bool confirmed, void *arg);
+
 static void update_all(lv_event_t *event)
 {
     market_ui_t *ui = lv_event_get_user_data(event);
     if (market_busy() || ui->queue_count > 0) return;
+    ui_confirm("Aggiornare tutte?", "Le app con una versione nuova vengono scaricate una alla volta.", "Aggiorna",
+               UI_COLOR_GREEN, update_all_confirmed, ui);
+}
+
+static void update_all_confirmed(bool confirmed, void *arg)
+{
+    market_ui_t *ui = arg;
+    if (!confirmed || app_current() == NULL || strcmp(app_current()->id, "market") != 0 ||
+        lv_obj_get_user_data(lv_screen_active()) != ui || market_busy() || ui->queue_count > 0) return;
     market_entry_t *entry = malloc(sizeof(*entry));
     if (entry == NULL) return;
     ui->queue_count = ui->queue_next = 0;

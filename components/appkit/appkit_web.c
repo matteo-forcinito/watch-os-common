@@ -346,6 +346,16 @@ void appkit_web_activate(void)
 {
 }
 
+bool appkit_web_deactivate(void)
+{
+    return false;
+}
+
+bool appkit_web_deactivate_supported(void)
+{
+    return false;
+}
+
 void appkit_hosted_register(const char *name, const char *app_id)
 {
     (void)name;

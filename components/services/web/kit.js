@@ -144,10 +144,20 @@
         const batt = info.battery >= 0 ? (info.charging ? '⚡ ' : '') + info.battery + '%' : '';
         dev.innerHTML = '';
         dev.append(kit.el('span', {class: 'kit-dot'}), kit.el('span', {class: 'hide-s'}, info.board),
-                   batt ? kit.el('span', {}, batt) : '', themeButton());
+                   batt ? kit.el('span', {}, batt) : '', themeButton(), info.stop ? offButton() : '');
       }
       return info;
     } catch (e) { return null; }
+  }
+  /* Switch the dashboard off: Wi-Fi goes off on the watch when nothing else needs it. */
+  function offButton() {
+    const b = kit.el('button', {class: 'kit-icon', title: 'Spegni la dashboard'}, '⏻');
+    b.onclick = async () => {
+      if (!confirm('Spegnere la dashboard? Per riaprirla serve l\u2019orologio.')) return;
+      try { await kit.api('/api/kit/off', {body: {}}); } catch (e) { /* already going */ }
+      document.body.innerHTML = '<div style="display:grid;place-items:center;height:90vh;font:20px system-ui;color:#9aa3b5">Dashboard spenta.</div>';
+    };
+    return b;
   }
   function themeButton() {
     const b = kit.el('button', {class: 'kit-icon', title: 'Tema chiaro/scuro'}, '◐');

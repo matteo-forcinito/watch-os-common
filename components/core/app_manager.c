@@ -47,6 +47,9 @@ typedef enum
     OP_OPEN,
     OP_BACK,
     OP_HOME,
+    OP_BACK_USER,
+    OP_CLOSE,
+    OP_CLOSE_OTHERS,
 } op_type_t;
 
 typedef struct
@@ -353,7 +356,26 @@ static void do_open(const app_t *app, void *arg)
     show(screen, LV_SCREEN_LOAD_ANIM_MOVE_LEFT);
 }
 
-static void do_back(void)
+static void (*s_close_confirm)(const app_t *app);
+
+void app_manager_set_close_confirm(void (*ask)(const app_t *app))
+{
+    s_close_confirm = ask;
+}
+
+static void pop_top(void)
+{
+    stack_entry_t top = s_stack[--s_depth];
+    close_entry(&top);
+    show(top_screen(), LV_SCREEN_LOAD_ANIM_MOVE_RIGHT);
+
+    if (s_depth > 0 && s_stack[s_depth - 1].app->resume != NULL)
+    {
+        s_stack[s_depth - 1].app->resume();
+    }
+}
+
+static void do_back_from(bool user)
 {
     if (s_depth == 0)
     {
@@ -372,14 +394,19 @@ static void do_back(void)
         return;
     }
 
-    stack_entry_t top = s_stack[--s_depth];
-    close_entry(&top);
-    show(top_screen(), LV_SCREEN_LOAD_ANIM_MOVE_RIGHT);
-
-    if (s_depth > 0 && s_stack[s_depth - 1].app->resume != NULL)
+    /* The user is leaving a listed app (not a sub-page): ask first. */
+    if (user && s_close_confirm != NULL && !(app->flags & APP_FLAG_HIDDEN))
     {
-        s_stack[s_depth - 1].app->resume();
+        s_close_confirm(app);
+        return;
     }
+
+    pop_top();
+}
+
+static void do_back(void)
+{
+    do_back_from(false);
 }
 
 static void close_all(void)
@@ -422,6 +449,40 @@ static void execute(const op_t *op)
         case OP_HOME:
             do_home();
             break;
+
+        case OP_BACK_USER:
+            do_back_from(true);
+            break;
+
+        case OP_CLOSE:
+            if (s_depth > 0)
+            {
+                pop_top();
+            }
+            break;
+
+        case OP_CLOSE_OTHERS:
+        {
+            const char *keep = op->arg;
+            int keep_at = -1;
+            for (int i = 0; i < s_depth; i++)
+            {
+                if (keep != NULL && strcmp(s_stack[i].app->id, keep) == 0)
+                {
+                    keep_at = i;
+                }
+            }
+            if (s_depth > keep_at + 1)
+            {
+                while (s_depth > keep_at + 1)
+                {
+                    stack_entry_t top = s_stack[--s_depth];
+                    close_entry(&top);
+                }
+                show(top_screen(), LV_SCREEN_LOAD_ANIM_MOVE_RIGHT);
+            }
+            break;
+        }
     }
 }
 
@@ -496,6 +557,21 @@ void app_back(void)
 {
     /* A burst of "back" during an animation counts once per queued slot. */
     request(OP_BACK, NULL, NULL);
+}
+
+void app_back_user(void)
+{
+    request(OP_BACK_USER, NULL, NULL);
+}
+
+void app_close_top(void)
+{
+    request(OP_CLOSE, NULL, NULL);
+}
+
+void app_close_others(const char *keep_id)
+{
+    request(OP_CLOSE_OTHERS, NULL, (void *)keep_id);   /* keep_id: a string literal */
 }
 
 void app_home(void)
@@ -627,7 +703,7 @@ void app_manager_button(button_id_t button, button_event_t event)
         }
         else if (event == BUTTON_LONG_PRESS)
         {
-            app_back();
+            app_back_user();
         }
 
         return;
@@ -635,7 +711,7 @@ void app_manager_button(button_id_t button, button_event_t event)
 
     if (button == BUTTON_BOOT && event == BUTTON_CLICK)
     {
-        app_back();
+        app_back_user();
     }
     else if (button == BUTTON_BOOT && event == BUTTON_LONG_PRESS)
     {
@@ -663,7 +739,7 @@ static void back_gesture(void)
 
     if (app != NULL && !(app->flags & APP_FLAG_NO_BACK_GESTURE))
     {
-        app_back();
+        app_back_user();
     }
 }
 

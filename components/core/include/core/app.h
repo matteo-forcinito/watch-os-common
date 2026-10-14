@@ -81,6 +81,17 @@ bool app_open_app(const app_t *app, void *arg);
 /* Close the current app (or let it handle back). */
 void app_back(void);
 
+/* "Back" from the user (button, gesture): like app_back(), but closing a
+ * listed app asks first (see app_manager_set_close_confirm). */
+void app_back_user(void);
+/* Close the top app now, without asking it (after the user confirmed). */
+void app_close_top(void);
+/* Close every open app above `keep_id` (all of them if it is not open):
+ * opening an app from a dashboard replaces the previous one. */
+void app_close_others(const char *keep_id);
+/* Shell: show the "close this app?" question; call app_close_top() on yes. */
+void app_manager_set_close_confirm(void (*ask)(const app_t *app));
+
 /* Close everything, back to the watch face. */
 void app_home(void);
 
