@@ -17,8 +17,11 @@
 #include <stddef.h>
 
 #include "esp_err.h"
+#include "esp_http_server.h"
 
-/* Connect (or start the access point) and serve. Blocking up to ~15 s. */
+/* Connect (or start the access point) and serve. Blocking up to ~15 s.
+ * Shared: the Web app and the internal apps' dashboards each start it, and it
+ * stops when the last of them calls web_server_stop(). */
 esp_err_t web_server_start(void);
 void web_server_stop(void);
 bool web_server_running(void);
@@ -32,5 +35,13 @@ void web_server_url(char *out, size_t size);
 /* Six digits that pair a new browser (shown on the watch and in its QR as #code=...). */
 const char *web_server_code(void);
 bool web_server_ap_name(char *out, size_t size);
+
+/* For internal apps' dashboards (appkit hosted mode): `handler` gets every GET
+ * and POST under `folder` ("/pieno/" + "*"), now and after each server restart.
+ * Routes are never removed (the server is not thread safe for that): the
+ * handler answers "app closed" itself. */
+esp_err_t web_server_add_folder(const char *folder, esp_err_t (*handler)(httpd_req_t *req));
+/* The request comes from the paired browser (token, same origin). */
+bool web_server_authorized(httpd_req_t *req);
 
 #endif

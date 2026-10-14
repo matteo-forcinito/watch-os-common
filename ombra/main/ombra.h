@@ -61,6 +61,10 @@ typedef struct
 } ombra_status_t;
 
 esp_err_t ombra_start(void);
+/* Internal app closed: scanning and the maintenance tick stop. */
+void ombra_stop(void);
+/* Internal app: Bluetooth is on in the settings (the scan needs it). */
+bool ombra_bluetooth_on(void);
 void ombra_status(ombra_status_t *out);
 
 /* Copy devices sorted nearest first; filter = -1 all, else an ombra_kind_t. */
@@ -79,9 +83,12 @@ const char *ombra_addr_text(ombra_addr_t type);
 #include "lvgl.h"
 void ombra_ui_create(lv_obj_t *screen);
 bool ombra_ui_back(void);
+/* Internal app closed (widgets already deleted by the app manager). */
+void ombra_ui_destroy(void);
 
 /* sound.c */
 void ombra_sound_init(void);
+void ombra_sound_stop(void);
 bool ombra_sound_available(void);
 void ombra_sound_find(uint32_t id); /* 0 = silent */
 void ombra_sound_enable(bool on);

@@ -485,15 +485,82 @@ static void start_advertising(void)
     }
 }
 
+/* ------------------------------------------------- shared scanning */
+
+/* Internal apps (Ombra) scan with this host instead of starting their own:
+ * one NimBLE owner. Scanning shares the radio with advertising and the phone
+ * connection (half duty cycle) and resumes after a Bluetooth restart. */
+static int (*volatile s_scan_cb)(struct ble_gap_event *event, void *arg);
+static volatile bool s_synced;
+
+static int scan_event(struct ble_gap_event *event, void *arg);
+
+static void scan_begin(void)
+{
+    if (s_scan_cb == NULL || !s_running || !s_synced || ble_gap_disc_active())
+    {
+        return;
+    }
+    struct ble_gap_disc_params params = {
+        .itvl = 0x00A0,     /* 100 ms */
+        .window = 0x0050,   /* 50 ms: the rest for advertising and the phone */
+        .passive = 0,       /* scan requests bring the names */
+        .filter_duplicates = 0,
+    };
+    int rc = ble_gap_disc(s_own_addr_type, BLE_HS_FOREVER, &params, scan_event, NULL);
+    if (rc != 0)
+    {
+        ESP_LOGW(TAG, "Scan start failed: %d", rc);
+    }
+}
+
+static int scan_event(struct ble_gap_event *event, void *arg)
+{
+    int (*cb)(struct ble_gap_event *, void *) = s_scan_cb;
+    if (event->type == BLE_GAP_EVENT_DISC_COMPLETE)
+    {
+        scan_begin();
+    }
+    else if (cb != NULL)
+    {
+        cb(event, arg);
+    }
+    return 0;
+}
+
+bool ble_companion_scan_start(int (*cb)(struct ble_gap_event *event, void *arg))
+{
+    s_scan_cb = cb;
+    scan_begin();
+    return s_running;
+}
+
+void ble_companion_scan_stop(void)
+{
+    s_scan_cb = NULL;
+    if (s_running && s_synced && ble_gap_disc_active())
+    {
+        ble_gap_disc_cancel();
+    }
+}
+
+bool ble_companion_scanning(void)
+{
+    return s_running && s_synced && s_scan_cb != NULL && ble_gap_disc_active();
+}
+
 static void on_sync(void)
 {
     ble_hs_util_ensure_addr(0);
     ble_hs_id_infer_auto(0, &s_own_addr_type);
+    s_synced = true;
     start_advertising();
+    scan_begin();
 }
 
 static void on_reset(int reason)
 {
+    s_synced = false;
     ESP_LOGW(TAG, "Host reset: %d", reason);
 }
 
@@ -619,6 +686,11 @@ static void stop(void)
     }
 
     ble_gap_adv_stop();
+    if (s_synced && ble_gap_disc_active())
+    {
+        ble_gap_disc_cancel();
+    }
+    s_synced = false;
     esp_timer_stop(s_status_timer);
     esp_timer_stop(s_slow_timer);
     esp_timer_stop(s_retry_timer);

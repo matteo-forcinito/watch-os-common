@@ -53,6 +53,14 @@ void ble_companion_restart(void);
 
 bool ble_companion_connected(void);
 
+/* BLE scan with the companion's host, for internal apps (Ombra): `cb` gets the
+ * BLE_GAP_EVENT_DISC events in the NimBLE host task. Needs Bluetooth on (false
+ * if off); resumes by itself when Bluetooth comes back. */
+struct ble_gap_event;
+bool ble_companion_scan_start(int (*cb)(struct ble_gap_event *event, void *arg));
+void ble_companion_scan_stop(void);
+bool ble_companion_scanning(void);
+
 /* Music shown by the phone, and remote control buttons. */
 bool ble_companion_music(ble_music_t *out);
 void ble_companion_music_command(const char *command);   /* "play" "pause" "next" "previous" "volumeup" "volumedown" */

@@ -8,6 +8,7 @@
 #include "services/storage.h"
 
 #include "cJSON.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
@@ -22,9 +23,9 @@ static const char *TAG = "copertura_store";
 
 static cp_point_t *s_points;
 static int s_point_count;
-static char s_rooms[CP_MAX_ROOMS][CP_ROOM];
+EXT_RAM_BSS_ATTR static char s_rooms[CP_MAX_ROOMS][CP_ROOM];
 static int s_room_count;
-static char s_floors[CP_MAX_FLOORS][CP_ROOM];
+EXT_RAM_BSS_ATTR static char s_floors[CP_MAX_FLOORS][CP_ROOM];
 static int s_floor_count;
 static uint32_t s_next_id = 1;
 static uint32_t s_revision;

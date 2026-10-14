@@ -102,6 +102,8 @@ typedef struct
 } pn_day_t;
 
 esp_err_t pn_start(void);
+/* Internal app closed: the worker ends (after a download in progress). */
+void pn_stop(void);
 void pn_refresh(void);
 void pn_status(pn_status_t *out);
 void pn_settings(pn_settings_t *out);
@@ -134,6 +136,8 @@ int64_t pn_local_now(void);
 /* UI and dashboard. */
 void pieno_ui_create(lv_obj_t *screen);
 bool pieno_ui_back(void);
+/* Internal app closed (widgets already deleted by the app manager). */
+void pieno_ui_destroy(void);
 esp_err_t pieno_web_start(void);
 
 extern const char *const pn_fuel_names[PN_FUELS];

@@ -10,6 +10,7 @@
  *     Codice 482 913
  */
 #include "appkit.h"
+#include "appkit_private.h"
 
 #include "hardware/board.h"
 #include "ui/ui.h"
@@ -36,6 +37,10 @@ static void refresh(lv_timer_t *timer)
 {
     page_t *p = lv_timer_get_user_data(timer);
     appkit_web_state_t state = appkit_web_state();
+    if (state == APPKIT_WEB_FAILED)
+    {
+        appkit_web_activate();   /* internal apps: try again (external apps retry by themselves) */
+    }
     char url[48];
     appkit_web_url(url, sizeof(url));
 
@@ -89,6 +94,7 @@ void appkit_dashboard_page(lv_obj_t *parent, lv_color_t accent)
         return;
     }
     p->last = (appkit_web_state_t)-1;
+    appkit_web_activate();
     const board_info_t *board = board_info();
     int32_t side = (board->width < board->height ? board->width : board->height) * 46 / 100;
 

@@ -49,8 +49,12 @@
   };
 
   /* ---------------------------------------------------------------- api */
+  /* An internal app's page lives in a folder of the OS server ("/pieno/"):
+   * its "/api/..." calls go to "/pieno/api/...". Pairing stays at the root. */
+  kit.base = location.pathname.replace(/\/[^/]*$/, '');
   kit.api = async function (path, opt) {
     opt = opt || {};
+    if (kit.base && path.startsWith('/api/') && path !== '/api/pair') path = kit.base + path;
     const init = {method: opt.method || (opt.body !== undefined ? 'POST' : 'GET'), headers: {'X-Key': token}};
     if (opt.body !== undefined) {
       if (opt.body instanceof Blob || typeof opt.body === 'string') init.body = opt.body;

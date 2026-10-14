@@ -8,7 +8,12 @@
  *   - a new day rebuilds the agenda; changes are saved.
  * The esp_timer callback only posts the job (rules of the project).
  */
+#include "esp_attr.h"
 #include "giornata.h"
+
+#if CONFIG_APPKIT_HOSTED
+#include "services/notify.h"
+#endif
 #include "internal.h"
 
 #include "core/power.h"
@@ -30,8 +35,8 @@
 
 static esp_timer_handle_t s_timer;
 static gd_focus_t s_focus;
-static gd_alert_t s_alert;
-static uint32_t s_seen[SEEN_MAX];     /* reminders already given (hash of start + title) */
+EXT_RAM_BSS_ATTR static gd_alert_t s_alert;
+EXT_RAM_BSS_ATTR static uint32_t s_seen[SEEN_MAX];     /* reminders already given (hash of start + title) */
 static int s_seen_next;
 static int32_t s_day = -1;
 static int s_sessions_in_row;
@@ -82,6 +87,19 @@ static bool quiet_now(const gd_settings_t *s, ics_time_t now)
 /* Locked. */
 static void raise_alert(const char *title, const char *detail, uint32_t color, bool chime)
 {
+#if CONFIG_APPKIT_HOSTED
+    if (!gd_app_is_open())
+    {
+        /* Internal app closed: an OS notification (wakes the screen, chimes). */
+        notify_t n = {.time = time(NULL)};
+        n.id = 0x47440000u | (++s_alert.serial & 0xFFFFu);
+        snprintf(n.app, sizeof(n.app), "Giornata");
+        gd_copy(n.title, sizeof(n.title), title);
+        snprintf(n.body, sizeof(n.body), "%s", detail);
+        notify_add(&n);
+        return;
+    }
+#endif
     s_alert.active = true;
     gd_copy(s_alert.title, sizeof(s_alert.title), title);
     snprintf(s_alert.detail, sizeof(s_alert.detail), "%s", detail);
@@ -424,6 +442,28 @@ static void tick_job(void *arg)
     focus_tick();
     gd_unlock();
     gd_store_flush(false);
+    gd_sync_background_tick();
+    gd_agenda_retime();
+}
+
+/* Internal app closed and no focus session: a tick every 30 s is enough for
+ * the reminders and lets the CPU sleep. Otherwise every 2 s. */
+void gd_agenda_retime(void)
+{
+    static int64_t s_period = TICK_US;
+    int64_t period = TICK_US;
+#if CONFIG_APPKIT_HOSTED
+    if (!gd_app_is_open() && s_focus.state == GD_FOCUS_IDLE)
+    {
+        period = 30LL * 1000 * 1000;
+    }
+#endif
+    if (s_timer != NULL && period != s_period)
+    {
+        s_period = period;
+        esp_timer_stop(s_timer);
+        esp_timer_start_periodic(s_timer, period);
+    }
 }
 
 static void tick_cb(void *arg)

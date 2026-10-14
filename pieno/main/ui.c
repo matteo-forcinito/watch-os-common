@@ -18,7 +18,9 @@
 #include "appkit.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#if !CONFIG_APPKIT_HOSTED
 #include "extapp_sdk.h"
+#endif
 #include "hardware/board.h"
 #include "ui/ui.h"
 
@@ -852,9 +854,17 @@ static void tick(lv_timer_t *timer)
 bool pieno_ui_back(void)
 {
     pieno_ui_t *ui = s_ui;
+    if (ui == NULL)
+    {
+        return false;
+    }
     if (ui->view == HOME)
     {
+#if CONFIG_APPKIT_HOSTED
+        return false;   /* internal app: the app manager closes it */
+#else
         extapp_return_to_launcher();
+#endif
     }
     else
     {
@@ -879,7 +889,22 @@ void pieno_ui_create(lv_obj_t *screen)
     ui->timer = lv_timer_create(tick, 500, ui);
 }
 
-#if CONFIG_WATCH_DEV_CONSOLE
+void pieno_ui_destroy(void)
+{
+    pieno_ui_t *ui = s_ui;
+    if (ui == NULL)
+    {
+        return;
+    }
+    s_ui = NULL;
+    if (ui->timer != NULL)
+    {
+        lv_timer_delete(ui->timer);
+    }
+    free(ui);
+}
+
+#if CONFIG_WATCH_DEV_CONSOLE && !CONFIG_APPKIT_HOSTED
 /* QA only: "view home|list|station|trend|menu|dash", "fuel N", "refresh", "best". */
 #include "core/devcon.h"
 

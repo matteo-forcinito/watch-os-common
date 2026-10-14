@@ -4,6 +4,7 @@
  * reached. Like a metal detector, the ear follows the change long before the
  * eye reads a number. A ringing alarm owns the speaker: then we stay silent.
  */
+#include "esp_attr.h"
 #include "copertura.h"
 
 #include "core/settings.h"
@@ -22,6 +23,8 @@
 
 static atomic_int s_heat = -1;
 static atomic_bool s_target;
+static atomic_bool s_quit;
+static atomic_bool s_running;
 
 void cp_sound_heat(int heat, bool on_target)
 {
@@ -42,11 +45,21 @@ static void tone(int16_t *block, int frequency, int amplitude, int phase_start)
 static void sound_task(void *arg)
 {
     (void)arg;
-    static int16_t block[BLOCK];
+    EXT_RAM_BSS_ATTR static int16_t block[BLOCK];
     bool running = false;
     int since_tick = 1000;
     for (;;)
     {
+        if (atomic_load(&s_quit))
+        {
+            if (running && !sound_alarm_playing())
+            {
+                audio_stop();
+            }
+            atomic_store(&s_running, false);
+            vTaskDelete(NULL);
+            return;
+        }
         int heat = atomic_load(&s_heat);
         if (heat < 0 || sound_alarm_playing())
         {
@@ -106,8 +119,18 @@ static void sound_task(void *arg)
 
 void cp_sound_init(void)
 {
-    if (board_info()->has_audio)
+    atomic_store(&s_quit, false);
+    if (board_info()->has_audio && !atomic_exchange(&s_running, true))
     {
-        sys_task_create(sound_task, "cp_sound", 3072, NULL, 4, SYS_CORE_ANY);
+        if (!sys_task_create(sound_task, "cp_sound", 3072, NULL, 4, SYS_CORE_ANY))
+        {
+            atomic_store(&s_running, false);
+        }
     }
+}
+
+void cp_sound_stop(void)
+{
+    atomic_store(&s_heat, -1);
+    atomic_store(&s_quit, true);
 }

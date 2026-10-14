@@ -2,6 +2,7 @@
 #include "services/fw_version.h"
 #include "services/wifi.h"
 #include "services/storage.h"
+#include "core/app.h"
 #include "core/power.h"
 #include "core/sys.h"
 #include "hardware/sdcard.h"
@@ -137,6 +138,7 @@ static bool visible(int index)
 {
     market_entry_t *entry = &s_entries[index];
     if (!market_development() && strcmp(entry->channel, "stable") != 0) return false;
+    if (app_find(entry->id) != NULL) return false;   /* built into this OS (e.g. Pieno) */
     for (int i = 0; i < s_count; i++)
     {
         if (i == index || strcmp(s_entries[i].id, entry->id) != 0) continue;

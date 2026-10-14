@@ -5,6 +5,7 @@
  * files, which disables the flash cache (a PSRAM stack would then assert).
  */
 #include "appkit.h"
+#include "appkit_private.h"
 
 #include "core/sys.h"
 #include "hardware/board.h"
@@ -53,19 +54,6 @@ static int s_attempts;
 
 /* -------------------------------------------------------------- helpers */
 
-esp_err_t appkit_error(httpd_req_t *request, const char *status, const char *text)
-{
-    httpd_resp_set_status(request, status);
-    httpd_resp_set_type(request, "text/plain; charset=utf-8");
-    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(request, text);
-}
-
-esp_err_t appkit_unauthorized(httpd_req_t *request)
-{
-    return appkit_error(request, "401 Unauthorized", "Abbina la dashboard");
-}
-
 static bool same_origin(httpd_req_t *request)
 {
     if (httpd_req_get_hdr_value_len(request, "Origin") == 0)
@@ -100,69 +88,6 @@ bool appkit_authorized(httpd_req_t *request)
         atomic_fetch_add(&s_hits, 1);
     }
     return difference == 0;
-}
-
-char *appkit_body(httpd_req_t *request, size_t limit)
-{
-    if (request->content_len == 0 || request->content_len > limit)
-    {
-        return NULL;
-    }
-    char *text = heap_caps_malloc(request->content_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (text == NULL)
-    {
-        return NULL;
-    }
-    size_t got = 0;
-    int timeouts = 0;
-    while (got < request->content_len)
-    {
-        int result = httpd_req_recv(request, text + got, request->content_len - got);
-        if (result == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 3)
-        {
-            continue;
-        }
-        if (result <= 0)
-        {
-            free(text);
-            return NULL;
-        }
-        got += (size_t)result;
-    }
-    text[got] = '\0';
-    return text;
-}
-
-esp_err_t appkit_json(httpd_req_t *request, cJSON *json)
-{
-    char *text = json != NULL ? cJSON_PrintUnformatted(json) : NULL;
-    cJSON_Delete(json);
-    if (text == NULL)
-    {
-        return appkit_error(request, "503 Service Unavailable", "Memoria occupata, riprova");
-    }
-    httpd_resp_set_type(request, "application/json");
-    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-    httpd_resp_set_hdr(request, "X-Content-Type-Options", "nosniff");
-    esp_err_t result = httpd_resp_sendstr(request, text);
-    cJSON_free(text);
-    return result;
-}
-
-bool appkit_query(httpd_req_t *request, const char *key, char *out, size_t size)
-{
-    out[0] = '\0';
-    size_t length = httpd_req_get_url_query_len(request);
-    if (length == 0 || length > 512)
-    {
-        return false;
-    }
-    char query[513];
-    if (httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK)
-    {
-        return false;
-    }
-    return httpd_query_key_value(query, key, out, size) == ESP_OK;
 }
 
 /* --------------------------------------------------------------- tokens */
@@ -392,21 +317,9 @@ static void web_task(void *arg)
     vTaskDelete(NULL);
 }
 
-/* cJSON nodes are small: by default they land in the scarce internal RAM. Keep them in PSRAM. */
-static void *json_malloc(size_t size)
-{
-    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-}
-
-static void json_hooks(void)
-{
-    cJSON_Hooks hooks = {.malloc_fn = json_malloc, .free_fn = free};
-    cJSON_InitHooks(&hooks);
-}
-
 esp_err_t appkit_web_start(const appkit_web_config_t *config)
 {
-    json_hooks();
+    appkit_json_hooks();
     if (s_config != NULL)
     {
         return ESP_OK;
@@ -427,6 +340,10 @@ esp_err_t appkit_web_start(const appkit_web_config_t *config)
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+void appkit_web_activate(void)
+{
 }
 
 void appkit_web_stop(void)

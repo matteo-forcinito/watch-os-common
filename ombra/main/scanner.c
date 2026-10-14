@@ -13,6 +13,11 @@
  */
 #include "ombra.h"
 
+#if CONFIG_APPKIT_HOSTED
+#include "companion/ble_companion.h"
+#include "core/settings.h"
+#endif
+
 #include "core/power.h"
 #include "core/sys.h"
 #include "esp_heap_caps.h"
@@ -50,12 +55,17 @@ typedef struct
 static record_t *s_table; /* PSRAM */
 static SemaphoreHandle_t s_lock;
 static uint32_t s_next_id = 1, s_revision;
-static bool s_shield = true, s_scanning;
+static bool s_shield = true;
+#if !CONFIG_APPKIT_HOSTED
+static bool s_scanning;
+#endif
 static int s_threshold = 15;
 static uint32_t s_alert_id;
 static uint8_t s_mine[MINE_MAX][6];
 static int s_mine_count;
+#if !CONFIG_APPKIT_HOSTED
 static uint8_t s_own_addr_type;
+#endif
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
@@ -240,54 +250,82 @@ static void update(const struct ble_gap_disc_desc *disc)
 }
 
 /* Once a second: history, expiry, suspects and alerts. */
+#if CONFIG_APPKIT_HOSTED
+static volatile bool s_quit;
+#endif
+
+/* Once a second: age the devices, judge the followers. */
+static void maintenance_step(void)
+{
+    uint32_t now = now_ms(), alert = 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < OMBRA_DEVICES; i++)
+    {
+        record_t *r = &s_table[i];
+        if (!r->used)
+            continue;
+        if (now - r->pub.last_ms > FORGET_MS && !r->pub.suspect)
+        {
+            r->used = false;
+            continue;
+        }
+        memmove(r->pub.history, r->pub.history + 1, OMBRA_HISTORY - 1);
+        r->pub.history[OMBRA_HISTORY - 1] = r->second_best;
+        r->second_best = -127;
+        bool separated_tracker = r->pub.adv.kind == OMBRA_KIND_TRACKER && r->pub.adv.separated;
+        bool suspect = separated_tracker && !r->pub.mine && now - r->pub.last_ms < FOLLOW_GAP_MS &&
+                       r->pub.follow_ms >= (uint32_t)s_threshold * 60000u;
+        if (suspect && !r->alerted && s_shield)
+        {
+            r->alerted = true;
+            alert = r->pub.id;
+        }
+        if (!suspect && now - r->pub.last_ms > FORGET_MS)
+            r->used = false; /* a suspect that left long ago */
+        r->pub.suspect = suspect;
+    }
+    if (alert)
+        s_alert_id = alert;
+    s_revision++;
+    xSemaphoreGive(s_lock);
+    if (alert)
+    {
+        ESP_LOGW(TAG, "Tracker following you (id %lu)", (unsigned long)alert);
+        power_wake(POWER_WAKE_NOTIFICATION);
+        ombra_sound_alert();
+    }
+}
+
+#if CONFIG_APPKIT_HOSTED
+static esp_timer_handle_t s_tick_timer;
+
+static void maintenance_job(void *arg)
+{
+    (void)arg;
+    if (!s_quit)
+        maintenance_step();
+}
+
+static void tick_cb(void *arg)
+{
+    (void)arg;
+    sys_post(maintenance_job, NULL);
+}
+#else
 static void maintenance_task(void *arg)
 {
     (void)arg;
     for (;;)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        uint32_t now = now_ms(), alert = 0;
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        for (int i = 0; i < OMBRA_DEVICES; i++)
-        {
-            record_t *r = &s_table[i];
-            if (!r->used)
-                continue;
-            if (now - r->pub.last_ms > FORGET_MS && !r->pub.suspect)
-            {
-                r->used = false;
-                continue;
-            }
-            memmove(r->pub.history, r->pub.history + 1, OMBRA_HISTORY - 1);
-            r->pub.history[OMBRA_HISTORY - 1] = r->second_best;
-            r->second_best = -127;
-            bool separated_tracker = r->pub.adv.kind == OMBRA_KIND_TRACKER && r->pub.adv.separated;
-            bool suspect = separated_tracker && !r->pub.mine && now - r->pub.last_ms < FOLLOW_GAP_MS &&
-                           r->pub.follow_ms >= (uint32_t)s_threshold * 60000u;
-            if (suspect && !r->alerted && s_shield)
-            {
-                r->alerted = true;
-                alert = r->pub.id;
-            }
-            if (!suspect && now - r->pub.last_ms > FORGET_MS)
-                r->used = false; /* a suspect that left long ago */
-            r->pub.suspect = suspect;
-        }
-        if (alert)
-            s_alert_id = alert;
-        s_revision++;
-        xSemaphoreGive(s_lock);
-        if (alert)
-        {
-            ESP_LOGW(TAG, "Tracker following you (id %lu)", (unsigned long)alert);
-            power_wake(POWER_WAKE_NOTIFICATION);
-            ombra_sound_alert();
-        }
+        maintenance_step();
     }
 }
+#endif
 
 /* ------------------------------------------------------------ NimBLE */
 
+#if !CONFIG_APPKIT_HOSTED   /* external app: Ombra owns the NimBLE host */
 static int gap_event(struct ble_gap_event *event, void *arg);
 
 static void start_scan(void)
@@ -337,7 +375,56 @@ static void host_task(void *arg)
     nimble_port_run();
     nimble_port_freertos_deinit();
 }
+#endif
 
+#if CONFIG_APPKIT_HOSTED
+/* Internal app: the OS Bluetooth host scans for us (ble_companion.c), only
+ * while the app is open; the maintenance task too. */
+
+static int hosted_event(struct ble_gap_event *event, void *arg)
+{
+    (void)arg;
+    if (event->type == BLE_GAP_EVENT_DISC)
+        update(&event->disc);
+    return 0;
+}
+
+esp_err_t ombra_start(void)
+{
+    if (s_table == NULL)
+    {
+        s_table = heap_caps_calloc(OMBRA_DEVICES, sizeof(record_t), MALLOC_CAP_SPIRAM);
+        s_lock = xSemaphoreCreateMutex();
+        if (s_table == NULL || s_lock == NULL)
+            return ESP_ERR_NO_MEM;
+        load_settings();
+    }
+    s_quit = false;
+    ble_companion_scan_start(hosted_event);
+    if (s_tick_timer == NULL)
+    {
+        const esp_timer_create_args_t args = {.callback = tick_cb, .name = "ombra"};
+        if (esp_timer_create(&args, &s_tick_timer) != ESP_OK)
+            return ESP_ERR_NO_MEM;
+    }
+    esp_timer_stop(s_tick_timer);
+    esp_timer_start_periodic(s_tick_timer, 1000 * 1000);
+    return ESP_OK;
+}
+
+void ombra_stop(void)
+{
+    ble_companion_scan_stop();
+    s_quit = true;
+    if (s_tick_timer != NULL)
+        esp_timer_stop(s_tick_timer);
+}
+
+bool ombra_bluetooth_on(void)
+{
+    return settings_get()->ble_enabled;
+}
+#else
 esp_err_t ombra_start(void)
 {
     s_table = heap_caps_calloc(OMBRA_DEVICES, sizeof(record_t), MALLOC_CAP_SPIRAM);
@@ -359,6 +446,16 @@ esp_err_t ombra_start(void)
     return ESP_OK;
 }
 
+void ombra_stop(void)
+{
+}
+
+bool ombra_bluetooth_on(void)
+{
+    return true;
+}
+#endif
+
 /* ------------------------------------------------------------ queries */
 
 void ombra_status(ombra_status_t *out)
@@ -378,7 +475,11 @@ void ombra_status(ombra_status_t *out)
         out->suspects += r->pub.suspect;
         out->mine += r->pub.mine;
     }
+#if CONFIG_APPKIT_HOSTED
+    out->scanning = ble_companion_scanning();
+#else
     out->scanning = s_scanning;
+#endif
     out->shield = s_shield;
     out->threshold_min = s_threshold;
     out->revision = s_revision;

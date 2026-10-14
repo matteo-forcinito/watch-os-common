@@ -29,6 +29,7 @@ idf_component_register(
         core
         hardware
         esp_http_client
+        esp_http_server
     PRIV_REQUIRES
         esp_wifi
         esp_netif

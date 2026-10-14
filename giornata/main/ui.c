@@ -19,7 +19,9 @@
 #include "appkit.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#if !CONFIG_APPKIT_HOSTED
 #include "extapp_sdk.h"
+#endif
 #include "hardware/board.h"
 #include "ui/ui.h"
 
@@ -1002,6 +1004,10 @@ static void tick(lv_timer_t *timer)
 bool giornata_ui_back(void)
 {
     giornata_ui_t *ui = s_ui;
+    if (ui == NULL)
+    {
+        return false;
+    }
     if (ui->alert != NULL)
     {
         gd_alert_dismiss();
@@ -1011,7 +1017,11 @@ bool giornata_ui_back(void)
     }
     if (ui->view == DAY)
     {
+#if CONFIG_APPKIT_HOSTED
+        return false;   /* internal app: the app manager closes it */
+#else
         extapp_return_to_launcher();
+#endif
     }
     else
     {
@@ -1031,7 +1041,22 @@ void giornata_ui_create(lv_obj_t *screen)
     ui->timer = lv_timer_create(tick, 500, ui);
 }
 
-#if CONFIG_WATCH_DEV_CONSOLE
+void giornata_ui_destroy(void)
+{
+    giornata_ui_t *ui = s_ui;
+    if (ui == NULL)
+    {
+        return;
+    }
+    s_ui = NULL;
+    if (ui->timer != NULL)
+    {
+        lv_timer_delete(ui->timer);
+    }
+    free(ui);
+}
+
+#if CONFIG_WATCH_DEV_CONSOLE && !CONFIG_APPKIT_HOSTED
 /* QA only: "view day|agenda|tasks|task|focus|menu|dash", "demo" (sample tasks/events), "alert", "code". */
 #include "core/devcon.h"
 

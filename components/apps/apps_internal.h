@@ -37,6 +37,11 @@ extern const app_t call_app;
 extern const app_t update_app;          /* hidden: Settings > Aggiornamento */
 extern const app_t versions_app;        /* hidden: every release online + on the SD card */
 extern const app_t folder_app;          /* hidden: one folder of versions_app, arg = folder id */
+extern const app_t giornata_app;        /* CONFIG_APPKIT_HOSTED: agenda (watch-os-common/giornata) */
+void giornata_service_start(void);
+extern const app_t pieno_app;
+extern const app_t ombra_app;           /* CONFIG_APPKIT_HOSTED: Bluetooth trackers (watch-os-common/ombra) */
+extern const app_t copertura_app;       /* CONFIG_APPKIT_HOSTED: Wi-Fi coverage (watch-os-common/copertura) */           /* CONFIG_APPKIT_HOSTED: fuel prices (watch-os-common/pieno) */
 
 /* ---- shell pieces (tiles of the home screen) */
 void watchface_create(lv_obj_t *parent);

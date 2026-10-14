@@ -16,6 +16,7 @@
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -33,6 +34,20 @@ static const char *TAG = "giornata_sync";
 #define CACHE_MAGIC   0x47444331u   /* "GDC1" */
 
 static TaskHandle_t s_task;
+static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_running;                 /* a sync task exists (or is being created) */
+static bool s_again;                   /* a round was asked for */
+static int64_t s_last_round;           /* esp_timer us of the last round start */
+/* External app: Giornata is the whole system, always "open". Internal app
+ * (CONFIG_APPKIT_HOSTED): the sync task lives only while the app is open,
+ * plus a background round every few hours for the reminders. */
+#if CONFIG_APPKIT_HOSTED
+static volatile bool s_app_open = false;
+#else
+static volatile bool s_app_open = true;
+#endif
+
+#define BACKGROUND_US (3LL * 3600 * 1000000)
 
 extern const char gts_root_r1_start[] asm("_binary_gts_root_r1_pem_start");
 
@@ -46,12 +61,81 @@ typedef struct
     int deferred_count;
 } sync_t;
 
+static void sync_task(void *arg);
+
 void gd_sync_now(void)
 {
-    if (s_task != NULL)
+    taskENTER_CRITICAL(&s_mux);
+    bool start = !s_running;
+    s_running = true;
+    s_again = true;
+    TaskHandle_t task = s_task;
+    taskEXIT_CRITICAL(&s_mux);
+    if (start)
     {
-        xTaskNotifyGive(s_task);
+        if (!sys_task_create(sync_task, "giornata_sync", 8192, NULL, 3, SYS_CORE_ANY))
+        {
+            /* No 8 KB block of internal RAM (e.g. Bluetooth on and fragmented):
+             * the background tick tries again in 3 hours, the app at its next open. */
+            taskENTER_CRITICAL(&s_mux);
+            s_running = false;
+            taskEXIT_CRITICAL(&s_mux);
+            s_last_round = esp_timer_get_time();
+            snprintf(gd_state.message, sizeof(gd_state.message), "Memoria piena: sincronizzo più tardi");
+        }
     }
+    else if (task != NULL)
+    {
+        xTaskNotifyGive(task);
+    }
+}
+
+bool gd_app_is_open(void)
+{
+    return s_app_open;
+}
+
+void gd_app_open(bool open)
+{
+    s_app_open = open;
+    gd_agenda_retime();
+    if (open)
+    {
+        gd_sync_now();
+        return;
+    }
+    taskENTER_CRITICAL(&s_mux);
+    TaskHandle_t task = s_task;
+    taskEXIT_CRITICAL(&s_mux);
+    if (task != NULL)
+    {
+        xTaskNotifyGive(task);   /* wakes up and ends (no round pending) */
+    }
+}
+
+void gd_sync_background_tick(void)
+{
+#if CONFIG_APPKIT_HOSTED
+    if (s_app_open || s_running || (s_last_round != 0 && esp_timer_get_time() - s_last_round < BACKGROUND_US))
+    {
+        return;
+    }
+    gd_lock();
+    bool any = false;
+    for (int i = 0; i < gd_source_count(); i++)
+    {
+        any |= gd_source_at(i)->enabled && gd_source_at(i)->url[0] != '\0';
+    }
+    gd_unlock();
+    if (any)
+    {
+        gd_sync_now();
+    }
+    else
+    {
+        s_last_round = esp_timer_get_time();   /* look again later */
+    }
+#endif
 }
 
 static bool emit(const ics_occurrence_t *o, void *ctx)
@@ -303,10 +387,27 @@ static void sync_all(void)
 static void sync_task(void *arg)
 {
     (void)arg;
+    taskENTER_CRITICAL(&s_mux);
     s_task = xTaskGetCurrentTaskHandle();
+    taskEXIT_CRITICAL(&s_mux);
     vTaskDelay(pdMS_TO_TICKS(1500));   /* let the UI come up first */
     for (;;)
     {
+        taskENTER_CRITICAL(&s_mux);
+        bool done = !s_app_open && !s_again;
+        if (done)
+        {
+            s_task = NULL;
+            s_running = false;
+        }
+        s_again = false;
+        taskEXIT_CRITICAL(&s_mux);
+        if (done)
+        {
+            vTaskDelete(NULL);
+            return;
+        }
+        s_last_round = esp_timer_get_time();
         gd_lock();
         bool any = false;
         for (int i = 0; i < gd_source_count(); i++)
@@ -341,13 +442,19 @@ static void sync_task(void *arg)
                 gd_unlock();
             }
         }
+        if (!s_app_open)
+        {
+            continue;   /* internal app closed: ends at the top unless another round was asked */
+        }
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(PERIOD_MS));
     }
 }
 
 void gd_sync_task_start(void)
 {
-    sys_task_create(sync_task, "giornata_sync", 8192, NULL, 3, SYS_CORE_ANY);
+#if !CONFIG_APPKIT_HOSTED
+    gd_sync_now();   /* internal app: started by gd_app_open() / the background tick */
+#endif
 }
 
 /* ---------------------------------------------------------------- cache */

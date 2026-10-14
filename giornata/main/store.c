@@ -4,6 +4,7 @@
  * (the agenda tick calls gd_store_flush()). The merged agenda is rebuilt from
  * the calendar cache (sync.c), own events and task due times.
  */
+#include "esp_attr.h"
 #include "giornata.h"
 #include "internal.h"
 
@@ -27,7 +28,7 @@
 static const char *TAG = "giornata";
 
 static SemaphoreHandle_t s_lock;
-static gd_source_t s_sources[GD_MAX_SOURCES];
+EXT_RAM_BSS_ATTR static gd_source_t s_sources[GD_MAX_SOURCES];
 static int s_source_count;
 static gd_task_t *s_tasks;
 static int s_task_count;

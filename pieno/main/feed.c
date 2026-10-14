@@ -56,6 +56,7 @@ typedef struct
 
 static SemaphoreHandle_t s_lock;
 static TaskHandle_t s_task;
+static volatile bool s_quit;                   /* pn_stop(): the worker ends at its next turn */
 static pn_station_t *s_table;          /* PSRAM, PN_MAX_STATIONS */
 static int s_count;
 static pn_settings_t s_settings;
@@ -851,6 +852,11 @@ static bool download(void)
         ok = stream(STATIONS_URL, on_station, b, r, 0, 50);
         ESP_LOGI(TAG, "Stations: %s, %d lines, %d within %d km", ok ? "ok" : "failed", r->lines, b->count, home.radius_km);
     }
+    if (ok && s_quit)
+    {
+        ok = false;   /* the app was closed: the prices are fetched at the next open */
+        status_set(PN_IDLE, 0, "Prezzi dalla memoria");
+    }
     if (ok)
     {
         status_set(PN_PRICES, 50, "Scarico i prezzi di oggi");
@@ -930,11 +936,17 @@ static bool stale(void)
 static void worker(void *arg)
 {
     (void)arg;
-    s_task = xTaskGetCurrentTaskHandle();
     int failures = 0;
     for (;;)
     {
         pn_lock();
+        if (s_quit)
+        {
+            s_task = NULL;   /* pn_start() may start a new worker from now on */
+            pn_unlock();
+            vTaskDelete(NULL);
+            return;
+        }
         bool wanted = s_refresh_wanted;
         s_refresh_wanted = false;
         pn_unlock();
@@ -965,8 +977,51 @@ static void worker(void *arg)
     }
 }
 
+/* Start (again) the worker; the tables stay in PSRAM between an app close and
+ * the next open (internal app), so reopening shows the prices at once. */
+static esp_err_t start_worker(void)
+{
+    pn_lock();
+    s_quit = false;
+    bool running = s_task != NULL;   /* still finishing after a pn_stop(): keep it */
+    pn_unlock();
+    if (running)
+    {
+        return ESP_OK;
+    }
+    TaskHandle_t task = NULL;
+    if (xTaskCreatePinnedToCore(worker, "pieno", 8192, NULL, 3, &task, tskNO_AFFINITY) != pdPASS)
+    {
+        ESP_LOGE(TAG, "No memory for the worker");
+        return ESP_ERR_NO_MEM;
+    }
+    pn_lock();
+    s_task = task;
+    pn_unlock();
+    return ESP_OK;
+}
+
+void pn_stop(void)
+{
+    if (s_lock == NULL)
+    {
+        return;
+    }
+    pn_lock();
+    s_quit = true;
+    if (s_task != NULL)
+    {
+        xTaskNotifyGive(s_task);
+    }
+    pn_unlock();
+}
+
 esp_err_t pn_start(void)
 {
+    if (s_table != NULL)
+    {
+        return start_worker();
+    }
     s_lock = xSemaphoreCreateMutex();
     s_table = heap_caps_calloc(PN_MAX_STATIONS, sizeof(pn_station_t), MALLOC_CAP_SPIRAM);
     s_history = heap_caps_calloc(PN_HISTORY_DAYS * 8, sizeof(pn_day_t), MALLOC_CAP_SPIRAM);
@@ -987,5 +1042,5 @@ esp_err_t pn_start(void)
         }
     }
     snprintf(s_status.message, sizeof(s_status.message), "%s", s_count ? "Prezzi dalla memoria" : "Primo download...");
-    return sys_task_create(worker, "pieno", 8192, NULL, 3, SYS_CORE_ANY) ? ESP_OK : ESP_ERR_NO_MEM;
+    return start_worker();
 }

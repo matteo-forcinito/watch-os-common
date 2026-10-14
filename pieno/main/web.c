@@ -19,8 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern const char dashboard_html_start[] asm("_binary_dashboard_html_start");
-extern const char dashboard_html_end[] asm("_binary_dashboard_html_end");
+extern const char dashboard_html_start[] asm("_binary_pieno_dashboard_html_start");
+extern const char dashboard_html_end[] asm("_binary_pieno_dashboard_html_end");
 
 static void add_settings(cJSON *out, const pn_settings_t *s)
 {

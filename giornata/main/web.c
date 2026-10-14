@@ -31,8 +31,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern const char dashboard_html_start[] asm("_binary_dashboard_html_start");
-extern const char dashboard_html_end[] asm("_binary_dashboard_html_end");
+extern const char dashboard_html_start[] asm("_binary_giornata_dashboard_html_start");
+extern const char dashboard_html_end[] asm("_binary_giornata_dashboard_html_end");
 
 #define GUARD() do { if (!appkit_authorized(request)) return appkit_unauthorized(request); } while (0)
 

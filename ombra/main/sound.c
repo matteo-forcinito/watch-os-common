@@ -19,6 +19,8 @@
 #include "hardware/board.h"
 #include "services/sound.h"
 
+#include "esp_attr.h"
+
 #include <stdatomic.h>
 #include <string.h>
 
@@ -29,6 +31,7 @@
 static atomic_uint s_find;
 static atomic_bool s_enabled = true, s_alert;
 static TaskHandle_t s_task;
+static atomic_bool s_quit;
 static uint32_t s_seed = 0x2468ACE1u;
 
 static uint32_t next_random(void)
@@ -53,7 +56,7 @@ static void open_speaker(bool *running)
 
 static void beeps(void)
 {
-    static int16_t block[BLOCK];
+    EXT_RAM_BSS_ATTR static int16_t block[BLOCK];
     for (int beep = 0; beep < 3; beep++)
     {
         /* 150 ms of 1.6 kHz square wave with soft edges, 100 ms silence. */
@@ -75,12 +78,20 @@ static void beeps(void)
 static void sound_task(void *arg)
 {
     (void)arg;
-    static int16_t block[BLOCK];
+    EXT_RAM_BSS_ATTR static int16_t block[BLOCK];
     bool running = false;
     int click_left = 0;
     int32_t amplitude = 0;
     for (;;)
     {
+        if (atomic_load(&s_quit))
+        {
+            if (running && !sound_alarm_playing())
+                audio_stop();
+            s_task = NULL;
+            vTaskDelete(NULL);
+            return;
+        }
         if (sound_alarm_playing())
         {
             /* An alarm owns the speaker: stay silent, never stop it (the sound service does). */
@@ -145,9 +156,22 @@ void ombra_sound_init(void)
 {
     if (!board_info()->has_audio)
         return;
+    atomic_store(&s_quit, false);
+    if (s_task != NULL)
+        return;   /* still running (reopened right after a close) */
     s_seed ^= esp_random();
-    sys_task_create(sound_task, "ombra_snd", 3072, NULL, 4, tskNO_AFFINITY);
-    s_task = xTaskGetHandle("ombra_snd");
+    TaskHandle_t task = NULL;
+    if (xTaskCreatePinnedToCore(sound_task, "ombra_snd", 2304, NULL, 4, &task, tskNO_AFFINITY) == pdPASS)
+        s_task = task;
+}
+
+void ombra_sound_stop(void)
+{
+    atomic_store(&s_find, 0);
+    atomic_store(&s_quit, true);
+    TaskHandle_t task = s_task;
+    if (task)
+        xTaskNotifyGive(task);
 }
 
 bool ombra_sound_available(void) { return board_info()->has_audio; }

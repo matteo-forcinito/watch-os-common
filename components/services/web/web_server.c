@@ -18,6 +18,8 @@
 
 #include "cJSON.h"
 #include "esp_http_server.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -55,6 +57,25 @@ static int64_t s_pair_reset;
 static int s_pair_attempts;
 
 static httpd_handle_t s_server = NULL;
+static int s_users;                      /* web_server_start() calls not yet stopped */
+static SemaphoreHandle_t s_lock;
+
+#define FOLDERS_MAX 8
+typedef struct
+{
+    char uri[24];
+    esp_err_t (*handler)(httpd_req_t *req);
+} folder_t;
+static folder_t s_folders[FOLDERS_MAX];
+static int s_folder_count;
+
+static void register_folder(const folder_t *folder)
+{
+    httpd_uri_t route = {.uri = folder->uri, .method = HTTP_GET, .handler = folder->handler};
+    httpd_register_uri_handler(s_server, &route);
+    route.method = HTTP_POST;
+    httpd_register_uri_handler(s_server, &route);
+}
 static bool s_ap_mode = false;
 static char s_ap_name[33] = "";
 static char s_error[64] = "";
@@ -207,6 +228,13 @@ static bool same_origin(httpd_req_t *req)
     }
     snprintf(expected, sizeof(expected), "http://%s", host);
     return strcmp(origin, expected) == 0;
+}
+
+static bool authorized(httpd_req_t *req);
+
+bool web_server_authorized(httpd_req_t *req)
+{
+    return authorized(req);
 }
 
 static bool authorized(httpd_req_t *req)
@@ -810,6 +838,7 @@ static esp_err_t start_httpd(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 64;
     config.stack_size = 6144;
+    config.uri_match_fn = httpd_uri_match_wildcard; /* folders like /pieno/... */
     config.lru_purge_enable = true;
     config.recv_wait_timeout = 15;
 
@@ -849,12 +878,18 @@ static esp_err_t start_httpd(void)
 
     web_files_register(s_server);   /* SD card file manager */
     web_system_register(s_server);  /* device, apps, market, system update */
+    for (int i = 0; i < s_folder_count; i++)
+    {
+        register_folder(&s_folders[i]);
+    }
     httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, handle_not_found);
 
     return ESP_OK;
 }
 
-esp_err_t web_server_start(void)
+static void shutdown_server(void);
+
+static esp_err_t start_locked(void)
 {
     if (s_server != NULL)
     {
@@ -883,7 +918,7 @@ esp_err_t web_server_start(void)
     {
         snprintf(s_error, sizeof(s_error), "Server non avviato: %s", esp_err_to_name(err));
         ESP_LOGE(TAG, "%s", s_error);
-        web_server_stop();
+        shutdown_server();
         return err;
     }
 
@@ -898,7 +933,73 @@ esp_err_t web_server_start(void)
     return ESP_OK;
 }
 
+static void lock_init(void)
+{
+    static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+    taskENTER_CRITICAL(&mux);
+    if (s_lock == NULL)
+    {
+        s_lock = xSemaphoreCreateMutex();
+    }
+    taskEXIT_CRITICAL(&mux);
+}
+
+esp_err_t web_server_start(void)
+{
+    lock_init();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    esp_err_t err = start_locked();
+    if (err == ESP_OK)
+    {
+        s_users++;
+    }
+    xSemaphoreGive(s_lock);
+    return err;
+}
+
 void web_server_stop(void)
+{
+    lock_init();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_users > 0 && --s_users == 0)
+    {
+        shutdown_server();
+    }
+    xSemaphoreGive(s_lock);
+}
+
+esp_err_t web_server_add_folder(const char *folder, esp_err_t (*handler)(httpd_req_t *req))
+{
+    lock_init();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+    int i = 0;
+    while (i < s_folder_count && strcmp(s_folders[i].uri, folder) != 0)
+    {
+        i++;
+    }
+    if (i == s_folder_count)
+    {
+        if (s_folder_count == FOLDERS_MAX || strlen(folder) >= sizeof(s_folders[0].uri))
+        {
+            err = ESP_ERR_NO_MEM;
+        }
+        else
+        {
+            snprintf(s_folders[i].uri, sizeof(s_folders[i].uri), "%s", folder);
+            s_folders[i].handler = handler;
+            s_folder_count++;
+            if (s_server != NULL)
+            {
+                register_folder(&s_folders[i]);
+            }
+        }
+    }
+    xSemaphoreGive(s_lock);
+    return err;
+}
+
+static void shutdown_server(void)
 {
     if (s_server != NULL)
     {

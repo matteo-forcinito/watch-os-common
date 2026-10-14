@@ -7,6 +7,7 @@
 #include "ui/ui.h"
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include <stdio.h>
@@ -113,9 +114,23 @@ static void show_ready(void *arg)
     wifi_tick(NULL);
 }
 
+/* The server is shared (internal apps' dashboards use it too): every successful
+ * start is paired with one stop, done here if the app closed while starting. */
+static SemaphoreHandle_t s_hold_lock;
+static bool s_holds_server;
+static bool s_open;
+
 static void start_task(void *arg)
 {
-    web_server_start();
+    bool ok = web_server_start() == ESP_OK;
+    xSemaphoreTake(s_hold_lock, portMAX_DELAY);
+    bool keep = ok && s_open && (int)(intptr_t)arg == s_generation;
+    s_holds_server = s_holds_server || keep;
+    xSemaphoreGive(s_hold_lock);
+    if (ok && !keep)
+    {
+        web_server_stop();
+    }
     ui_async(show_ready, arg);
     vTaskDelete(NULL);
 }
@@ -128,6 +143,11 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_set_flex_align(s_page, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     ui_text(s_page, "Avvio Wi-Fi...", true);
 
+    if (s_hold_lock == NULL)
+    {
+        s_hold_lock = xSemaphoreCreateMutex();
+    }
+    s_open = true;
     if (!sys_task_create(start_task, "web_start", 4096, (void *)(intptr_t)s_generation, 3, SYS_CORE_ANY))
     {
         ui_text(s_page, "Memoria insufficiente per avviare il server.", true);
@@ -155,7 +175,16 @@ static void destroy(void)
         s_timer = NULL;
     }
 
-    sys_task_create(stop_task, "web_stop", 4096, NULL, 3, SYS_CORE_ANY);
+    /* the mutex is only held for a few instructions by start_task */
+    xSemaphoreTake(s_hold_lock, portMAX_DELAY);
+    s_open = false;
+    bool held = s_holds_server;
+    s_holds_server = false;
+    xSemaphoreGive(s_hold_lock);
+    if (held)
+    {
+        sys_task_create(stop_task, "web_stop", 4096, NULL, 3, SYS_CORE_ANY);
+    }
 }
 
 const app_t web_app = {

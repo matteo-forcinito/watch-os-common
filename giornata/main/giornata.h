@@ -159,6 +159,14 @@ bool gd_source_put(int index, const gd_source_t *source);   /* index -1 = new */
 bool gd_source_delete(int index);
 void gd_set_settings(const gd_settings_t *settings);
 void gd_sync_now(void);
+/* Internal app (CONFIG_APPKIT_HOSTED): the UI is open / closed. Closed, the
+ * reminders become OS notifications and calendars sync every few hours. */
+void gd_app_open(bool open);
+bool gd_app_is_open(void);
+/* From the agenda tick: a background sync when it is due (internal app). */
+void gd_sync_background_tick(void);
+/* Tick period for the app state (internal app: slower when closed). */
+void gd_agenda_retime(void);
 
 /* Focus. */
 void gd_focus(gd_focus_t *out);
@@ -188,6 +196,10 @@ void gd_agenda_start(void);
 /* UI and dashboard. */
 void giornata_ui_create(lv_obj_t *screen);
 bool giornata_ui_back(void);
+/* Internal app closed (widgets already deleted by the app manager). */
+void giornata_ui_destroy(void);
+/* Internal app: the agenda service, at boot (app.c). */
+void giornata_service_start(void);
 esp_err_t giornata_web_start(void);
 
 #endif

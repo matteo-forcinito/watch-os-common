@@ -20,7 +20,11 @@
 #include "core/power.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#if !CONFIG_APPKIT_HOSTED
 #include "extapp_sdk.h"
+#else
+#include "core/app.h"
+#endif
 #include "hardware/board.h"
 #include "ui/ui.h"
 #include "sdkconfig.h"
@@ -936,7 +940,13 @@ static void menu_action(lv_event_t *e)
     else if (what == 4)
         go(s_ui, MIX);
     else if (what == 5)
+    {
+#if CONFIG_APPKIT_HOSTED
+        app_back();
+#else
         extapp_return_to_launcher();
+#endif
+    }
 }
 
 static void sound_switch(lv_event_t *e)
@@ -1070,9 +1080,15 @@ static void tick(lv_timer_t *timer)
 bool ombra_ui_back(void)
 {
     ombra_ui_t *ui = s_ui;
+    if (ui == NULL)
+        return false;
     switch (ui->view)
     {
+#if CONFIG_APPKIT_HOSTED
+    case FIELD: return false;   /* internal app: the app manager closes it */
+#else
     case FIELD: extapp_return_to_launcher(); break;
+#endif
     case FIND: go(ui, DETAIL); break;
     case DETAIL: go(ui, ui->back_to == SHIELD ? SHIELD : NEARBY); break;
     case MENU: go(ui, FIELD); break;
@@ -1095,7 +1111,19 @@ void ombra_ui_create(lv_obj_t *screen)
     ui->timer = lv_timer_create(tick, 62, ui); /* 16 Hz */
 }
 
-#if CONFIG_WATCH_DEV_CONSOLE
+void ombra_ui_destroy(void)
+{
+    ombra_ui_t *ui = s_ui;
+    if (ui == NULL)
+        return;
+    s_ui = NULL;
+    if (ui->timer != NULL)
+        lv_timer_delete(ui->timer);
+    free(ui->snapshot);
+    free(ui);
+}
+
+#if CONFIG_WATCH_DEV_CONSOLE && !CONFIG_APPKIT_HOSTED
 /* QA only: "view field|menu|nearby|trackers|detail|find|shield|mix" opens a page
  * (detail and find on the nearest device), so screenshots need no taps. */
 #include "core/devcon.h"

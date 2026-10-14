@@ -102,6 +102,8 @@ typedef struct
 } cp_finder_t;
 
 esp_err_t cp_start(void);
+/* Internal app closed: the probe releases Wi-Fi, the sound task ends. */
+void cp_stop(void);
 void cp_lock(void);
 void cp_unlock(void);
 uint32_t cp_revision(void);
@@ -144,11 +146,14 @@ void cp_store_load(void);
 void cp_store_flush(void);
 void cp_changed(bool save);
 void cp_sound_init(void);
+void cp_sound_stop(void);
 void cp_sound_heat(int heat, bool on_target);   /* 0..100, -1 = silent */
 
 /* UI and dashboard. */
 void copertura_ui_create(lv_obj_t *screen);
 bool copertura_ui_back(void);
+/* Internal app closed (widgets already deleted by the app manager). */
+void copertura_ui_destroy(void);
 esp_err_t copertura_web_start(void);
 
 #endif

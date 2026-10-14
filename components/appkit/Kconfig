@@ -1,0 +1,11 @@
+menu "appkit"
+
+config APPKIT_HOSTED
+    bool "Apps built into the OS (dashboards on the OS web server)"
+    default n
+    help
+        Set in the OS firmwares: internal apps add their dashboard to the OS
+        web server under /<app>/ and the OS rings the alarms. External apps
+        leave it off and run their own server.
+
+endmenu

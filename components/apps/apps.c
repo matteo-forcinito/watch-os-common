@@ -34,6 +34,12 @@ static const app_t *const s_apps[] = {
     &sdcard_app,
     &battery_app,
     &market_app,
+#if CONFIG_APPKIT_HOSTED
+    &giornata_app,
+    &pieno_app,
+    &copertura_app,
+    &ombra_app,
+#endif
     &settings_app,
     /* hidden */
     &alarm_edit_app,
@@ -249,6 +255,9 @@ static void on_focus_changed(bool on)
 void apps_init(void)
 {
     market_init();
+#if CONFIG_APPKIT_HOSTED
+    giornata_service_start();   /* reminders ring with the app closed too */
+#endif
     for (size_t i = 0; i < sizeof(s_apps) / sizeof(s_apps[0]); i++)
     {
         /* The USB drive lends the card to the PC: it needs both the ESP32's own USB port and a card slot. */

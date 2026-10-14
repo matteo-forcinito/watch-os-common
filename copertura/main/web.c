@@ -21,6 +21,7 @@
 #include "appkit.h"
 #include "services/storage.h"
 
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 
 #include <stdio.h>
@@ -29,8 +30,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-extern const char dashboard_html_start[] asm("_binary_dashboard_html_start");
-extern const char dashboard_html_end[] asm("_binary_dashboard_html_end");
+extern const char dashboard_html_start[] asm("_binary_copertura_dashboard_html_start");
+extern const char dashboard_html_end[] asm("_binary_copertura_dashboard_html_end");
 
 #define GUARD() do { if (!appkit_authorized(request)) return appkit_unauthorized(request); } while (0)
 #define PLAN_MAX (900 * 1024)
@@ -371,7 +372,7 @@ static esp_err_t rooms_post(httpd_req_t *request)
 {
     GUARD();
     cJSON *root = body_json(request);
-    static char list[CP_MAX_ROOMS][CP_ROOM];
+    EXT_RAM_BSS_ATTR static char list[CP_MAX_ROOMS][CP_ROOM];
     int n = 0;
     const cJSON *item;
     const cJSON *rooms = cJSON_GetObjectItemCaseSensitive(root, "rooms");

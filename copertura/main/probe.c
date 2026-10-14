@@ -11,6 +11,7 @@
 #include "core/sys.h"
 #include "services/wifi.h"
 
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
@@ -32,27 +33,29 @@ static const char *TAG = "copertura";
 #define PINGS 20
 
 static SemaphoreHandle_t s_lock;
-static cp_live_t s_live;
-static int8_t s_ring_rssi[CP_LIVE];
-static int16_t s_ring_ping[CP_LIVE];
+EXT_RAM_BSS_ATTR static cp_live_t s_live;
+EXT_RAM_BSS_ATTR static int8_t s_ring_rssi[CP_LIVE];
+EXT_RAM_BSS_ATTR static int16_t s_ring_ping[CP_LIVE];
 static int s_ring_next, s_ring_count;
-static int16_t s_pings[PINGS];        /* last results, -1 = lost */
+EXT_RAM_BSS_ATTR static int16_t s_pings[PINGS];        /* last results, -1 = lost */
 static int s_ping_next, s_ping_count;
 static int16_t s_last_ping = -1;
 static esp_ping_handle_t s_ping;
 static uint32_t s_ping_gateway;
 static float s_ema;
 
-static cp_measure_t s_measure;
+EXT_RAM_BSS_ATTR static cp_measure_t s_measure;
 static int64_t s_measure_end;
 static int s_m_samples, s_m_sum, s_m_min, s_m_max;
 static int s_m_sent, s_m_answered, s_m_ping_sum, s_m_ping_max;
 static uint8_t s_m_bssid[6], s_m_channel;
 static uint8_t s_m_floor;
 
-static cp_finder_t s_finder;
+EXT_RAM_BSS_ATTR static cp_finder_t s_finder;
 static bool s_scan_wanted;
-static cp_ap_t s_aps[CP_MAX_APS];
+static volatile bool s_quit;            /* cp_stop(): the probe task ends */
+static volatile bool s_probe_running;
+EXT_RAM_BSS_ATTR static cp_ap_t s_aps[CP_MAX_APS];
 static int s_ap_count;
 static int64_t s_ap_time;
 
@@ -411,6 +414,24 @@ static void probe_task(void *arg)
     int64_t last_scan = 0;
     for (;;)
     {
+        if (s_quit)
+        {
+            if (s_ping != NULL)
+            {
+                esp_ping_stop(s_ping);
+                esp_ping_delete_session(s_ping);
+                s_ping = NULL;
+            }
+            if (held)
+            {
+                wifi_set_fast(false);
+                wifi_release();
+            }
+            cp_store_flush();
+            s_probe_running = false;
+            vTaskDelete(NULL);
+            return;
+        }
         if (!held)
         {
             held = wifi_acquire(20000) == ESP_OK;
@@ -446,12 +467,32 @@ static void probe_task(void *arg)
 
 esp_err_t cp_start(void)
 {
-    s_lock = xSemaphoreCreateMutex();
     if (s_lock == NULL)
     {
+        s_lock = xSemaphoreCreateMutex();
+        if (s_lock == NULL)
+        {
+            return ESP_ERR_NO_MEM;
+        }
+        cp_store_load();   /* once: the points stay in PSRAM between opens (internal app) */
+    }
+    s_quit = false;
+    cp_sound_init();
+    if (s_probe_running)
+    {
+        return ESP_OK;   /* still ending after a cp_stop(): it goes on */
+    }
+    s_probe_running = true;
+    if (!sys_task_create(probe_task, "cp_probe", 6144, NULL, 4, SYS_CORE_ANY))
+    {
+        s_probe_running = false;
         return ESP_ERR_NO_MEM;
     }
-    cp_store_load();
-    cp_sound_init();
-    return sys_task_create(probe_task, "cp_probe", 6144, NULL, 4, SYS_CORE_ANY) ? ESP_OK : ESP_ERR_NO_MEM;
+    return ESP_OK;
+}
+
+void cp_stop(void)
+{
+    s_quit = true;   /* the probe task releases Wi-Fi within 0.5 s */
+    cp_sound_stop();
 }
