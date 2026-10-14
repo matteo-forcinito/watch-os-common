@@ -17,6 +17,7 @@
 #include "services/web_server.h"
 #include "services/wifi.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -177,10 +178,26 @@ static esp_err_t dispatch(httpd_req_t *request)
 
 /* -------------------------------------------------------- start/stop */
 
+/* Wi-Fi + the server need about this much contiguous internal RAM. */
+#define NEEDED_BLOCK (14 * 1024)
+
 static void start_task(void *arg)
 {
     int generation = (int)(intptr_t)arg;
-    bool ok = web_server_start() == ESP_OK;
+    if (!web_server_running() && heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < NEEDED_BLOCK)
+    {
+        ESP_LOGW(TAG, "Dashboard not started: %u bytes of internal RAM in one block",
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        if (generation == atomic_load(&s_generation))
+        {
+            atomic_store(&s_state, APPKIT_WEB_NO_MEMORY);
+        }
+        xSemaphoreGive(s_lock);
+        vTaskDelete(NULL);
+        return;
+    }
+    bool ok = web_server_start_wifi_only() == ESP_OK;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     bool current = generation == atomic_load(&s_generation) && s_config != NULL;
     if (ok && current)
@@ -264,15 +281,15 @@ void appkit_web_activate(void)
     xSemaphoreGive(s_lock);
     if (start && !sys_task_create(start_task, "appkit_web", 4096, (void *)(intptr_t)generation, 4, SYS_CORE_ANY))
     {
-        atomic_store(&s_state, APPKIT_WEB_FAILED);
+        atomic_store(&s_state, APPKIT_WEB_NO_MEMORY);   /* not retried by itself */
     }
 }
 
-static void stop_task(void *arg)
+/* Closing must never need memory: the stop runs on the sys worker queue. */
+static void stop_job(void *arg)
 {
     (void)arg;
     web_server_stop();
-    vTaskDelete(NULL);
 }
 
 /* Called from the app's close (LVGL task): never blocks on the network. */
@@ -291,6 +308,9 @@ void appkit_web_stop(void)
     xSemaphoreGive(s_lock);
     if (held)
     {
-        sys_task_create(stop_task, "appkit_stop", 4096, NULL, 3, SYS_CORE_ANY);
+        while (!sys_post(stop_job, NULL))
+        {
+            vTaskDelay(pdMS_TO_TICKS(20));   /* queue full: it drains in a moment */
+        }
     }
 }

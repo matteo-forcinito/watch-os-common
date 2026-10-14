@@ -156,11 +156,12 @@ static void create(lv_obj_t *screen, void *arg)
     s_timer = lv_timer_create(wifi_tick, 1000, NULL);
 }
 
-static void stop_task(void *arg)
+/* Closing must never need memory: the stop runs on the sys worker queue
+ * (a new task could fail exactly when RAM is short and leave Wi-Fi on). */
+static void stop_job(void *arg)
 {
     (void)arg;
     web_server_stop();
-    vTaskDelete(NULL);
 }
 
 static void destroy(void)
@@ -183,7 +184,10 @@ static void destroy(void)
     xSemaphoreGive(s_hold_lock);
     if (held)
     {
-        sys_task_create(stop_task, "web_stop", 4096, NULL, 3, SYS_CORE_ANY);
+        while (!sys_post(stop_job, NULL))
+        {
+            vTaskDelay(pdMS_TO_TICKS(20));   /* queue full: it drains in a moment */
+        }
     }
 }
 

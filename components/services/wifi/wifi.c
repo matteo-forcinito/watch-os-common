@@ -346,8 +346,78 @@ static wifi_mode_t wanted_mode(bool need_sta)
     return (need_sta || s_sta_wanted || wifi_is_connected()) ? WIFI_MODE_APSTA : WIFI_MODE_AP;
 }
 
-static void radio_on(wifi_mode_t mode)
+/*
+ * The Wi-Fi driver takes ~75 KB of internal RAM: it exists only while the
+ * radio is on (esp_wifi_init at the first use, esp_wifi_deinit when it goes
+ * off), so a watch with Wi-Fi off keeps that memory for apps and Bluetooth.
+ * The network interfaces live and die with it.
+ */
+static bool s_driver = false;
+
+static bool driver_up(void)
 {
+    if (s_driver)
+    {
+        return true;
+    }
+
+    if (s_sta == NULL)
+    {
+        s_sta = esp_netif_create_default_wifi_sta();
+    }
+
+    if (s_ap == NULL)
+    {
+        s_ap = esp_netif_create_default_wifi_ap();
+    }
+
+    wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
+    esp_err_t err = esp_wifi_init(&config);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Driver not started: %s", esp_err_to_name(err));
+        sys_heap_log("wifi init");
+        return false;
+    }
+
+    esp_wifi_set_storage(WIFI_STORAGE_RAM);   /* our list is in NVS already */
+    s_driver = true;
+
+    return true;
+}
+
+static void driver_down(void)
+{
+    if (!s_driver)
+    {
+        return;
+    }
+
+    esp_wifi_deinit();
+    s_driver = false;
+
+    if (s_sta != NULL)
+    {
+        esp_netif_destroy_default_wifi(s_sta);
+        s_sta = NULL;
+    }
+
+    if (s_ap != NULL)
+    {
+        esp_netif_destroy_default_wifi(s_ap);
+        s_ap = NULL;
+    }
+}
+
+/* False: no memory for the driver (the caller's job fails like a missing network). */
+static bool radio_on(wifi_mode_t mode)
+{
+    if (!driver_up())
+    {
+        return false;
+    }
+
     if (!s_started)
     {
         esp_wifi_set_mode(mode);
@@ -360,6 +430,8 @@ static void radio_on(wifi_mode_t mode)
     }
 
     apply_power_save();
+
+    return true;
 }
 
 /* Phones connected to our access point (scans and joins would move its channel). */
@@ -406,6 +478,7 @@ static void radio_off(void)
     xEventGroupClearBits(s_events, CONNECTED_BIT | FAILED_BIT);
     esp_wifi_stop();
     s_started = false;
+    driver_down();
     state_set(STATE_WIFI, STATE_WIFI_OFF);
     ESP_LOGI(TAG, "Off");
 }
@@ -441,7 +514,10 @@ static esp_err_t join(const char *ssid, const char *password, uint32_t timeout_m
     config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     config.sta.listen_interval = 3;   /* wake for every 3rd beacon: less power */
 
-    radio_on(wanted_mode(true));
+    if (!radio_on(wanted_mode(true)))
+    {
+        return ESP_ERR_NO_MEM;
+    }
 
     esp_wifi_disconnect();
     xEventGroupClearBits(s_events, CONNECTED_BIT | FAILED_BIT);
@@ -538,12 +614,7 @@ esp_err_t wifi_service_init(void)
         return err;
     }
 
-    s_sta = esp_netif_create_default_wifi_sta();
-    s_ap = esp_netif_create_default_wifi_ap();
-
-    wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&config));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));   /* our list is in NVS already */
+    /* The driver and the interfaces start with the radio (driver_up). */
 
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event_handler, NULL);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event_handler, NULL);

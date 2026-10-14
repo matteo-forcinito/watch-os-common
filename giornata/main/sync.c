@@ -42,12 +42,16 @@ static int64_t s_last_round;           /* esp_timer us of the last round start *
  * (CONFIG_APPKIT_HOSTED): the sync task lives only while the app is open,
  * plus a background round every few hours for the reminders. */
 #if CONFIG_APPKIT_HOSTED
+#define GD_HOSTED 1
 static volatile bool s_app_open = false;
 #else
+#define GD_HOSTED 0
 static volatile bool s_app_open = true;
 #endif
 
 #define BACKGROUND_US (3LL * 3600 * 1000000)
+#define BOOT_QUIET_US (15LL * 60 * 1000000)   /* the boot has its own Wi-Fi jobs (time, weather) */
+#define BACKGROUND_MIN_FREE (115 * 1024)
 
 extern const char gts_root_r1_start[] asm("_binary_gts_root_r1_pem_start");
 
@@ -116,8 +120,17 @@ void gd_app_open(bool open)
 void gd_sync_background_tick(void)
 {
 #if CONFIG_APPKIT_HOSTED
-    if (s_app_open || s_running || (s_last_round != 0 && esp_timer_get_time() - s_last_round < BACKGROUND_US))
+    int64_t now = esp_timer_get_time();
+    if (s_app_open || s_running || now < BOOT_QUIET_US ||
+        (s_last_round != 0 && now - s_last_round < BACKGROUND_US))
     {
+        return;
+    }
+    /* Wi-Fi (~85 KB) + this task (8 KB) must fit with room to spare: with
+     * Bluetooth on they do not, and the calendars wait for the app to open. */
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < BACKGROUND_MIN_FREE)
+    {
+        s_last_round = now;   /* look again in 3 hours */
         return;
     }
     gd_lock();
@@ -167,8 +180,21 @@ static void defer(const ics_event_t *event, void *ctx)
 }
 
 /* Download one calendar into the reader. Returns an error text or NULL. */
+/* A round started with the app open stops as soon as the app closes: Wi-Fi
+ * and this task's memory go back to the other apps (internal app only). */
+static volatile bool s_round_foreground;
+
+static bool cancelled(void)
+{
+    return s_round_foreground && !s_app_open;
+}
+
 static const char *fetch(const char *link, ics_reader_t *reader)
 {
+    if (cancelled())
+    {
+        return "Interrotto: app chiusa";
+    }
     char url[260];
     if (strncmp(link, "webcal://", 9) == 0)
     {
@@ -234,6 +260,11 @@ static const char *fetch(const char *link, ics_reader_t *reader)
     bool first = true;
     while (error == NULL)
     {
+        if (cancelled())
+        {
+            error = "Interrotto: app chiusa";
+            break;
+        }
         int got = esp_http_client_read(client, chunk, 4096);
         if (got < 0)
         {
@@ -408,6 +439,7 @@ static void sync_task(void *arg)
             return;
         }
         s_last_round = esp_timer_get_time();
+        s_round_foreground = GD_HOSTED && s_app_open;
         gd_lock();
         bool any = false;
         for (int i = 0; i < gd_source_count(); i++)

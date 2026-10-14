@@ -53,6 +53,7 @@ typedef enum
     APPKIT_WEB_JOINING,          /* waiting for Wi-Fi */
     APPKIT_WEB_ON,
     APPKIT_WEB_FAILED,           /* no known network reachable: retried every 30 s */
+    APPKIT_WEB_NO_MEMORY,        /* internal app: not enough internal RAM to start Wi-Fi */
 } appkit_web_state_t;
 
 /* Start serving (non-blocking). The config must stay valid while running. */

@@ -3,37 +3,26 @@
  * external app's entry instead; the rest of the code is the same.
  *
  * The OS Bluetooth (ble_companion) scans for Ombra while the app is open, so
- * there is one Bluetooth owner and the phone stays connected. Bluetooth off:
- * the app offers to switch it on.
+ * there is one Bluetooth owner and the phone stays connected. Bluetooth off in
+ * the settings: it is on only while Ombra is open.
  */
 #include "ombra.h"
 
 #include "core/app.h"
-#include "core/settings.h"
+#include "companion/ble_companion.h"
 #include "esp_log.h"
 #include "ui/ui.h"
 
 static const char *TAG = "ombra";
 
-static void enable_bluetooth(lv_event_t *e)
-{
-    (void)e;
-    settings_t s = *settings_get();
-    s.ble_enabled = true;
-    settings_save(&s);   /* the companion starts Bluetooth; reopen Ombra */
-    app_back();
-}
+static bool s_holding;
 
 static void create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
-    if (!ombra_bluetooth_on())
-    {
-        lv_obj_t *page = ui_page(screen, "Ombra");
-        ui_text(page, "Ombra ascolta i segnali Bluetooth intorno a te: accendi il Bluetooth.", true);
-        ui_button(page, "Accendi Bluetooth", 0xBF5AF2, enable_bluetooth, NULL);
-        return;
-    }
+    /* Bluetooth off in the settings: on for this session only, off again at close. */
+    ble_companion_hold(true);
+    s_holding = true;
     if (ombra_start() != ESP_OK)
     {
         ESP_LOGE(TAG, "Scanner not started");
@@ -49,6 +38,11 @@ static void destroy(void)
     ombra_stop();
     ombra_sound_stop();
     ombra_ui_destroy();
+    if (s_holding)
+    {
+        s_holding = false;
+        ble_companion_hold(false);
+    }
 }
 
 const app_t ombra_app = {

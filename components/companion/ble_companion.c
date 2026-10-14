@@ -492,6 +492,7 @@ static void start_advertising(void)
  * connection (half duty cycle) and resumes after a Bluetooth restart. */
 static int (*volatile s_scan_cb)(struct ble_gap_event *event, void *arg);
 static volatile bool s_synced;
+static int s_holds;   /* apps that need Bluetooth now (ble_companion_hold, sys worker only) */
 
 static int scan_event(struct ble_gap_event *event, void *arg);
 
@@ -609,7 +610,7 @@ static void retry_job(void *arg)
 {
     (void)arg;
 
-    if (settings_get()->ble_enabled && !s_running)
+    if ((settings_get()->ble_enabled || s_holds > 0) && !s_running)
     {
         start();
     }
@@ -707,7 +708,7 @@ static void stop(void)
 
 static void apply_enabled_job(void *arg)
 {
-    bool enable = arg != NULL;
+    bool enable = arg != NULL || s_holds > 0;
 
     if (enable != s_running)
     {
@@ -715,10 +716,24 @@ static void apply_enabled_job(void *arg)
     }
 }
 
+static void hold_job(void *arg)
+{
+    s_holds += arg != NULL ? 1 : (s_holds > 0 ? -1 : 0);
+    apply_enabled_job(settings_get()->ble_enabled ? (void *)1 : NULL);
+}
+
+void ble_companion_hold(bool on)
+{
+    while (!sys_post(hold_job, on ? (void *)1 : NULL))
+    {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 /* Bluetooth switched on/off anywhere (settings page, web page, control center). */
 static void settings_changed(const settings_t *settings)
 {
-    if (settings->ble_enabled != s_running)
+    if ((settings->ble_enabled || s_holds > 0) != s_running)
     {
         sys_post(apply_enabled_job, settings->ble_enabled ? (void *)1 : NULL);
     }

@@ -889,7 +889,7 @@ static esp_err_t start_httpd(void)
 
 static void shutdown_server(void);
 
-static esp_err_t start_locked(void)
+static esp_err_t start_locked(bool allow_ap)
 {
     if (s_server != NULL)
     {
@@ -898,6 +898,13 @@ static esp_err_t start_locked(void)
 
     s_error[0] = '\0';
     s_ap_mode = wifi_acquire(15000) != ESP_OK;
+
+    if (s_ap_mode && !allow_ap)
+    {
+        s_ap_mode = false;
+        snprintf(s_error, sizeof(s_error), "Wi-Fi non raggiungibile");
+        return ESP_ERR_TIMEOUT;
+    }
 
     if (s_ap_mode)
     {
@@ -944,17 +951,27 @@ static void lock_init(void)
     taskEXIT_CRITICAL(&mux);
 }
 
-esp_err_t web_server_start(void)
+static esp_err_t start_counted(bool allow_ap)
 {
     lock_init();
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    esp_err_t err = start_locked();
+    esp_err_t err = start_locked(allow_ap);
     if (err == ESP_OK)
     {
         s_users++;
     }
     xSemaphoreGive(s_lock);
     return err;
+}
+
+esp_err_t web_server_start(void)
+{
+    return start_counted(true);
+}
+
+esp_err_t web_server_start_wifi_only(void)
+{
+    return start_counted(false);
 }
 
 void web_server_stop(void)

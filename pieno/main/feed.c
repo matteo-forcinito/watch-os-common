@@ -525,6 +525,11 @@ static bool stream(const char *url, line_fn_t fn, void *ctx, reader_t *r, int ba
     int last_percent = -1;
     while (ok)
     {
+        if (s_quit)
+        {
+            ok = false;   /* internal app closed: give Wi-Fi and memory back now */
+            break;
+        }
         int got = esp_http_client_read(client, chunk, 4096);
         if (got < 0)
         {

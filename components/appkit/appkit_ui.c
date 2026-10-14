@@ -52,6 +52,7 @@ static void refresh(lv_timer_t *timer)
             [APPKIT_WEB_JOINING] = "Connessione al Wi-Fi...",
             [APPKIT_WEB_ON] = "Inquadra con il telefono o apri dal PC",
             [APPKIT_WEB_FAILED] = "Wi-Fi non raggiungibile: riprovo tra poco",
+            [APPKIT_WEB_NO_MEMORY] = "Memoria insufficiente: chiudi altre app o spegni il Bluetooth",
         };
         lv_label_set_text(p->state, text[state]);
         lv_obj_set_hidden(p->frame, state != APPKIT_WEB_ON);

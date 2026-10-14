@@ -61,6 +61,11 @@ bool ble_companion_scan_start(int (*cb)(struct ble_gap_event *event, void *arg))
 void ble_companion_scan_stop(void);
 bool ble_companion_scanning(void);
 
+/* Bluetooth on for an app's session even if it is off in the settings
+ * (Ombra): hold(true) at open, hold(false) at close switches it off again
+ * unless the user wants it on. Non-blocking (runs on the sys worker). */
+void ble_companion_hold(bool on);
+
 /* Music shown by the phone, and remote control buttons. */
 bool ble_companion_music(ble_music_t *out);
 void ble_companion_music_command(const char *command);   /* "play" "pause" "next" "previous" "volumeup" "volumedown" */

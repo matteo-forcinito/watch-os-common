@@ -23,6 +23,9 @@
  * Shared: the Web app and the internal apps' dashboards each start it, and it
  * stops when the last of them calls web_server_stop(). */
 esp_err_t web_server_start(void);
+/* Same, but never the access point: internal apps' dashboards (the access
+ * point costs ~30 KB of internal RAM and takes the watch off the home Wi-Fi). */
+esp_err_t web_server_start_wifi_only(void);
 void web_server_stop(void);
 bool web_server_running(void);
 
