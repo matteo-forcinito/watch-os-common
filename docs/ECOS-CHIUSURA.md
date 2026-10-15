@@ -44,3 +44,16 @@ La revisione finale non ha installato firmware sui dispositivi. Le precedenti pr
 5. Reset e guasti NVS durante i comandi, assenza di esecuzione di duplicati e rifiuto dei frame della versione precedente.
 
 Il codice e la documentazione chiudono questo incremento software; la qualificazione hardware della versione finale rimane esplicitamente aperta. Su richiesta dell'utente viene preparato il rilascio 1.7.0 per tutte e quattro le schede, con note esplicite sulla compatibilità EL02 e sulle verifiche ancora aperte. La pubblicazione non implica l'installazione sui dispositivi collegati.
+
+## Rilascio pubblicato
+
+Il 15 ottobre 2026 è stata pubblicata la versione **1.7.0**, canale stabile, per tutte le schede. I quattro firmware includono il commit comune `1b7567deb8458dc368f6660d506948a4ab337ca7`. Verificati i cataloghi OTA, gli asset e lo SHA-256 dei firmware scaricati rispetto ai cataloghi.
+
+- [AMOLED 1.8](https://github.com/matteo-forcinito/watch-firmware-releases/releases/tag/amoled-v1.7.0)
+- [SenseCAP Watcher](https://github.com/matteo-forcinito/watch-firmware-releases/releases/tag/watcher-v1.7.0)
+- [AMOLED 1.75](https://github.com/matteo-forcinito/watch-firmware-releases/releases/tag/amoled175-v1.7.0)
+- [Knob 1.8](https://github.com/matteo-forcinito/watch-firmware-releases/releases/tag/knob-v1.7.0)
+
+AMOLED 1.75: la CI ha completato build e pacchetti, ma il secret `RELEASES_TOKEN` è stato rifiutato con `Bad credentials`. La pubblicazione è stata completata con l'accesso GitHub locale usando gli asset originali dell'artifact CI `11952568593`, verificando il digest del firmware dal log. Pubblicati anche catalogo e tag sorgente. Rinnovare il secret prima del prossimo rilascio automatico; questa operazione non è stata eseguita.
+
+Nessun firmware è stato installato sui dispositivi durante la pubblicazione. Le prove hardware elencate sopra restano aperte e sono dichiarate nelle note di rilascio.
