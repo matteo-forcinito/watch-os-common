@@ -515,6 +515,85 @@ static esp_err_t ecos_post(httpd_req_t *req)
     return reply(req, err == ESP_OK, err == ESP_OK ? "Richiesta ricevuta" :
                  err == ESP_ERR_NO_MEM ? "Memoria insufficiente" : "Richiesta non valida o sessione cambiata");
 }
+
+/* Famiglia: looking at it keeps the radio on for 90 s (each poll renews it). */
+static esp_err_t family_get(httpd_req_t *req)
+{
+    ecos_family_touch();
+    ecos_family_t *f = heap_caps_malloc(sizeof(*f), MALLOC_CAP_SPIRAM);
+    if (f == NULL)
+    {
+        return reply(req, false, "Memoria insufficiente");
+    }
+    ecos_family(f);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "radio", f->radio);
+    cJSON_AddBoolToObject(out, "busy", f->busy);
+    cJSON_AddBoolToObject(out, "reachable_here", f->reachable_here);
+    cJSON_AddStringToObject(out, "message", f->message);
+    cJSON *members = cJSON_AddArrayToObject(out, "members");
+    for (int i = 0; i < f->count; i++)
+    {
+        const ecos_member_t *m = &f->members[i];
+        cJSON *j = cJSON_CreateObject();
+        cJSON_AddStringToObject(j, "id", m->id);
+        cJSON_AddStringToObject(j, "name", m->name);
+        cJSON_AddBoolToObject(j, "known", m->known);
+        cJSON_AddBoolToObject(j, "reachable", m->reachable);
+        cJSON_AddNumberToObject(j, "seen_ago", m->seen_ago == UINT32_MAX ? -1 : (double)m->seen_ago);
+        if (m->known)
+        {
+            cJSON_AddNumberToObject(j, "rssi", m->rssi);
+            cJSON_AddNumberToObject(j, "channel", m->channel);
+            cJSON_AddStringToObject(j, "product", m->product);
+            cJSON_AddStringToObject(j, "version", m->version);
+            cJSON_AddNumberToObject(j, "battery", m->battery);
+            cJSON_AddBoolToObject(j, "charging", m->charging);
+            cJSON_AddBoolToObject(j, "usb", m->usb);
+            cJSON_AddBoolToObject(j, "listening", m->listening);
+            cJSON_AddBoolToObject(j, "ringing", m->ringing);
+            cJSON_AddStringToObject(j, "ssid", m->wifi ? m->ssid : "");
+            cJSON_AddStringToObject(j, "ip", m->wifi ? m->ip : "");
+            cJSON_AddNumberToObject(j, "uptime_min", m->uptime_min);
+            cJSON_AddNumberToObject(j, "ram_kb", m->ram_kb);
+        }
+        cJSON_AddItemToArray(members, j);
+    }
+    free(f);
+    return send_out(req, out);
+}
+
+static esp_err_t family_post(httpd_req_t *req)
+{
+    cJSON *json = body(req);
+    const char *action = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "action"));
+    const char *id = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "id"));
+    const char *text = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "text"));
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    ecos_family_touch();
+    if (action == NULL)
+    {
+    }
+    else if (strcmp(action, "refresh") == 0)
+    {
+        err = ecos_family_refresh();
+    }
+    else if (strcmp(action, "ring") == 0 || strcmp(action, "stop") == 0)
+    {
+        err = ecos_family_ring(id, strcmp(action, "ring") == 0);
+    }
+    else if (strcmp(action, "message") == 0 && text != NULL && strlen(text) < 96)
+    {
+        err = ecos_family_message(id, text);
+    }
+    else if (strcmp(action, "forget") == 0)
+    {
+        err = ecos_forget(id);
+    }
+    cJSON_Delete(json);
+    return reply(req, err == ESP_OK, err == ESP_OK ? "Richiesta ricevuta" :
+                 err == ESP_ERR_INVALID_STATE ? "Attendi: un'altra operazione è in corso" : "Richiesta non valida");
+}
 #else
 static esp_err_t ecos_get(httpd_req_t *req)
 {
@@ -530,6 +609,8 @@ void web_system_register(httpd_handle_t server)
         {.uri = "/api/ecos", .method = HTTP_GET, .handler = ecos_get},
 #if CONFIG_WATCH_ECOS_PAIRING
         {.uri = "/api/ecos", .method = HTTP_POST, .handler = ecos_post},
+        {.uri = "/api/ecos/family", .method = HTTP_GET, .handler = family_get},
+        {.uri = "/api/ecos/family", .method = HTTP_POST, .handler = family_post},
 #endif
         {.uri = "/api/system", .method = HTTP_GET, .handler = system_get},
         {.uri = "/api/kit", .method = HTTP_GET, .handler = system_get},   /* kit.js header */

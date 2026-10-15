@@ -1,6 +1,6 @@
 set(ECOS_SRCS "")
 if(CONFIG_WATCH_ECOS_PAIRING)
-    list(APPEND ECOS_SRCS "ecos/ecos.c")
+    list(APPEND ECOS_SRCS "ecos/ecos.c" "ecos/ecos_link.c")
 endif()
 
 # services: the base system's logic (network, time, alarms, notifications,

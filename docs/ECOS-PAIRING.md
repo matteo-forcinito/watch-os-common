@@ -1,5 +1,7 @@
 # ECOS — primo incremento: abbinamento diretto (ESP-NOW) o LAN
 
+> Per lo stato corrente, Famiglia, compatibilità EL02, budget aggiornato e verifiche finali vedere [ECOS-CHIUSURA.md](ECOS-CHIUSURA.md). Le misure sotto riguardano il solo abbinamento.
+
 Sviluppo del 14 ottobre 2026; trasporto ESP-NOW aggiunto il 15 ottobre 2026. Stato sperimentale: questo incremento stabilisce credenziali **a coppie**, non implementa ancora gossip, chiave di famiglia, revoca distribuita o autorizzazioni HID. Riferimenti: `ECOS.md` e `ECOS-VALUTAZIONE.md`.
 
 ## Uso
@@ -10,7 +12,7 @@ La dashboard principale contiene la stessa procedura nella scheda **Ecosistema**
 
 Per impostazione predefinita i due nodi si parlano direttamente via ESP-NOW (vedi Protocollo). In alternativa, nella dashboard si può indicare l'IPv4 privato dell'altro nodo per usare la rete di casa (10/8, 172.16/12 o 192.168/16), su almeno uno dei due. Non aggiunge un hub: la rete deve già poter instradare UDP tra i dispositivi. Il servizio fissa indirizzo e porta sorgente del candidato per tutta la finestra, consentendo anche una traduzione NAT stabile. L'IP non viene conservato dopo la sessione.
 
-Il primo candidato viene mantenuto per tutta la finestra: se non è quello desiderato, annullare e riavviare. Avviare soltanto sui due dispositivi da associare. Gli abbinamenti memorizzati sono al massimo sei e non indicano presenza online. La rimozione/revoca sarà un incremento successivo; non cancellare manualmente l'intera NVS per liberare un posto.
+Il primo candidato viene mantenuto per tutta la finestra: se non è quello desiderato, annullare e riavviare. Avviare soltanto sui due dispositivi da associare. Gli abbinamenti memorizzati sono al massimo sei e non indicano presenza online. La pagina Famiglia permette ora di dimenticare localmente un dispositivo; la revoca distribuita rimane futura. Non cancellare manualmente l'intera NVS per liberare un posto.
 
 ## Ciclo di vita e memoria
 
@@ -22,7 +24,7 @@ Il primo candidato viene mantenuto per tutta la finestra: se non è quello desid
 - Finestra massima di 180 secondi; ricezione con timeout 200 ms, invio ogni 300 ms (ESP-NOW) o 750 ms (LAN). Annullamento non bloccante, osservato dal worker; durante la connessione può attendere la fine di `wifi_acquire()`. Il tempo effettivo può includere attese dei servizi condivisi e pulizia finale.
 - In uscita: chiusura socket o deinit ESP-NOW, ripristino potenza TX, distruzione chiave effimera, rilascio del lease Wi-Fi, azzeramento delle chiavi temporanee e liberazione della PSRAM. Il servizio Wi-Fi applica poi il suo normale ritardo di spegnimento se non esistono altri utilizzatori.
 
-Il piccolo archivio in NVS viene letto all'avvio, senza conservare le chiavi nello snapshot pubblico; viene riscritto soltanto dopo la doppia conferma. Un errore di lettura non viene mascherato creando un archivio vuoto. SD e filesystem non sono necessari.
+Il piccolo archivio in NVS viene letto all'avvio, senza conservare le chiavi nello snapshot pubblico; l'abbinamento lo riscrive soltanto dopo la doppia conferma. Anche la rimozione locale aggiorna l'archivio. Il trasporto Famiglia usa inoltre epoche e checkpoint descritti in `ECOS-CHIUSURA.md`. Un errore di lettura non viene mascherato creando un archivio vuoto. SD e filesystem non sono necessari.
 
 ## Protocollo v1
 
@@ -62,4 +64,4 @@ Test host superati: tipi/lunghezze, versione, ordinamento simmetrico del transcr
 
 ### Verifiche da chiudere prima di dichiarare stabile
 
-Build delle quattro board; confronto firmware/mappa con baseline comparabile; test su AMOLED 1.8 e Watcher; codice identico e doppia conferma; nessuna scrittura con una sola conferma; annullamento, scadenza, perdita rete, reboot e persistenza; ripetizioni e recupero RAM dopo il ritardo di spegnimento Wi-Fi. Verificare layout tondo/ghiera e dashboard con browser già abbinato e non abbinato. Il client e-paper non è incluso in questo incremento.
+Le build delle quattro board sono superate; risultati e prove hardware ancora aperte per il codice finale sono in [ECOS-CHIUSURA.md](ECOS-CHIUSURA.md). Restano il confronto firmware/mappa con baseline comparabile e la verifica di layout tondo/ghiera e dashboard con browser già abbinato e non abbinato. Il client e-paper non è incluso in questo incremento.

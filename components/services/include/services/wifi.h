@@ -60,6 +60,9 @@ uint8_t wifi_radio_channel(void);
 /* Move the radio to `channel`; refused (false) while joined to a network or
  * serving the access point: then everyone must use the network's channel. */
 bool wifi_radio_set_channel(uint8_t channel);
+/* Channel of the last network joined since boot (0 = none yet): devices that
+ * listen without a network wait there, where the joined ones are. */
+uint8_t wifi_home_channel(void);
 
 /*
  * Big transfers (firmware update): no modem sleep while held, several times

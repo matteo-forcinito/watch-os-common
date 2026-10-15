@@ -50,4 +50,4 @@ if not finished:
 result = machine.reg_read(UC_RISCV_REG_A0)
 if result:
     raise SystemExit(f'FAIL: test_wire.c:{result}')
-print('PASS: production C codec, exact frame validation, canonical transcript, identity and name binding')
+print('PASS: pairing and family C codecs, frame bounds, transcript binding, status encoding, epochs and anti-replay')

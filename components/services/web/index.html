@@ -61,7 +61,14 @@
 </section>
 
 <section class="view" id="v-ecos">
-  <div class="card"><h2>Ecosistema · Abbinamento</h2>
+  <div class="card"><div class="row"><h2 class="grow" style="margin:0">Ecosistema · Famiglia</h2>
+    <button class="btn" id="fam-search" onclick="familyAction('refresh')">↻ Cerca</button></div>
+    <p id="fam-status" class="dim" role="status" aria-live="polite"></p>
+    <div id="fam-list" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))"></div>
+    <p class="faint">Rispondono i dispositivi in carica a schermo spento (Watcher, Knob, un orologio sul caricatore)
+      o con Ecosistema aperto. Radio diretta e cifrata tra dispositivi abbinati, senza router: mentre guardi questa
+      pagina la radio di questo dispositivo resta accesa.</p></div>
+  <div class="card" style="margin-top:16px"><h2>Ecosistema · Abbinamento</h2>
     <p>Avvia l'abbinamento su due dispositivi vicini: si parlano direttamente via radio (ESP-NOW),
       senza router né internet. Confronta i codici sui due schermi e conferma su entrambi solo se coincidono.</p>
     <p id="ecos-status" role="status" aria-live="polite">Caricamento...</p>
@@ -81,8 +88,6 @@
       Chiudere il browser non la interrompe. Questo primo passo salva la fiducia tra dispositivi;
       Remote e le sue autorizzazioni restano separati.</p>
   </div>
-  <div class="card" style="margin-top:16px"><h2>Dispositivi salvati</h2><div id="ecos-peers"></div>
-    <p class="faint">L'elenco indica gli abbinamenti memorizzati, non la presenza in rete.</p></div>
 </section>
 
 <!-- ============================================================ APPS -->
@@ -474,10 +479,47 @@ async function loadEcos() {
   $('#ecos-confirm').disabled = ecosPending || !s.comparing || s.local_ok;
   $('#ecos-cancel').disabled = ecosPending || !s.running;
   $('#ecos-address').disabled = ecosPending || !s.enabled || s.running;
-  const peers = $('#ecos-peers');
-  peers.replaceChildren();
-  for (const p of s.peers || []) peers.append(el('p', {}, `${p.name} · ${p.id}`));
-  if (!peers.children.length) peers.textContent = 'Nessun dispositivo salvato';
+  if (s.enabled) await loadFamily();
+}
+const famAgo = s => s < 0 ? 'mai visto' : s < 60 ? 'ora' : s < 3600 ? Math.floor(s / 60) + ' min fa' : Math.floor(s / 3600) + ' h fa';
+let famSearched = false;
+async function loadFamily() {
+  const f = await kit.api('/api/ecos/family');
+  if (!famSearched) { famSearched = true; familyAction('refresh', null, true); }
+  $('#fam-status').textContent = f.busy ? 'Cerco i dispositivi...' : f.message || '';
+  $('#fam-search').disabled = f.busy;
+  const list = $('#fam-list');
+  list.replaceChildren();
+  for (const m of f.members || []) {
+    const battery = m.known && m.battery >= 0 ? `${m.battery}%${m.charging ? ' in carica' : m.usb ? ' al cavo' : ''}` : m.known ? 'alimentato' : '–';
+    const lines = m.known ? [
+      `${m.product} · versione ${m.version}`,
+      `Batteria: ${battery}`,
+      `Rete: ${m.ssid ? m.ssid + ' · ' + m.ip : 'non collegato'}`,
+      `Segnale ${m.rssi} dBm · canale ${m.channel} · RAM libera ${m.ram_kb} KB · acceso da ${Math.floor(m.uptime_min / 60)} h`,
+    ] : ['Nessuna informazione ancora'];
+    const card = el('div', {class: 'card'},
+      el('div', {class: 'row'}, el('b', {class: 'grow'}, m.name),
+        el('span', {class: m.reachable ? 'good' : 'faint'}, m.reachable ? '● raggiungibile' : '○ ' + famAgo(m.seen_ago))),
+      ...lines.map(t => el('p', {class: 'dim', style: 'margin:4px 0'}, t)),
+      el('p', {class: 'faint', style: 'margin:4px 0'}, 'ID ' + m.id),
+      el('div', {class: 'row'},
+        el('button', {class: 'btn sm primary', onclick: () => familyAction(m.ringing ? 'stop' : 'ring', m)}, m.ringing ? 'Smetti di suonare' : 'Fai suonare'),
+        el('button', {class: 'btn sm', onclick: () => { const t = prompt('Messaggio per ' + m.name + ' (max 90 caratteri)'); if (t && t.trim()) familyAction('message', m, false, t.trim().slice(0, 90)); }}, 'Messaggio'),
+        m.ip ? el('a', {class: 'btn sm', href: 'http://' + m.ip + '/', target: '_blank', rel: 'noopener'}, 'Dashboard') : '',
+        el('button', {class: 'btn sm danger', onclick: () => confirm('Dimenticare ' + m.name + '? Per riabbinarlo servirà di nuovo il codice.') && familyAction('forget', m)}, 'Dimentica')));
+    list.append(card);
+  }
+  if (!list.children.length) list.append(el('p', {class: 'dim'}, 'Nessun dispositivo abbinato: abbinane uno qui sotto.'));
+}
+async function familyAction(action, m, quiet, text) {
+  try {
+    await kit.api('/api/ecos/family', {body: {action, id: m?.id, text}});
+    if (!quiet && action === 'forget') kit.toast('Dimenticato');
+  } catch (e) {
+    if (!quiet) kit.toast(e.message, 'bad');
+  }
+  setTimeout(() => loadFamily().catch(() => {}), 1200);
 }
 async function ecosAction(action) {
   if (ecosPending) return;

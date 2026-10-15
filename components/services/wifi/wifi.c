@@ -47,6 +47,7 @@ static bool s_ap_on = false;
 static int s_retries = 0;
 static int s_refs = 0;
 static int s_last_reason = 0;   /* wifi_err_reason_t of the last disconnection */
+static uint8_t s_home_channel = 0;   /* channel of the last network joined */
 static esp_pm_lock_handle_t s_ap_lock = NULL;   /* no light sleep while our access point runs */
 
 static wifi_known_t s_known[WIFI_KNOWN_MAX];
@@ -321,6 +322,12 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         s_retries = 0;
         s_last_reason = 0;
         ESP_LOGI(TAG, "Connected");
+        uint8_t primary = 0;
+        wifi_second_chan_t second;
+        if (esp_wifi_get_channel(&primary, &second) == ESP_OK)
+        {
+            s_home_channel = primary;
+        }
         xEventGroupSetBits(s_events, CONNECTED_BIT);
         state_set(STATE_WIFI, STATE_WIFI_CONNECTED);
     }
@@ -703,6 +710,11 @@ uint8_t wifi_radio_channel(void)
         return 0;
     }
     return primary;
+}
+
+uint8_t wifi_home_channel(void)
+{
+    return s_home_channel;
 }
 
 bool wifi_radio_set_channel(uint8_t channel)

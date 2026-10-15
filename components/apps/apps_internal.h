@@ -20,6 +20,10 @@ extern const app_t settings_about_app;
 extern const app_t flashlight_app;
 extern const app_t web_app;
 extern const app_t ecos_app;
+extern const app_t ecos_device_app;   /* hidden: arg = malloc'd id (freed by it) */
+extern const app_t ecos_pair_app;
+extern const app_t ecos_find_app;     /* hidden: arg = malloc'd name of who rings */
+void ecos_apps_init(void);
 extern const app_t extapps_open_app;
 extern const app_t extapps_run_app;     /* hidden: arg = extapp_t * (malloc, freed by it) */
 extern const app_t power_app;

@@ -10,6 +10,7 @@
  * ephemeral session and peer secrets live in PSRAM, wiped before release. */
 #include "services/ecos.h"
 #include "ecos_wire.h"
+#include "ecos_internal.h"
 #include "services/wifi.h"
 #include "core/sys.h"
 #include "esp_heap_caps.h"
@@ -31,8 +32,8 @@
 #include <stdlib.h>
 
 #define WINDOW_US (180LL * 1000000)
-#define RECORD_SIZE (6 + ECOS_NAME_SIZE + 32)
-#define STORE_SIZE (2 + ECOS_PEERS_MAX * RECORD_SIZE)
+#define RECORD_SIZE ECOS_RECORD_SIZE
+#define STORE_SIZE ECOS_STORE_SIZE
 #define FIRST_DWELL_US (4LL * 1000000)    /* ESP-NOW: wait on channel 1 first */
 #define HOP_DWELL_US (700LL * 1000)       /* then visit the channels */
 #define PAIRING_TX_POWER 32               /* 0.25 dBm units: 8 dBm */
@@ -114,6 +115,27 @@ static bool load_store(uint8_t store[STORE_SIZE])
     return err == ESP_OK && size == STORE_SIZE && store[0] == 1 && store[1] <= ECOS_PEERS_MAX;
 }
 
+bool ecos_store_load(uint8_t store[ECOS_STORE_SIZE])
+{
+    return load_store(store);
+}
+
+static bool write_store(const uint8_t store[STORE_SIZE])
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("ecos", NVS_READWRITE, &handle);
+    if (err == ESP_OK)
+    {
+        err = nvs_set_blob(handle, "peers", store, STORE_SIZE);
+        if (err == ESP_OK)
+        {
+            err = nvs_commit(handle);
+        }
+        nvs_close(handle);
+    }
+    return err == ESP_OK;
+}
+
 static void peer_view(ecos_snapshot_t *view, const uint8_t store[STORE_SIZE])
 {
     view->count = store[1];
@@ -144,6 +166,7 @@ void ecos_init(void)
     portENTER_CRITICAL(&s_guard);
     s_view = view;
     portEXIT_CRITICAL(&s_guard);
+    ecos_link_init();
 }
 
 static void publish(session_t *s, const char *message)
@@ -310,22 +333,13 @@ static bool save_peer(session_t *s)
     {
         s->store[1]++;
     }
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open("ecos", NVS_READWRITE, &handle);
-    if (err == ESP_OK)
+    if (!write_store(s->store))
     {
-        err = nvs_set_blob(handle, "peers", s->store, STORE_SIZE);
-        if (err == ESP_OK)
-        {
-            err = nvs_commit(handle);
-        }
-        nvs_close(handle);
+        return false;
     }
-    if (err == ESP_OK)
-    {
-        peer_view(&s->view, s->store);
-    }
-    return err == ESP_OK;
+    peer_view(&s->view, s->store);
+    ecos_link_peers_changed();
+    return true;
 }
 
 static bool receive_packet(session_t *s, const uint8_t *p, size_t n, const struct sockaddr_in *source,
@@ -461,6 +475,16 @@ static void worker(void *arg)
     }
     if (s->espnow)
     {
+        /* The Famiglia link lets go of ESP-NOW for the window (it was asked at start). */
+        for (int i = 0; i < 50 && ecos_link_running(); i++)
+        {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        if (ecos_link_running())
+        {
+            result = "Radio occupata: riprova";
+            goto done;
+        }
         wifi_set_fast(true);   /* no modem sleep: frames would be missed */
         fast_held = true;
         s_rx = xQueueCreate(8, sizeof(radio_frame_t));
@@ -488,7 +512,7 @@ static void worker(void *arg)
         {
             esp_wifi_set_max_tx_power(PAIRING_TX_POWER);
         }
-        publish(s, "Avvia Abbinamento anche sull'altro dispositivo, vicino: non servono Wi-Fi nÃ© internet");
+        publish(s, "Avvia Abbinamento anche sull'altro dispositivo, vicino: non servono Wi-Fi né internet");
     }
     else
     {
@@ -672,6 +696,7 @@ done:
     snprintf(s_view.message, sizeof(s_view.message), "%s", result);
     s_busy = false;
     portEXIT_CRITICAL(&s_guard);
+    ecos_link_suspend(false);
     ESP_LOGI(TAG, "Pairing ended: %s", result);
     sys_heap_log("ecos stopped");
     vTaskDelete(NULL);
@@ -708,8 +733,10 @@ esp_err_t ecos_pair_start(const char *peer_ip)
     s_view.seconds_left = 180;
     snprintf(s_view.message, sizeof(s_view.message), "Avvio abbinamento...");
     portEXIT_CRITICAL(&s_guard);
+    ecos_link_suspend(true);
     if (!sys_task_create(worker, "ecos_pair", 6144, (void *)(uintptr_t)address.s_addr, 2, SYS_CORE_ANY))
     {
+        ecos_link_suspend(false);
         portENTER_CRITICAL(&s_guard);
         s_busy = s_view.running = false;
         snprintf(s_view.message, sizeof(s_view.message), "Memoria insufficiente");
@@ -747,4 +774,93 @@ void ecos_snapshot(ecos_snapshot_t *out)
         *out = s_view;
         portEXIT_CRITICAL(&s_guard);
     }
+}
+
+static void forget_job(void *arg)
+{
+    uint8_t *mac = arg;
+    uint8_t store[STORE_SIZE];
+    bool changed = false;
+    /* ecos_forget reserved s_busy before queuing this job. */
+    if (load_store(store))
+    {
+        for (unsigned i = 0; i < store[1]; i++)
+        {
+            uint8_t *record = store + 2 + i * RECORD_SIZE;
+            if (memcmp(record, mac, 6) == 0)
+            {
+                memmove(record, record + RECORD_SIZE, (store[1] - i - 1) * RECORD_SIZE);
+                store[1]--;
+                memset(store + 2 + store[1] * RECORD_SIZE, 0, RECORD_SIZE);
+                changed = write_store(store);
+                break;
+            }
+        }
+    }
+    if (changed)
+    {
+        ecos_snapshot_t view;
+        ecos_snapshot(&view);
+        memset(view.peers, 0, sizeof(view.peers));
+        peer_view(&view, store);
+        portENTER_CRITICAL(&s_guard);
+        s_view.count = view.count;
+        memcpy(s_view.peers, view.peers, sizeof(view.peers));
+        portEXIT_CRITICAL(&s_guard);
+        ecos_link_peers_changed();
+        ESP_LOGI(TAG, "Forgot a paired device");
+    }
+    mbedtls_platform_zeroize(store, sizeof(store));
+    free(mac);
+    portENTER_CRITICAL(&s_guard);
+    s_busy = false;
+    portEXIT_CRITICAL(&s_guard);
+}
+
+esp_err_t ecos_forget(const char *id)
+{
+    uint8_t parsed[6];
+    if (id == NULL || strlen(id) != 12 || strspn(id, "0123456789abcdefABCDEF") != 12)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (int i = 0; i < 6; i++)
+    {
+        char hex[3] = {id[i * 2], id[i * 2 + 1], 0};
+        char *end = NULL;
+        parsed[i] = (uint8_t)strtoul(hex, &end, 16);
+        if (end != hex + 2)
+        {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    portENTER_CRITICAL(&s_guard);
+    bool busy = s_busy;
+    if (!busy)
+    {
+        s_busy = true;
+    }
+    portEXIT_CRITICAL(&s_guard);
+    if (busy)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+    uint8_t *mac = malloc(6);
+    if (mac == NULL)
+    {
+        portENTER_CRITICAL(&s_guard);
+        s_busy = false;
+        portEXIT_CRITICAL(&s_guard);
+        return ESP_ERR_NO_MEM;
+    }
+    memcpy(mac, parsed, 6);
+    if (!sys_post(forget_job, mac))
+    {
+        free(mac);
+        portENTER_CRITICAL(&s_guard);
+        s_busy = false;
+        portEXIT_CRITICAL(&s_guard);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }

@@ -39,6 +39,9 @@ static const app_t *const s_apps[] = {
     &web_app,
 #if CONFIG_WATCH_ECOS_PAIRING
     &ecos_app,
+    &ecos_device_app,
+    &ecos_pair_app,
+    &ecos_find_app,
 #endif
     &usb_drive_app,
     &sdcard_app,
@@ -293,6 +296,7 @@ void apps_init(void)
 {
 #if CONFIG_WATCH_ECOS_PAIRING
     ecos_init();
+    ecos_apps_init();   /* another device can ring this one */
 #endif
     app_manager_set_close_confirm(ask_close);
     market_init();
