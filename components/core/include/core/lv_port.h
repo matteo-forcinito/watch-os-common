@@ -27,6 +27,8 @@
 
 /* Start display, touch, LVGL and the lvgl task. */
 esp_err_t lv_port_init(void);
+esp_err_t lv_port_init_headless(void);
+bool lv_port_headless(void);
 
 lv_display_t *lv_port_display(void);
 lv_indev_t *lv_port_indev(void);

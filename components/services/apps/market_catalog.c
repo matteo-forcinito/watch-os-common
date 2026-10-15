@@ -123,7 +123,8 @@ esp_err_t market_parse_catalog(const char *text, const char *board,
             entry->binary_size < 288 ||
             !asset(app, "icon", entry->icon_url, entry->icon_sha256, &entry->icon_size, MARKET_ICON_MAX)) goto invalid;
         if (strcmp(entry->project, "watcher_os") == 0 || strcmp(entry->project, "amoled_watch") == 0 ||
-            strcmp(entry->project, "amoled175_watch") == 0 || strcmp(entry->project, "knob_os") == 0) goto invalid;
+            strcmp(entry->project, "amoled175_watch") == 0 || strcmp(entry->project, "amoled175c_watch") == 0 ||
+            strcmp(entry->project, "knob_os") == 0) goto invalid;
         entry->color = 0x7B6CFF;
         const char *color = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(app, "color"));
         if (color != NULL)

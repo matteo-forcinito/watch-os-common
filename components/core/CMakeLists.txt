@@ -6,6 +6,7 @@ idf_component_register(
         "state.c"
         "settings.c"
         "power.c"
+        "recovery.c"
         "app_manager.c"
         "clock.c"
         "sys.c"

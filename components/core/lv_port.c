@@ -57,6 +57,7 @@ static atomic_bool s_refresh_request = false;
 static QueueHandle_t s_async = NULL;
 
 static volatile bool s_running = true;
+static bool s_headless;
 
 /* Health: when the current lvgl pass started (0 = waiting), slowest pass, lost flush interrupts. */
 static _Atomic int64_t s_pass_start_us = 0;
@@ -109,7 +110,11 @@ static void flush_done_isr(void *ctx)
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *pixels)
 {
-    (void)disp;
+    if (s_headless)
+    {
+        lv_display_flush_ready(disp);
+        return;
+    }
     display_draw(area->x1, area->y1, area->x2, area->y2, pixels);
 }
 
@@ -165,7 +170,7 @@ static void touch_irq(void *ctx)
 static void stop_touch_polling(void)
 {
     lv_timer_pause(lv_indev_get_read_timer(s_indev));
-    touch_irq_arm();
+    if (!s_headless) touch_irq_arm();
 }
 
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
@@ -190,7 +195,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     }
     else
     {
-        pressed = touch_read(&x, &y);
+        pressed = !s_headless && touch_read(&x, &y);
     }
 
     if (!pressed)
@@ -201,7 +206,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         s_swallow_until_release = false;
 
         /* A few quiet reads in a row: stop polling, the INT pin takes over. */
-        if (++s_released_reads >= 3 && !touch_pin_active())
+        if (++s_released_reads >= 3 && (s_headless || !touch_pin_active()))
         {
             s_released_reads = 0;
             stop_touch_polling();
@@ -720,8 +725,9 @@ static void lvgl_task(void *arg)
 
 /* ------------------------------------------------------------- public */
 
-esp_err_t lv_port_init(void)
+static esp_err_t init_port(bool headless)
 {
+    s_headless = headless;
     const uint16_t width = display_width();
     const uint16_t height = display_height();
 
@@ -734,7 +740,7 @@ esp_err_t lv_port_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    esp_err_t err = display_init(flush_done_isr, NULL);
+    esp_err_t err = headless ? ESP_OK : display_init(flush_done_isr, NULL);
 
     if (err != ESP_OK)
     {
@@ -746,8 +752,9 @@ esp_err_t lv_port_init(void)
 
     /* Two partial buffers in internal DMA RAM: LVGL draws one while the other is sent. */
     const size_t buffer_bytes = (size_t)width * CONFIG_BOARD_DRAW_BUFFER_LINES * sizeof(uint16_t);
-    void *buf1 = heap_caps_malloc(buffer_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    void *buf2 = heap_caps_malloc(buffer_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    uint32_t caps = headless ? MALLOC_CAP_SPIRAM : (MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    void *buf1 = heap_caps_malloc(buffer_bytes, caps);
+    void *buf2 = heap_caps_malloc(buffer_bytes, caps);
 
     if (buf1 == NULL || buf2 == NULL)
     {
@@ -759,8 +766,11 @@ esp_err_t lv_port_init(void)
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565_SWAPPED);   /* panel wants big endian */
     lv_display_set_buffers(s_disp, buf1, buf2, buffer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(s_disp, flush_cb);
-    lv_display_set_flush_wait_cb(s_disp, flush_wait_cb);
-    lv_display_add_event_cb(s_disp, rounder_cb, LV_EVENT_INVALIDATE_AREA, NULL);
+    if (!headless)
+    {
+        lv_display_set_flush_wait_cb(s_disp, flush_wait_cb);
+        lv_display_add_event_cb(s_disp, rounder_cb, LV_EVENT_INVALIDATE_AREA, NULL);
+    }
 
     s_indev = lv_indev_create();
     lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
@@ -776,7 +786,7 @@ esp_err_t lv_port_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    err = touch_init(touch_irq, NULL);
+    err = headless ? ESP_OK : touch_init(touch_irq, NULL);
 
     if (err != ESP_OK)
     {
@@ -810,6 +820,21 @@ esp_err_t lv_port_init(void)
              lv_version_patch(), width, height, (unsigned)(buffer_bytes / 1024));
 
     return ESP_OK;
+}
+
+esp_err_t lv_port_init(void)
+{
+    return init_port(false);
+}
+
+esp_err_t lv_port_init_headless(void)
+{
+    return init_port(true);
+}
+
+bool lv_port_headless(void)
+{
+    return s_headless;
 }
 
 lv_display_t *lv_port_display(void)

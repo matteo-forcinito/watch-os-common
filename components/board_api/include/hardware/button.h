@@ -27,6 +27,7 @@ typedef enum
     BUTTON_CLICK,
     BUTTON_LONG_PRESS,   /* fired once after ~700 ms, while still held */
     BUTTON_DOUBLE_CLICK, /* two quick clicks (boards with a knob: switches focus navigation) */
+    BUTTON_RECOVERY,     /* BOOT held for five seconds; persistent headless boot toggle */
 } button_event_t;
 
 typedef void (*button_cb_t)(button_id_t button, button_event_t event);

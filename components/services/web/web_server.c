@@ -2,6 +2,7 @@
 
 #include "core/clock.h"
 #include "core/power.h"
+#include "core/recovery.h"
 #include "core/settings.h"
 #include "core/sys.h"
 #include "hardware/board.h"
@@ -53,6 +54,7 @@ extern const char kit_css_end[] asm("_binary_kit_css_end");
  */
 static char s_token[33];
 static char s_code[7];
+static char s_recovery_token[33];
 static int64_t s_pair_reset;
 static int s_pair_attempts;
 
@@ -232,6 +234,16 @@ static void token_load(void)
         nvs_close(nvs);
     }
     snprintf(s_code, sizeof(s_code), "%06lu", (unsigned long)(esp_random() % 1000000));
+    s_recovery_token[0] = '\0';
+    if (recovery_active())
+    {
+        uint8_t bytes[16];
+        esp_fill_random(bytes, sizeof(bytes));
+        for (int i = 0; i < 16; i++)
+        {
+            snprintf(s_recovery_token + i * 2, 3, "%02x", bytes[i]);
+        }
+    }
 }
 
 static bool same_origin(httpd_req_t *req)
@@ -260,7 +272,7 @@ bool web_server_authorized(httpd_req_t *req)
 static bool authorized(httpd_req_t *req)
 {
     char token[40] = "";
-    if (!same_origin(req) || s_token[0] == '\0')
+    if (!same_origin(req))
     {
         return false;
     }
@@ -283,7 +295,12 @@ static bool authorized(httpd_req_t *req)
     {
         difference |= (unsigned)(token[i] ^ s_token[i]);
     }
-    return difference == 0;
+    unsigned recovery_difference = 0;
+    for (int i = 0; i < 32; i++)
+    {
+        recovery_difference |= (unsigned)(token[i] ^ s_recovery_token[i]);
+    }
+    return difference == 0 || (recovery_active() && s_recovery_token[0] != '\0' && recovery_difference == 0);
 }
 
 static esp_err_t guard(httpd_req_t *req)
@@ -301,7 +318,8 @@ static esp_err_t guard(httpd_req_t *req)
 void web_route(httpd_handle_t server, const httpd_uri_t *route)
 {
     httpd_uri_t copy = *route;
-    if (strncmp(route->uri, "/api/", 5) == 0 && strcmp(route->uri, "/api/pair") != 0)
+    if (strncmp(route->uri, "/api/", 5) == 0 && strcmp(route->uri, "/api/pair") != 0 &&
+        strcmp(route->uri, "/api/recovery/session") != 0)
     {
         copy.handler = guard;
         copy.user_ctx = (void *)route->handler;
@@ -312,6 +330,21 @@ void web_route(httpd_handle_t server, const httpd_uri_t *route)
 const char *web_server_code(void)
 {
     return s_code;
+}
+
+/* Explicit recovery mode is the local-access grant; never expose the normal pairing token. */
+static esp_err_t handle_recovery_session(httpd_req_t *req)
+{
+    if (!recovery_active() || !same_origin(req) || s_recovery_token[0] == '\0')
+    {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "Recovery non attiva");
+    }
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "token", s_recovery_token);
+    cJSON_AddBoolToObject(out, "ephemeral", true);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return send_json(req, out);
 }
 
 static esp_err_t handle_pair(httpd_req_t *req)
@@ -883,6 +916,7 @@ static esp_err_t start_httpd(void)
         {.uri = "/api/upload", .method = HTTP_POST, .handler = handle_upload},
         {.uri = "/api/firmware", .method = HTTP_POST, .handler = handle_firmware},
         {.uri = "/api/pair", .method = HTTP_POST, .handler = handle_pair},
+        {.uri = "/api/recovery/session", .method = HTTP_POST, .handler = handle_recovery_session},
         {.uri = "/kit.js", .method = HTTP_GET, .handler = handle_kit_js},
         {.uri = "/kit.css", .method = HTTP_GET, .handler = handle_kit_css},
     };
@@ -956,6 +990,12 @@ static esp_err_t start_locked(bool allow_ap)
     }
 
     ESP_LOGI(TAG, "Web page running (%s)", s_ap_mode ? s_ap_name : "Wi-Fi");
+    if (recovery_active())
+    {
+        char url[80];
+        web_server_url(url, sizeof(url));
+        ESP_LOGW(TAG, "RECOVERY: %s accesso locale automatico, senza codice", url);
+    }
 
     return ESP_OK;
 }
@@ -998,6 +1038,11 @@ void web_server_stop(void)
 {
     lock_init();
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (recovery_active() && s_users <= 1)
+    {
+        xSemaphoreGive(s_lock);
+        return;   /* Recovery owns the last reference until an explicit mode change. */
+    }
     if (s_users > 0 && --s_users == 0)
     {
         shutdown_server();

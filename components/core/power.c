@@ -2,6 +2,7 @@
 
 #include "core/lv_port.h"
 #include "core/settings.h"
+#include "core/recovery.h"
 #include "core/state.h"
 
 #include "hardware/display.h"
@@ -61,6 +62,7 @@ static void (*s_button_handler)(button_id_t, button_event_t) = NULL;
 static esp_pm_lock_handle_t s_cpu_lock = NULL;
 static esp_pm_lock_handle_t s_usb_lock = NULL;   /* no light sleep while the cable has power */
 static bool s_usb_power = false;
+static bool s_inputs_started;
 static _Atomic int s_cpu_boost = 0;
 
 /* ------------------------------------------------------------ helpers */
@@ -84,7 +86,7 @@ static void set_brightness(uint8_t target, bool fade)
 {
     if (!fade)
     {
-        display_set_brightness(target);
+        if (!lv_port_headless()) display_set_brightness(target);
         s_brightness_now = target;
         return;
     }
@@ -94,7 +96,7 @@ static void set_brightness(uint8_t target, bool fade)
     for (int i = 1; i <= FADE_STEPS; i++)
     {
         int level = from + ((int)target - from) * i / FADE_STEPS;
-        display_set_brightness((uint8_t)level);
+        if (!lv_port_headless()) display_set_brightness((uint8_t)level);
         vTaskDelay(pdMS_TO_TICKS(FADE_STEP_MS));
     }
 
@@ -120,10 +122,10 @@ static void go_on(void)
 
     if (from == POWER_SCREEN_OFF)
     {
-        display_sleep(false);
+        if (!lv_port_headless()) display_sleep(false);
     }
 
-    touch_set_low_power(false);
+    if (!lv_port_headless()) touch_set_low_power(false);
     set_screen(POWER_SCREEN_ON);   /* the app manager puts the normal screen back */
     lv_port_set_running(true);
 
@@ -155,7 +157,7 @@ static void go_aod(void)
     set_screen(POWER_SCREEN_AOD);  /* the app manager shows the always-on face */
     vTaskDelay(pdMS_TO_TICKS(20));
     lv_port_refresh_now();
-    touch_set_low_power(true);
+    if (!lv_port_headless()) touch_set_low_power(true);
 
     ESP_LOGI(TAG, "Always-on display");
 }
@@ -170,8 +172,8 @@ static void go_off(void)
     set_brightness(0, s_screen == POWER_SCREEN_ON || s_screen == POWER_SCREEN_DIM);
     set_screen(POWER_SCREEN_OFF);
     lv_port_set_running(false);
-    display_sleep(true);
-    touch_set_low_power(true);
+    if (!lv_port_headless()) display_sleep(true);
+    if (!lv_port_headless()) touch_set_low_power(true);
 
     ESP_LOGI(TAG, "Screen off");
 }
@@ -192,6 +194,11 @@ static void go_idle(void)
 
 static void button_cb(button_id_t button, button_event_t event)
 {
+    if (button == BUTTON_BOOT && event == BUTTON_RECOVERY)
+    {
+        recovery_request(!recovery_active());
+        return;
+    }
     post(MSG_BUTTON, button, event);
 }
 
@@ -410,6 +417,14 @@ static void power_task(void *arg)
 
 /* ------------------------------------------------------------ public */
 
+esp_err_t power_inputs_init(void)
+{
+    if (s_inputs_started) return ESP_OK;
+    esp_err_t err = button_init(button_cb);
+    s_inputs_started = err == ESP_OK;
+    return err;
+}
+
 esp_err_t power_init(void)
 {
     /* Dynamic frequency + automatic light sleep whenever every task is idle. */
@@ -444,7 +459,8 @@ esp_err_t power_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    button_init(button_cb);
+    err = power_inputs_init();
+    if (err != ESP_OK) ESP_LOGW(TAG, "Buttons: %s", esp_err_to_name(err));
     post(MSG_WAKE, POWER_WAKE_OTHER, 0);
 
     return ESP_OK;
@@ -504,7 +520,7 @@ static void prepare_power_down(void)
 {
     settings_flush();
     display_set_brightness(0);
-    display_sleep(true);
+    if (!lv_port_headless()) display_sleep(true);
 }
 
 void power_restart(void)

@@ -46,6 +46,8 @@ typedef enum
 
 /* Start the power task, buttons and battery monitoring. After lv_port_init(). */
 esp_err_t power_init(void);
+/* Start physical recovery input before the panel; safe to call again from power_init. */
+esp_err_t power_inputs_init(void);
 
 /* The user did something (cheap, any task, called on every touch read). */
 void power_user_activity(void);

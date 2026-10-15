@@ -56,7 +56,8 @@
     <div class="card"><h2>Azioni rapide</h2><div class="row">
       <button class="btn" onclick="kit.show('v-apps')">Apri un'app sull'orologio</button>
       <button class="btn" onclick="syncTime()">Sincronizza l'ora</button>
-      <button class="btn danger" onclick="reboot()">Riavvia</button></div></div>
+      <button class="btn danger" onclick="reboot()">Riavvia</button>
+      <button class="btn" id="recovery-toggle" onclick="toggleRecovery()">Recovery</button></div></div>
   </div>
 </section>
 
@@ -204,6 +205,8 @@ async function loadDashLinks() {
 }
 async function loadSystem() {
   const s = S.sys = await kit.api('/api/system');
+  $('#recovery-toggle').style.display = s.recovery_supported === true ? '' : 'none';
+  $('#recovery-toggle').textContent = s.recovery ? 'Esci dalla recovery' : 'Avvia recovery senza display';
   $('#product').textContent = s.name + ' · ' + s.product;
   document.title = s.name + ' · dashboard';
   const k = $('#kpis'), card = (v, t, cls) => el('div', {class: 'card kpi'}, el('b', {class: cls || ''}, v), el('span', {}, t));
@@ -238,6 +241,11 @@ function device() {
   row('Batteria', s.battery >= 0 ? `${s.battery}% · ${(s.battery_mv / 1000).toFixed(2)} V` : '–'); row('Indirizzo', s.wifi.ip || '–');
 }
 const syncTime = () => act(() => call('/api/time', {body: {epoch: Math.floor(Date.now() / 1000)}}), 'Ora sincronizzata');
+async function toggleRecovery() {
+  const enabled = !S.sys?.recovery;
+  if (!confirm(enabled ? 'Riavviare in recovery senza display? Il webserver partira automaticamente a ogni avvio.' : 'Uscire dalla recovery e riavviare con il display?')) return;
+  await act(() => kit.api('/api/recovery', {body: {enabled}}), 'Cambio modalita: riavvio...');
+}
 const reboot = () => confirm('Riavviare l\'orologio?') && act(() => kit.api('/api/reboot', {body: {}}), 'Riavvio...');
 
 /* ------------------------------------------------------------ apps */

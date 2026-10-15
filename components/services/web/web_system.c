@@ -16,6 +16,7 @@
 #include "core/app.h"
 #include "core/lv_port.h"
 #include "core/settings.h"
+#include "core/recovery.h"
 #include "core/sys.h"
 #include "hardware/board.h"
 #include "hardware/pmu.h"
@@ -107,10 +108,12 @@ static esp_err_t system_get(httpd_req_t *req)
     cJSON_AddStringToObject(out, "product", b->product);
     cJSON_AddStringToObject(out, "board", b->name);
     cJSON_AddStringToObject(out, "name", sys_nickname());
-    cJSON_AddBoolToObject(out, "stop", true);   /* kit.js: power button */
+    cJSON_AddBoolToObject(out, "stop", !recovery_active());   /* kit.js: power button */
     char host[24];
     snprintf(host, sizeof(host), "%s.local", sys_hostname());
     cJSON_AddStringToObject(out, "hostname", host);
+    cJSON_AddBoolToObject(out, "recovery", recovery_active());
+    cJSON_AddBoolToObject(out, "recovery_supported", recovery_supported());
     cJSON_AddBoolToObject(out, "round", b->round);
     cJSON_AddNumberToObject(out, "width", b->width);
     cJSON_AddNumberToObject(out, "height", b->height);
@@ -245,6 +248,11 @@ static esp_err_t apps_open(httpd_req_t *req)
     cJSON *json = body(req);
     const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(json, "id"));
     const char *ext_id = cJSON_GetStringValue(cJSON_GetObjectItem(json, "ext"));
+    if (recovery_active() && (ext_id != NULL || (id != NULL && strncmp(id, "extapps.", 8) == 0)))
+    {
+        cJSON_Delete(json);
+        return reply(req, false, "Avvio app esterne sospeso in recovery: richiede un riavvio fuori dal server");
+    }
     bool ok = false;
     if (id != NULL && app_find(id) != NULL)
     {
@@ -603,6 +611,15 @@ static esp_err_t ecos_get(httpd_req_t *req)
 }
 #endif
 
+static esp_err_t recovery_post(httpd_req_t *req)
+{
+    cJSON *json = body(req);
+    const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(json, "enabled");
+    bool ok = cJSON_IsBool(enabled) && recovery_request(cJSON_IsTrue(enabled));
+    cJSON_Delete(json);
+    return reply(req, ok, ok ? "Riavvio richiesto" : "Richiesta non valida o gia in corso");
+}
+
 void web_system_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
@@ -615,6 +632,7 @@ void web_system_register(httpd_handle_t server)
         {.uri = "/api/system", .method = HTTP_GET, .handler = system_get},
         {.uri = "/api/kit", .method = HTTP_GET, .handler = system_get},   /* kit.js header */
         {.uri = "/api/kit/off", .method = HTTP_POST, .handler = kit_off},
+        {.uri = "/api/recovery", .method = HTTP_POST, .handler = recovery_post},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post},
         {.uri = "/api/apps", .method = HTTP_GET, .handler = apps_get},
         {.uri = "/api/apps/open", .method = HTTP_POST, .handler = apps_open},

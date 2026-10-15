@@ -51,6 +51,20 @@
   /* ---------------------------------------------------------------- api */
   /* An internal app's page lives in a folder of the OS server ("/pieno/"):
    * its "/api/..." calls go to "/pieno/api/...". Pairing stays at the root. */
+  let recoverySession = null;
+  async function automaticRecovery() {
+    if (!recoverySession) recoverySession = (async () => {
+      try {
+        const response = await fetch('/api/recovery/session', {method: 'POST'});
+        if (!response.ok) return false;
+        const session = await response.json();
+        if (session.ephemeral !== true || typeof session.token !== 'string' || session.token.length !== 32) return false;
+        token = session.token; // RAM only: never replace the normal browser pairing in localStorage.
+        return true;
+      } catch (e) { return false; }
+    })().finally(() => { recoverySession = null; });
+    return recoverySession;
+  }
   kit.base = location.pathname.replace(/\/[^/]*$/, '');
   kit.api = async function (path, opt) {
     opt = opt || {};
@@ -64,6 +78,10 @@
     try { r = await fetch(path, init); }
     catch (e) { setOnline(false); throw new Error('Orologio non raggiungibile'); }
     setOnline(true);
+    if (r.status === 401 && await automaticRecovery()) {
+      init.headers['X-Key'] = token;
+      r = await fetch(path, init);
+    }
     if (r.status === 401) { showPair(); throw new Error('Abbina la dashboard'); }
     if (r.status === 404 && kit.base && !document.getElementById('kit-closed')) {
       /* An internal app closed on the watch: reloading the page opens it again. */
@@ -90,11 +108,16 @@
 
   /* -------------------------------------------------------------- pair */
   let pairing = null, readyCb = null;
-  function showPair(prefill) {
+  async function showPair(prefill) {
+    if (pairing) return;
+    if (await automaticRecovery()) { boot(); return; }
+    renderPair(prefill);
+  }
+  function renderPair(prefill) {
     if (pairing) return;
     pairing = kit.el('div', {class: 'kit-pair'});
     const inputs = [...Array(6)].map((_, i) => kit.el('input', {inputmode: 'numeric', maxlength: 1, 'aria-label': 'Cifra ' + (i + 1)}));
-    const msg = kit.el('p', {class: 'dim'}, "Sull'orologio apri la pagina Dashboard e leggi il codice a 6 cifre.");
+    const msg = kit.el('p', {class: 'dim'}, "Leggi il codice a 6 cifre nella Dashboard del dispositivo. In recovery l'accesso e automatico, senza codice.");
     const submit = async () => {
       const code = inputs.map(i => i.value).join('');
       if (code.length !== 6) return;

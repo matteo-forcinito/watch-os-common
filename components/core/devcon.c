@@ -24,6 +24,7 @@
 #include "core/app.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#include "core/recovery.h"
 #include "core/sys.h"
 
 #include "hardware/pmu.h"
@@ -391,7 +392,16 @@ static void handle(char *line)
     char *a3 = strtok(NULL, " ");
     char *a4 = strtok(NULL, " ");
 
-    if (strcmp(cmd, "shot") == 0)
+    if (strcmp(cmd, "recovery") == 0)
+    {
+        bool enabled = a1 != NULL && strcmp(a1, "on") == 0;
+        if (a1 != NULL && (enabled || strcmp(a1, "off") == 0))
+        {
+            printf("@RECOVERY request=%d accepted=%d\n", enabled, recovery_request(enabled));
+        }
+        else printf("@RECOVERY active=%d\n", recovery_active());
+    }
+    else if (strcmp(cmd, "shot") == 0)
     {
         cmd_shot();
         return;   /* @END already printed */
