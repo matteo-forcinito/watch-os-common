@@ -27,6 +27,9 @@
 #include "services/storage.h"
 #include "services/web_server.h"
 #include "services/wifi.h"
+#if CONFIG_WATCH_ECOS_PAIRING
+#include "services/ecos.h"
+#endif
 
 #include "cJSON.h"
 #include "esp_heap_caps.h"
@@ -452,9 +455,82 @@ static esp_err_t update_post(httpd_req_t *req)
     return reply(req, ok, install ? "Installo l'aggiornamento..." : "Controllo...");
 }
 
+#if CONFIG_WATCH_ECOS_PAIRING
+static esp_err_t ecos_get(httpd_req_t *req)
+{
+    ecos_snapshot_t s;
+    ecos_snapshot(&s);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "enabled", true);
+    cJSON_AddBoolToObject(out, "running", s.running);
+    cJSON_AddBoolToObject(out, "comparing", s.comparing);
+    cJSON_AddBoolToObject(out, "local_ok", s.local_ok);
+    cJSON_AddBoolToObject(out, "remote_ok", s.remote_ok);
+    cJSON_AddBoolToObject(out, "saved", s.saved);
+    cJSON_AddNumberToObject(out, "seconds_left", s.seconds_left);
+    cJSON_AddNumberToObject(out, "code", s.code);
+    cJSON_AddStringToObject(out, "candidate", s.candidate);
+    cJSON_AddStringToObject(out, "candidate_id", s.candidate_id);
+    cJSON_AddStringToObject(out, "message", s.message);
+    cJSON *peers = cJSON_AddArrayToObject(out, "peers");
+    for (int i = 0; i < s.count; i++)
+    {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddStringToObject(p, "name", s.peers[i].name);
+        cJSON_AddStringToObject(p, "id", s.peers[i].id);
+        cJSON_AddItemToArray(peers, p);
+    }
+    return send_out(req, out);
+}
+
+static esp_err_t ecos_post(httpd_req_t *req)
+{
+    cJSON *json = body(req);
+    const char *action = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "action"));
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (action != NULL && strcmp(action, "start") == 0)
+    {
+        cJSON *ip = cJSON_GetObjectItemCaseSensitive(json, "ip");
+        if (ip == NULL || cJSON_IsString(ip))
+        {
+            err = ecos_pair_start(cJSON_GetStringValue(ip));
+        }
+    }
+    else if (action != NULL && strcmp(action, "cancel") == 0)
+    {
+        ecos_pair_cancel();
+        err = ESP_OK;
+    }
+    else if (action != NULL && strcmp(action, "confirm") == 0)
+    {
+        const char *id = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "id"));
+        cJSON *code = cJSON_GetObjectItemCaseSensitive(json, "code");
+        if (id != NULL && strlen(id) == 12 && cJSON_IsNumber(code) &&
+            code->valuedouble >= 0 && code->valuedouble <= 999999 && code->valuedouble == code->valueint)
+        {
+            err = ecos_pair_confirm(id, (uint32_t)code->valueint);
+        }
+    }
+    cJSON_Delete(json);
+    return reply(req, err == ESP_OK, err == ESP_OK ? "Richiesta ricevuta" :
+                 err == ESP_ERR_NO_MEM ? "Memoria insufficiente" : "Richiesta non valida o sessione cambiata");
+}
+#else
+static esp_err_t ecos_get(httpd_req_t *req)
+{
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "enabled", false);
+    return send_out(req, out);
+}
+#endif
+
 void web_system_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
+        {.uri = "/api/ecos", .method = HTTP_GET, .handler = ecos_get},
+#if CONFIG_WATCH_ECOS_PAIRING
+        {.uri = "/api/ecos", .method = HTTP_POST, .handler = ecos_post},
+#endif
         {.uri = "/api/system", .method = HTTP_GET, .handler = system_get},
         {.uri = "/api/kit", .method = HTTP_GET, .handler = system_get},   /* kit.js header */
         {.uri = "/api/kit/off", .method = HTTP_POST, .handler = kit_off},

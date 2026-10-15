@@ -34,6 +34,7 @@
     <button data-view="v-market">Market<span class="badge" id="mk-badge" hidden></span></button>
     <button data-view="v-alarms">Sveglie</button>
     <button data-view="v-wifi">Wi-Fi</button>
+    <button data-view="v-ecos">Ecosistema</button>
     <button data-view="v-settings">Impostazioni</button>
     <button data-view="v-files">File</button>
     <button data-view="v-system">Sistema</button>
@@ -57,6 +58,31 @@
       <button class="btn" onclick="syncTime()">Sincronizza l'ora</button>
       <button class="btn danger" onclick="reboot()">Riavvia</button></div></div>
   </div>
+</section>
+
+<section class="view" id="v-ecos">
+  <div class="card"><h2>Ecosistema · Abbinamento</h2>
+    <p>Avvia l'abbinamento su due dispositivi vicini: si parlano direttamente via radio (ESP-NOW),
+      senza router né internet. Confronta i codici sui due schermi e conferma su entrambi solo se coincidono.</p>
+    <p id="ecos-status" role="status" aria-live="polite">Caricamento...</p>
+    <p id="ecos-candidate"></p>
+    <p id="ecos-code" style="font-size:2rem;letter-spacing:.2em;font-variant-numeric:tabular-nums"></p>
+    <p id="ecos-confirmations" class="dim"></p>
+    <label for="ecos-address">Indirizzo dell'altro dispositivo (facoltativo, solo via rete di casa)</label>
+    <input id="ecos-address" placeholder="es. 192.168.1.42" maxlength="15" inputmode="decimal">
+    <p class="faint">Lascia vuoto per il collegamento diretto (consigliato). Con un IP l'abbinamento passa
+      invece dalla rete Wi-Fi di casa: serve che l'altro dispositivo sia collegato e raggiungibile.</p>
+    <div class="row">
+      <button class="btn primary" id="ecos-start" onclick="ecosAction('start')" disabled>Avvia abbinamento</button>
+      <button class="btn primary" id="ecos-confirm" onclick="ecosAction('confirm')" disabled>I codici coincidono</button>
+      <button class="btn danger" id="ecos-cancel" onclick="ecosAction('cancel')" disabled>Annulla</button>
+    </div>
+    <p class="faint">La finestra dura al massimo 3 minuti. Annulla per terminarla subito.
+      Chiudere il browser non la interrompe. Questo primo passo salva la fiducia tra dispositivi;
+      Remote e le sue autorizzazioni restano separati.</p>
+  </div>
+  <div class="card" style="margin-top:16px"><h2>Dispositivi salvati</h2><div id="ecos-peers"></div>
+    <p class="faint">L'elenco indica gli abbinamenti memorizzati, non la presenza in rete.</p></div>
 </section>
 
 <!-- ============================================================ APPS -->
@@ -433,8 +459,46 @@ async function fwUpload() {
   info.textContent = r.ok ? 'Installato e verificato: l\'orologio si riavvia con la nuova versione.' : (r.message || 'Errore');
 }
 
+/* ------------------------------------------------------------- ECOS */
+let ecosSeen = null;
+let ecosPending = false;
+async function loadEcos() {
+  const s = await kit.api('/api/ecos');
+  ecosSeen = s;
+  $('#ecos-status').textContent = s.enabled ? s.message + (s.running ? ` · ${s.seconds_left} s` : '') : 'ECOS non abilitato in questo firmware';
+  $('#ecos-candidate').textContent = s.candidate ? `${s.candidate} · ${s.candidate_id}` : '';
+  $('#ecos-code').textContent = s.comparing ? String(s.code).padStart(6, '0') : '';
+  $('#ecos-confirmations').textContent = s.comparing ?
+    `Qui: ${s.local_ok ? 'confermato' : 'da confermare'} · Altro dispositivo: ${s.remote_ok ? 'confermato' : 'in attesa'}` : '';
+  $('#ecos-start').disabled = ecosPending || !s.enabled || s.running;
+  $('#ecos-confirm').disabled = ecosPending || !s.comparing || s.local_ok;
+  $('#ecos-cancel').disabled = ecosPending || !s.running;
+  $('#ecos-address').disabled = ecosPending || !s.enabled || s.running;
+  const peers = $('#ecos-peers');
+  peers.replaceChildren();
+  for (const p of s.peers || []) peers.append(el('p', {}, `${p.name} · ${p.id}`));
+  if (!peers.children.length) peers.textContent = 'Nessun dispositivo salvato';
+}
+async function ecosAction(action) {
+  if (ecosPending) return;
+  const shown = ecosSeen;
+  if (action === 'confirm' && (!shown || !shown.comparing)) return;
+  ecosPending = true;
+  for (const id of ['ecos-start', 'ecos-confirm', 'ecos-cancel']) $('#' + id).disabled = true;
+  try {
+    await kit.api('/api/ecos', {body: {action, id: shown?.candidate_id, code: shown?.code,
+      ...(action === 'start' ? {ip: $('#ecos-address').value.trim()} : {})}});
+  } catch (e) {
+    kit.toast(e.message, 'bad');
+  } finally {
+    ecosPending = false;
+    await loadEcos().catch(e => kit.toast(e.message, 'bad'));
+  }
+}
+
 /* ------------------------------------------------------------ start */
 const loaders = {'v-home': loadSystem, 'v-apps': loadApps, 'v-market': loadMarket, 'v-alarms': loadAlarms, 'v-wifi': loadWifi,
+  'v-ecos': loadEcos,
   'v-settings': loadSettings, 'v-files': () => fsLoad(cwd), 'v-system': () => Promise.all([loadUpdate(), loadSystem()])};
 let current = 'v-home';
 drawDays();
@@ -446,6 +510,7 @@ kit.start({onReady: () => {
     await loadMarket().catch(() => {});
     if (current === 'v-home') await loadSystem();
     else if (current === 'v-system') await loadUpdate();
+    else if (current === 'v-ecos') await loadEcos();
   }, 4000);
   if (current !== 'v-home' && current !== 'v-market') loaders[current]().catch(e => kit.toast(e.message, 'bad'));
 }});

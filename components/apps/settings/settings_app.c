@@ -54,6 +54,9 @@ static void main_create(lv_obj_t *screen, void *arg)
     ui_row(page, LV_SYMBOL_IMAGE, UI_COLOR_BLUE, "Display", NULL, apps_open_cb, (void *)"settings.display");
     ui_row(page, LV_SYMBOL_VOLUME_MAX, UI_COLOR_PINK, "Suoni", NULL, apps_open_cb, (void *)"settings.sound");
     ui_row(page, LV_SYMBOL_WIFI, UI_COLOR_BLUE, "Wi-Fi", NULL, apps_open_cb, (void *)"settings.wifi");
+#if CONFIG_WATCH_ECOS_PAIRING
+    ui_row(page, LV_SYMBOL_LOOP, UI_COLOR_GREEN, "Ecosistema", NULL, apps_open_cb, (void *)"ecos");
+#endif
     ui_row(page, LV_SYMBOL_BLUETOOTH, UI_COLOR_INDIGO, "Bluetooth", NULL, apps_open_cb, (void *)"settings.bluetooth");
     ui_row(page, LV_SYMBOL_LOOP, UI_COLOR_ORANGE, "Ora e data", NULL, apps_open_cb, (void *)"settings.time");
     ui_row(page, LV_SYMBOL_DOWNLOAD, UI_COLOR_GREEN, "Aggiornamento", NULL, apps_open_cb, (void *)"settings.update");

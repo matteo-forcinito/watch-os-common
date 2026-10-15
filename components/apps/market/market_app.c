@@ -1,6 +1,9 @@
 #include "apps_internal.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#if CONFIG_WATCH_ECOS_PAIRING
+#include "services/ecos.h"
+#endif
 #include "services/market.h"
 #include "services/fw_version.h"
 #include "hardware/board.h"
@@ -809,6 +812,30 @@ bool devcon_app_command(char *line)
         printf(sys_task_create(tone_task, "tone", 4096, NULL, 4, 0) ? "@OK tone\n" : "@ERR tone\n");
         return true;
     }
+#if CONFIG_WATCH_ECOS_PAIRING
+    if (strncmp(line, "ecos", 4) == 0 && (line[4] == 0 || line[4] == ' '))
+    {
+        /* ECOS pairing from the bench: "ecos start [ip]", "ecos confirm", "ecos cancel", "ecos". */
+        const char *op = line[4] ? line + 5 : "";
+        ecos_snapshot_t *e = malloc(sizeof(*e));
+        if (e == NULL) return true;
+        if (strncmp(op, "start", 5) == 0)
+            printf("@ECOSREQUEST %s\n", esp_err_to_name(ecos_pair_start(op[5] == ' ' ? op + 6 : NULL)));
+        else if (strcmp(op, "confirm") == 0)
+        {
+            ecos_snapshot(e);
+            printf("@ECOSREQUEST %s\n", esp_err_to_name(ecos_pair_confirm(e->candidate_id, e->code)));
+        }
+        else if (strcmp(op, "cancel") == 0) ecos_pair_cancel();
+        ecos_snapshot(e);
+        printf("@ECOS running=%d comparing=%d local=%d remote=%d saved=%d left=%u code=%06lu candidate=%s/%s peers=%d msg=%s\n",
+               e->running, e->comparing, e->local_ok, e->remote_ok, e->saved, e->seconds_left, (unsigned long)e->code,
+               e->candidate, e->candidate_id, e->count, e->message);
+        for (int i = 0; i < e->count; i++) printf("@ECOSPEER %s %s\n", e->peers[i].id, e->peers[i].name);
+        free(e);
+        return true;
+    }
+#endif
     if (strncmp(line, "market", 6) != 0 || (line[6] != 0 && line[6] != ' ')) return false;
     char *cmd = strtok(line, " ");
     if (strcmp(cmd, "market") == 0)

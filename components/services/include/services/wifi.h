@@ -51,6 +51,16 @@ esp_err_t wifi_acquire(uint32_t timeout_ms);
 /* Done with the network: Wi-Fi goes off shortly after the last release. */
 void wifi_release(void);
 
+/* The radio only (ESP-NOW between devices, no network, no internet): driver on
+ * in station mode, not joined. Same reference count as wifi_acquire(): pair
+ * it with wifi_release(). Immediate (no scan, no join). */
+esp_err_t wifi_radio_acquire(void);
+/* Current radio channel (1..13), 0 if the radio is off. */
+uint8_t wifi_radio_channel(void);
+/* Move the radio to `channel`; refused (false) while joined to a network or
+ * serving the access point: then everyone must use the network's channel. */
+bool wifi_radio_set_channel(uint8_t channel);
+
 /*
  * Big transfers (firmware update): no modem sleep while held, several times
  * faster. Balanced calls: wifi_set_fast(true) ... wifi_set_fast(false).

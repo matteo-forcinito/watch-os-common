@@ -14,6 +14,9 @@
 #include "services/fw_update.h"
 #include "services/market.h"
 #include "services/alarm.h"
+#if CONFIG_WATCH_ECOS_PAIRING
+#include "services/ecos.h"
+#endif
 
 #include "hardware/board.h"
 #include "hardware/microphone.h"
@@ -34,6 +37,9 @@ static const app_t *const s_apps[] = {
     &music_app,
     &flashlight_app,
     &web_app,
+#if CONFIG_WATCH_ECOS_PAIRING
+    &ecos_app,
+#endif
     &usb_drive_app,
     &sdcard_app,
     &battery_app,
@@ -285,6 +291,9 @@ static void ask_close(const app_t *app)
 
 void apps_init(void)
 {
+#if CONFIG_WATCH_ECOS_PAIRING
+    ecos_init();
+#endif
     app_manager_set_close_confirm(ask_close);
     market_init();
 #if CONFIG_APPKIT_HOSTED

@@ -1,5 +1,14 @@
 menu "Watch OS services"
 
+    config WATCH_ECOS_PAIRING
+        bool "ECOS experimental pairing (ESP-NOW or LAN)"
+        default y
+        help
+            Explicit three-minute pairing window, device to device over ESP-NOW
+            (no router) or over the home Wi-Fi when an IP is given. No idle
+            task or listener; pairwise credentials only, without HID access.
+            Disable to omit the service, watch page and dashboard controls.
+
     config WATCH_VOICE_MEMOS
         bool "Experimental local voice memos"
         default n

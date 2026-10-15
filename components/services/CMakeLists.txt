@@ -1,3 +1,8 @@
+set(ECOS_SRCS "")
+if(CONFIG_WATCH_ECOS_PAIRING)
+    list(APPEND ECOS_SRCS "ecos/ecos.c")
+endif()
+
 # services: the base system's logic (network, time, alarms, notifications,
 # weather, sounds, setup web page, external apps).
 idf_component_register(
@@ -23,6 +28,7 @@ idf_component_register(
         "battery/battery_health.c"
         "battery/battery_model.c"
         "storage/storage.c"
+        ${ECOS_SRCS}
     INCLUDE_DIRS
         "include"
     REQUIRES

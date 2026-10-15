@@ -676,6 +676,44 @@ esp_err_t wifi_acquire(uint32_t timeout_ms)
     return err;
 }
 
+esp_err_t wifi_radio_acquire(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_refs++;
+    esp_timer_stop(s_off_timer);
+    esp_err_t err = radio_on(wanted_mode(false)) ? ESP_OK : ESP_ERR_NO_MEM;
+    if (err != ESP_OK)
+    {
+        s_refs--;
+        if (s_refs == 0)
+        {
+            esp_timer_start_once(s_off_timer, 1000);
+        }
+    }
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+uint8_t wifi_radio_channel(void)
+{
+    uint8_t primary = 0;
+    wifi_second_chan_t second;
+    if (!s_started || esp_wifi_get_channel(&primary, &second) != ESP_OK)
+    {
+        return 0;
+    }
+    return primary;
+}
+
+bool wifi_radio_set_channel(uint8_t channel)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    bool ok = s_started && !s_ap_on && !wifi_is_connected() && channel >= 1 && channel <= 13 &&
+              esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) == ESP_OK;
+    xSemaphoreGive(s_mutex);
+    return ok;
+}
+
 void wifi_release(void)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
