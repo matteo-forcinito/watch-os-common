@@ -3,7 +3,13 @@
 Il sistema operativo da smartwatch condiviso dai firmware:
 
 - `ESP32-S3-Amoled-Touch-1.8` — Waveshare ESP32-S3-Touch-AMOLED-1.8 (368x448, touch)
+- `ESP32-S3-Touch-AMOLED-1.75` — Waveshare ESP32-S3-Touch-AMOLED-1.75 (466x466 rotondo)
+- `ESP32-S3-Touch-AMOLED-1.75C` — Waveshare ESP32-S3-Touch-AMOLED-1.75C (466x466 rotondo, scocca chiusa)
+- `ESP32-S3-Knob-Touch-LCD-1.8` — Waveshare Knob 1.8 (360x360 rotondo, rotella)
 - `SenseCap-Watcher-W1-A` — Seeed SenseCAP Watcher W1-A (412x412 rotondo, touch + rotella)
+
+**Guida per lavorare sul progetto** (build, app, test, diagnostica, release, companion):
+[docs/guida/README.md](docs/guida/README.md).
 
 ```
 components\
