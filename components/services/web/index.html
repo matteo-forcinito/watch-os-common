@@ -639,24 +639,58 @@ async function remoteEnable(enabled) {
     await loadRemote();
   });
 }
+function decodeOrbitFrame(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length > 4*1024*1024) throw new Error('Frame troppo grande');
+  if (bytes.length < 4 || bytes[0]!==79 || bytes[1]!==82 || bytes[2]!==70 || bytes[3]!==49) return null;
+  if (bytes.length < 16) throw new Error('Frame incompleto');
+  const view = new DataView(buffer), width=view.getUint16(4,true), height=view.getUint16(6,true);
+  const flags=view.getUint32(8,true), length=view.getUint32(12,true), count=width*height;
+  if (!width || !height || width>2048 || height>2048 || count>1024*1024 || flags>1 || length!==bytes.length-16 ||
+      (flags===0 ? length!==count*2 : length%4!==0)) throw new Error('Frame non valido');
+  const pixels = new Uint8ClampedArray(count*4); let written=0, out=0;
+  for (let pos=16;pos<bytes.length;) {
+    const run=flags===1?view.getUint16(pos,true):1; if(flags===1)pos+=2;
+    const color=view.getUint16(pos,true);pos+=2;
+    if(!run || written+run>count)throw new Error('Run non valido');
+    const red=Math.floor(((color>>11)&31)*255/31),green=Math.floor(((color>>5)&63)*255/63),blue=Math.floor((color&31)*255/31);
+    for(let n=0;n<run;n++){pixels[out++]=red;pixels[out++]=green;pixels[out++]=blue;pixels[out++]=255;}
+    written+=run;
+  }
+  if(written!==count)throw new Error('Pixel mancanti');
+  return {width,height,pixels};
+}
+let remoteInputBusy=false;
 async function remoteFrame() {
-  if (remoteBusy || document.hidden || !$('#remote-enable').checked) return;
+  if (remoteBusy || remoteInputBusy || document.hidden || !$('#remote-enable').checked) return;
   remoteBusy = true;
+  const abort = new AbortController(), deadline=setTimeout(()=>abort.abort(),8000);
   try {
-    const response = await kit.api('/api/remote/frame', {raw:true});
-    const bitmap = await createImageBitmap(await response.blob());
-    const canvas = $('#remote-screen');
-    canvas.width = bitmap.width; canvas.height = bitmap.height;
-    canvas.getContext('2d').drawImage(bitmap, 0, 0); bitmap.close();
+    const response = await kit.api('/api/remote/frame?format=orf1', {raw:true,signal:abort.signal});
+    const data=await response.arrayBuffer(), decoded=decodeOrbitFrame(data), canvas=$('#remote-screen');
+    if(decoded) {
+      canvas.width=decoded.width;canvas.height=decoded.height;
+      canvas.getContext('2d').putImageData(new ImageData(decoded.pixels,decoded.width,decoded.height),0,0);
+    } else {
+      const bitmap=await createImageBitmap(new Blob([data],{type:'image/bmp'}));
+      canvas.width=bitmap.width;canvas.height=bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
+    }
     $('#remote-status').textContent = 'Connesso';
   } catch (e) { $('#remote-status').textContent = e.message; }
-  finally { remoteBusy = false; }
+  finally { clearTimeout(deadline); remoteBusy = false; }
 }
 async function remoteAction(action, points = {}) {
-  await kit.try(async () => {
-    await kit.api('/api/remote/input', {body:{action, ...points}});
-    await remoteFrame();
-  });
+  if(remoteInputBusy || !$('#remote-enable').checked) return;
+  remoteInputBusy=true;
+  try {
+    while(remoteBusy)await new Promise(resolve=>setTimeout(resolve,20));
+    await kit.try(async()=>{
+      await kit.api('/api/remote/input',{body:{action,...points}});
+      if(action==='swipe'||action==='tap')await new Promise(resolve=>setTimeout(resolve,action==='swipe'?400:120));
+    });
+  } finally { remoteInputBusy=false; }
+  await remoteFrame();
 }
 function remotePoint(event) {
   const canvas = $('#remote-screen'), rect = canvas.getBoundingClientRect();

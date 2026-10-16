@@ -71,6 +71,7 @@
     opt = opt || {};
     if (kit.base && path.startsWith('/api/') && path !== '/api/pair') path = kit.base + path;
     const init = {method: opt.method || (opt.body !== undefined ? 'POST' : 'GET'), headers: {'X-Key': token}};
+    if (opt.signal) init.signal = opt.signal;
     if (opt.body !== undefined) {
       if (opt.body instanceof Blob || typeof opt.body === 'string') init.body = opt.body;
       else { init.body = JSON.stringify(opt.body); init.headers['Content-Type'] = 'application/json'; }

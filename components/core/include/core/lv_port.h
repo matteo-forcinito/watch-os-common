@@ -130,4 +130,8 @@ void lv_port_focus_enter(void);
 /* Highlight colour (the theme's accent). */
 void lv_port_set_focus_color(lv_color_t color);
 
+/* UI task only, under the LVGL lock. Captures the composed display via its
+ * normal flush, including overlays. Caller owns the returned draw buffer. */
+lv_draw_buf_t *lv_port_capture_frame(void);
+
 #endif

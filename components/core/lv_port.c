@@ -52,6 +52,8 @@ static lv_display_t *s_disp = NULL;
 static lv_indev_t *s_indev = NULL;
 static TaskHandle_t s_task = NULL;
 static SemaphoreHandle_t s_flush_done = NULL;
+/* LVGL uses notification slot 0 for its draw worker. Never share it for UI wakeups. */
+static SemaphoreHandle_t s_wake = NULL;
 static SemaphoreHandle_t s_refresh_done = NULL;
 static atomic_bool s_refresh_request = false;
 static QueueHandle_t s_async = NULL;
@@ -108,8 +110,54 @@ static void flush_done_isr(void *ctx)
     portYIELD_FROM_ISR(woken);
 }
 
+/* Only the UI task touches these; no framebuffer is retained between requests. */
+static lv_draw_buf_t *s_capture;
+static uint32_t s_capture_pixels;
+
+static void capture_flush(const lv_area_t *area, const uint8_t *pixels)
+{
+    lv_draw_buf_t *capture = s_capture;
+    if (capture == NULL) return;
+    int width = lv_area_get_width(area);
+    int stride = (int)lv_draw_buf_width_to_stride(width, LV_COLOR_FORMAT_RGB565_SWAPPED);
+    for (int y = area->y1; y <= area->y2; y++) {
+        if (y < 0 || y >= (int)capture->header.h) continue;
+        uint16_t *dst = (uint16_t *)(capture->data + (size_t)y * capture->header.stride);
+        const uint8_t *src = pixels + (size_t)(y - area->y1) * stride;
+        for (int x = area->x1; x <= area->x2; x++) {
+            if (x < 0 || x >= (int)capture->header.w) continue;
+            int offset = (x - area->x1) * 2;
+            dst[x] = (uint16_t)((uint16_t)src[offset] << 8 | src[offset + 1]);
+            s_capture_pixels++;
+        }
+    }
+}
+
+lv_draw_buf_t *lv_port_capture_frame(void)
+{
+    if (s_disp == NULL || s_capture != NULL) return NULL;
+    int w = lv_display_get_horizontal_resolution(s_disp);
+    int h = lv_display_get_vertical_resolution(s_disp);
+    lv_draw_buf_t *frame = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
+    if (frame == NULL) { ESP_LOGW(TAG, "Remote frame allocation failed: %dx%d", w, h); return NULL; }
+    s_capture_pixels = 0;
+    s_capture = frame;
+    lv_obj_invalidate(lv_screen_active());
+    lv_obj_invalidate(lv_layer_top());
+    lv_refr_now(s_disp);
+    s_capture = NULL;
+    if (s_capture_pixels < (uint32_t)w * (uint32_t)h) {
+        ESP_LOGW(TAG, "Incomplete remote frame: %lu/%lu pixels, headless %d",
+                 (unsigned long)s_capture_pixels, (unsigned long)((uint32_t)w * (uint32_t)h), s_headless);
+        lv_draw_buf_destroy(frame);
+        return NULL;
+    }
+    return frame;
+}
+
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *pixels)
 {
+    capture_flush(area, pixels);
     if (s_headless)
     {
         lv_display_flush_ready(disp);
@@ -158,12 +206,12 @@ static void touch_irq(void *ctx)
     if (xPortInIsrContext())
     {
         BaseType_t woken = pdFALSE;
-        vTaskNotifyGiveFromISR(s_task, &woken);
+        xSemaphoreGiveFromISR(s_wake, &woken);
         portYIELD_FROM_ISR(woken);
     }
     else
     {
-        xTaskNotifyGive(s_task);
+        xSemaphoreGive(s_wake);
     }
 }
 
@@ -719,7 +767,7 @@ static void lvgl_task(void *arg)
             }
         }
 
-        ulTaskNotifyTake(pdTRUE, ticks);
+        xSemaphoreTake(s_wake, ticks);
     }
 }
 
@@ -731,11 +779,12 @@ static esp_err_t init_port(bool headless)
     const uint16_t width = display_width();
     const uint16_t height = display_height();
 
+    s_wake = xSemaphoreCreateBinary();
     s_flush_done = xSemaphoreCreateBinary();
     s_refresh_done = xSemaphoreCreateBinary();
     s_async = xQueueCreate(ASYNC_QUEUE_LEN, sizeof(async_item_t));
 
-    if (s_flush_done == NULL || s_refresh_done == NULL || s_async == NULL)
+    if (s_wake == NULL || s_flush_done == NULL || s_refresh_done == NULL || s_async == NULL)
     {
         return ESP_ERR_NO_MEM;
     }
@@ -860,9 +909,9 @@ void lv_port_unlock(void)
 
 void lv_port_wake(void)
 {
-    if (s_task != NULL)
+    if (s_wake != NULL)
     {
-        xTaskNotifyGive(s_task);
+        xSemaphoreGive(s_wake);
     }
 }
 

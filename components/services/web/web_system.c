@@ -37,6 +37,7 @@
 
 #include "cJSON.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 
@@ -759,9 +760,7 @@ static void remote_ui(void *arg)
         if (call->action == 0)
         {
 #if CONFIG_WATCH_REMOTE_UI
-            call->screen = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
-            if (lv_obj_get_child_count(lv_layer_top()) > 0)
-                call->top = lv_snapshot_take(lv_layer_top(), LV_COLOR_FORMAT_ARGB8888);
+            call->screen = lv_port_capture_frame();
 #endif
         }
         else if (call->action == 1)
@@ -799,6 +798,7 @@ static bool remote_run(remote_call_t *call)
         return false;
     }
     bool ready = xSemaphoreTake(shared->call.done, pdMS_TO_TICKS(3000)) == pdTRUE;
+    if (!ready) ESP_LOGW("web_remote", "Remote UI job timed out, action %d", call->action);
     if (ready)
     {
         SemaphoreHandle_t original = call->done;
@@ -816,6 +816,43 @@ static void remote_u32(uint8_t *p, uint32_t value)
     for (int i = 0; i < 4; i++) p[i] = (uint8_t)(value >> (i * 8));
 }
 
+/* ORF1: 16-byte LE header, RGB565 raw or (uint16 count, uint16 color) runs.
+ * Row runs keep encoding bounded; photographs fall back to raw RGB565. */
+static esp_err_t remote_compact(httpd_req_t *req, const lv_draw_buf_t *frame)
+{
+    uint32_t w = frame->header.w, h = frame->header.h, runs = 0;
+    for (uint32_t y = 0; y < h; y++) {
+        const uint16_t *row = (const uint16_t *)(frame->data + y * frame->header.stride);
+        for (uint32_t x = 0; x < w; x++) if (x == 0 || row[x] != row[x - 1]) runs++;
+    }
+    bool rle = runs * 4 < w * h * 2;
+    uint8_t header[16] = {'O','R','F','1', (uint8_t)w, (uint8_t)(w >> 8), (uint8_t)h, (uint8_t)(h >> 8)};
+    remote_u32(header + 8, rle ? 1 : 0);
+    remote_u32(header + 12, rle ? runs * 4 : w * h * 2);
+    uint8_t *chunk = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
+    if (chunk == NULL) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memoria insufficiente");
+    httpd_resp_set_type(req, "application/vnd.orbit.frame");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err = httpd_resp_send_chunk(req, (char *)header, sizeof(header));
+    size_t used = 0;
+    for (uint32_t y = 0; y < h && err == ESP_OK; y++) {
+        const uint16_t *row = (const uint16_t *)(frame->data + y * frame->header.stride);
+        for (uint32_t x = 0; x < w && err == ESP_OK;) {
+            uint16_t color = row[x];
+            uint16_t count = 1;
+            if (rle) while (x + count < w && row[x + count] == color && count < UINT16_MAX) count++;
+            if (rle) { chunk[used++] = (uint8_t)count; chunk[used++] = (uint8_t)(count >> 8); }
+            chunk[used++] = (uint8_t)color; chunk[used++] = (uint8_t)(color >> 8);
+            x += count;
+            if (used == 4096) { err = httpd_resp_send_chunk(req, (char *)chunk, used); used = 0; }
+        }
+    }
+    if (err == ESP_OK && used != 0) err = httpd_resp_send_chunk(req, (char *)chunk, used);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, NULL, 0);
+    free(chunk);
+    return err;
+}
+
 static esp_err_t remote_frame(httpd_req_t *req)
 {
     if (!settings_get()->remote_ui_enabled) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Schermo remoto disattivato");
@@ -824,7 +861,12 @@ static esp_err_t remote_frame(httpd_req_t *req)
     power_wake(POWER_WAKE_OTHER);
     bool ready = remote_run(&call) && call.screen != NULL;
     esp_err_t err = ESP_FAIL;
-    if (ready)
+    char query[48] = "", format[16] = "";
+    bool compact = httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "format", format, sizeof(format)) == ESP_OK && strcmp(format, "orf1") == 0;
+    wifi_set_fast(true);
+    if (ready && compact) err = remote_compact(req, call.screen);
+    else if (ready)
     {
         unsigned w = call.screen->header.w, h = call.screen->header.h;
         unsigned stride = (w * 3 + 3) & ~3U;
@@ -872,6 +914,7 @@ static esp_err_t remote_frame(httpd_req_t *req)
     call.action = 1;
     if (call.screen != NULL || call.top != NULL) remote_run(&call);
     vSemaphoreDelete(call.done);
+    wifi_set_fast(false);
     return err;
 }
 
@@ -980,6 +1023,8 @@ static esp_err_t remote_config_get(httpd_req_t *req)
     cJSON_AddBoolToObject(out, "supported", false);
 #endif
     cJSON_AddBoolToObject(out, "enabled", settings_get()->remote_ui_enabled);
+    cJSON_AddStringToObject(out, "capture_backend", "display_flush");
+    cJSON_AddBoolToObject(out, "compact_frames", true);
     cJSON_AddNumberToObject(out, "retained_frame_bytes", remote_ui_pending() ? -1 : 0);
     cJSON_AddBoolToObject(out, "ui_pending", remote_ui_pending());
     return send_out(req, out);
