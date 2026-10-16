@@ -28,6 +28,9 @@
 #include "services/storage.h"
 #include "services/web_server.h"
 #include "services/wifi.h"
+#include "services/battery_health.h"
+#include "services/motion.h"
+#include "services/weather.h"
 #if CONFIG_WATCH_ECOS_PAIRING
 #include "services/ecos.h"
 #endif
@@ -239,6 +242,9 @@ static esp_err_t apps_get(httpd_req_t *req)
         else if (strcmp(a->id, "ecos") == 0) view = "v-ecos";
         else if (strcmp(a->id, "settings") == 0) view = "v-settings";
         else if (strcmp(a->id, "market") == 0) view = "v-market";
+        else if (strcmp(a->id, "battery") == 0) view = "v-battery";
+        else if (strcmp(a->id, "sensors") == 0) view = "v-sensors";
+        else if (strcmp(a->id, "weather") == 0) view = "v-weather";
         if (view != NULL && !cJSON_HasObjectItem(j, "dashboard"))
         {
             char url[40]; snprintf(url, sizeof(url), "/#%s", view);
@@ -1085,6 +1091,82 @@ static esp_err_t disk_post(httpd_req_t *req)
     }
     return disk_get(req);
 }
+
+/* Cached service snapshots: no LVGL lock, capture buffers or sensor startup. */
+static esp_err_t battery_get(httpd_req_t *req)
+{
+    battery_report_t r = {0};
+    battery_health_get(&r);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "supported", pmu_present());
+    cJSON_AddBoolToObject(out, "present", pmu_battery_present());
+    cJSON_AddNumberToObject(out, "percent", r.percent);
+    cJSON_AddNumberToObject(out, "mv", r.mv);
+    cJSON_AddBoolToObject(out, "charging", r.charging);
+    cJSON_AddBoolToObject(out, "usb", r.usb);
+    cJSON_AddNumberToObject(out, "health_estimate", r.health);
+    cJSON_AddNumberToObject(out, "cycles_x10", r.cycles_x10);
+    cJSON_AddNumberToObject(out, "days", r.days);
+    cJSON_AddNumberToObject(out, "minutes_left_estimate", r.minutes_left);
+    return send_out(req, out);
+}
+static esp_err_t sensors_get(httpd_req_t *req)
+{
+    motion_snapshot_t r = {0};
+    motion_snapshot(&r);
+    int64_t age = r.sample_monotonic_us > 0 ? (esp_timer_get_time() - r.sample_monotonic_us) / 1000 : -1;
+    bool fresh = r.valid && r.running && age >= 0 && age <= 1000;
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "supported", imu_supported());
+    cJSON_AddBoolToObject(out, "running", r.running);
+    cJSON_AddBoolToObject(out, "fresh", fresh);
+    cJSON_AddNumberToObject(out, "age_ms", (double)age);
+    cJSON_AddNumberToObject(out, "samples", r.samples);
+    cJSON_AddStringToObject(out, "error", esp_err_to_name(r.error));
+    if (fresh)
+    {
+        cJSON *accel = cJSON_AddArrayToObject(out, "acceleration_g");
+        cJSON *gyro = cJSON_AddArrayToObject(out, "angular_dps");
+        for (unsigned i = 0; i < 3; i++)
+        {
+            cJSON_AddItemToArray(accel, cJSON_CreateNumber(r.sample.acceleration_g[i]));
+            cJSON_AddItemToArray(gyro, cJSON_CreateNumber(r.sample.angular_dps[i]));
+        }
+        cJSON_AddNumberToObject(out, "temperature_c", r.sample.temperature_c);
+    }
+    return send_out(req, out);
+}
+static esp_err_t weather_get_api(httpd_req_t *req)
+{
+    weather_t r = {0};
+    bool valid = weather_get(&r) && r.valid;
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "valid", valid);
+    cJSON_AddBoolToObject(out, "updating", weather_is_updating());
+    cJSON_AddStringToObject(out, "city", r.city);
+    if (valid)
+    {
+        cJSON_AddBoolToObject(out, "from_phone", r.from_phone);
+        cJSON_AddNumberToObject(out, "updated", (double)r.updated);
+        cJSON_AddNumberToObject(out, "temperature_c", r.temp);
+        cJSON_AddNumberToObject(out, "min_c", r.temp_min);
+        cJSON_AddNumberToObject(out, "max_c", r.temp_max);
+        cJSON_AddNumberToObject(out, "wind_kmh", r.wind_kmh);
+        cJSON_AddNumberToObject(out, "humidity", r.humidity);
+        cJSON_AddNumberToObject(out, "code", r.code);
+        cJSON *days = cJSON_AddArrayToObject(out, "days");
+        for (int i = 0; i < r.day_count && i < WEATHER_DAYS; i++)
+        {
+            cJSON *day = cJSON_CreateObject();
+            cJSON_AddNumberToObject(day, "code", r.days[i].code);
+            cJSON_AddNumberToObject(day, "min_c", r.days[i].temp_min);
+            cJSON_AddNumberToObject(day, "max_c", r.days[i].temp_max);
+            cJSON_AddItemToArray(days, day);
+        }
+    }
+    return send_out(req, out);
+}
+
 static esp_err_t capabilities_get(httpd_req_t *req)
 {
     cJSON *out = cJSON_CreateObject();
@@ -1095,7 +1177,9 @@ static esp_err_t capabilities_get(httpd_req_t *req)
         {"alarms", "/api/alarms", "/#v-alarms"}, {"files", "/api/fs/list?path=/", "/#v-files"},
         {"apps", "/api/apps", "/#v-apps"}, {"updates", "/api/update", "/#v-system"},
         {"family", "/api/ecos/family", "/#v-ecos"}, {"storage", "/api/storage", "/#v-storage"},
-        {"remote_screen", "/api/remote", "/#v-remote"}
+        {"remote_screen", "/api/remote", "/#v-remote"},
+        {"battery", "/api/battery", "/#v-battery"}, {"sensors", "/api/sensors", "/#v-sensors"},
+        {"weather", "/api/weather", "/#v-weather"}
     };
     for (unsigned i = 0; i < sizeof(services)/sizeof(services[0]); i++)
     {
@@ -1105,6 +1189,8 @@ static esp_err_t capabilities_get(httpd_req_t *req)
         cJSON_AddStringToObject(f, "page", services[i][2]);
         bool available = true;
         if (i == 7) available = board_info()->has_sdcard;
+        if (i == 9) available = pmu_present();
+        if (i == 10) available = imu_supported();
 #if !CONFIG_WATCH_ECOS_PAIRING
         if (i == 6) available = false;
 #endif
@@ -1131,6 +1217,9 @@ static esp_err_t recovery_post(httpd_req_t *req)
 void web_system_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
+        {.uri = "/api/battery", .method = HTTP_GET, .handler = battery_get},
+        {.uri = "/api/sensors", .method = HTTP_GET, .handler = sensors_get},
+        {.uri = "/api/weather", .method = HTTP_GET, .handler = weather_get_api},
         {.uri = "/api/capabilities", .method = HTTP_GET, .handler = capabilities_get},
         {.uri = "/api/storage", .method = HTTP_GET, .handler = disk_get},
         {.uri = "/api/storage", .method = HTTP_POST, .handler = disk_post},

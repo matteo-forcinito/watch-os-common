@@ -39,6 +39,9 @@
     <button data-view="v-settings">Impostazioni</button>
     <button data-view="v-files">File</button>
     <button data-view="v-storage">Scheda SD</button>
+    <button data-view="v-battery">Batteria</button>
+    <button data-view="v-sensors">Sensori</button>
+    <button data-view="v-weather">Meteo</button>
     <button data-view="v-system">Sistema</button>
   </nav>
   <div class="kit-dev"></div>
@@ -63,6 +66,9 @@
   </div>
 </section>
 
+<section class="view" id="v-battery"><div class="card"><h2>Batteria</h2><p id="battery-status" role="status"></p><div id="battery-details"></div><button class="btn" onclick="loadTelemetry('battery').catch(e => kit.toast(e.message, 'bad'))">Aggiorna</button></div></section>
+<section class="view" id="v-sensors"><div class="card"><h2>Sensori</h2><p id="sensors-status" role="status"></p><div id="sensors-details"></div><button class="btn" onclick="loadTelemetry('sensors').catch(e => kit.toast(e.message, 'bad'))">Aggiorna</button></div></section>
+<section class="view" id="v-weather"><div class="card"><h2>Meteo</h2><p id="weather-status" role="status"></p><div id="weather-details"></div><button class="btn" onclick="loadTelemetry('weather').catch(e => kit.toast(e.message, 'bad'))">Aggiorna</button></div></section>
 <section class="view" id="v-remote">
   <div class="card"><h2>Schermo remoto</h2>
     <p class="faint">Opzione di emergenza: preferisci le pagine dedicate delle app. Disattivato non vengono allocate catture. Usa le app con tocchi e scorrimenti. In recovery lo schermo e virtuale: il pannello fisico resta spento.</p>
@@ -675,8 +681,32 @@ async function diskAction(action) {
   await kit.try(async () => { await kit.api('/api/storage', {body:{action, confirmation}}); await loadStorage(); });
 }
 
+/* Passive snapshots: no screenshots, sensor startup or load tests. */
+async function loadTelemetry(kind) {
+  const d = await kit.api('/api/' + kind);
+  const metric = (v, unit = '') => Number.isFinite(v) && v >= 0 ? `${v}${unit}` : 'Non disponibile';
+  let status, lines;
+  if (kind === 'battery') {
+    status = !d.supported ? 'Misurazione non supportata.' : !d.present ? 'Batteria non rilevata.' : d.charging ? 'In carica' : d.usb ? 'Alimentazione USB' : 'Alimentazione a batteria';
+    lines = [['Carica', metric(d.percent, '%')], ['Tensione', d.mv > 0 ? `${d.mv} mV` : 'Non disponibile'], ['Salute stimata', metric(d.health_estimate, '%')], ['Cicli equivalenti', metric(d.cycles_x10 / 10)], ['Giorni osservati', metric(d.days)], ['Autonomia stimata', metric(d.minutes_left_estimate, ' min')], ['Avvertenza', 'Salute e autonomia sono stime. Nessun test sotto carico viene avviato.']];
+  } else if (kind === 'sensors') {
+    status = !d.supported ? 'IMU non supportata.' : d.fresh ? 'Campione attuale' : d.running ? 'Acquisizione in corso, nessun campione recente.' : 'IMU inattiva. Avvia Sensori sul dispositivo per acquisire campioni.';
+    lines = d.fresh ? [['Accelerazione (g)', d.acceleration_g.map(v => v.toFixed(3)).join(', ')], ['Velocita angolare (gradi/s)', d.angular_dps.map(v => v.toFixed(2)).join(', ')], ['Temperatura', `${d.temperature_c.toFixed(1)} C`], ['Eta campione', `${d.age_ms} ms`]] : [['Campioni acquisiti', d.samples], ['Stato', d.error]];
+    lines.push(['Acquisizione', 'Questa pagina non accende sensori. I campioni oltre un secondo non sono presentati come attuali.']);
+  } else {
+    status = d.valid ? `${d.city} - ${d.from_phone ? 'Dal telefono' : 'Open-Meteo'}${d.updating ? ' - Aggiornamento in corso' : ''}` : d.updating ? 'Aggiornamento in corso.' : 'Nessun dato meteo disponibile.';
+    lines = d.valid ? [['Temperatura', `${d.temperature_c} C`], ['Min / max', `${d.min_c} / ${d.max_c} C`], ['Umidita', `${d.humidity}%`], ['Vento', `${d.wind_kmh} km/h`], ['Aggiornato', d.updated > 0 ? new Date(d.updated * 1000).toLocaleString() : 'Ora sconosciuta']] : [];
+    lines.push(['Origine', 'Dati disponibili sul dispositivo dal telefono o dall\'ultimo aggiornamento meteo.']);
+  }
+  $('#' + kind + '-status').textContent = status;
+  const parent = $('#' + kind + '-details'); parent.replaceChildren();
+  for (const [label, value] of lines) {
+    const row = document.createElement('p'); row.textContent = `${label}: ${value}`; parent.append(row);
+  }
+}
+
 /* ------------------------------------------------------------ start */
-const loaders = {'v-storage': loadStorage, 'v-remote': loadRemote, 'v-home': loadSystem, 'v-apps': loadApps, 'v-market': loadMarket, 'v-alarms': loadAlarms, 'v-wifi': loadWifi,
+const loaders = {'v-battery': () => loadTelemetry('battery'), 'v-sensors': () => loadTelemetry('sensors'), 'v-weather': () => loadTelemetry('weather'), 'v-storage': loadStorage, 'v-remote': loadRemote, 'v-home': loadSystem, 'v-apps': loadApps, 'v-market': loadMarket, 'v-alarms': loadAlarms, 'v-wifi': loadWifi,
   'v-ecos': loadEcos,
   'v-settings': loadSettings, 'v-files': () => fsLoad(cwd), 'v-system': () => Promise.all([loadUpdate(), loadSystem()])};
 let current = 'v-home';
