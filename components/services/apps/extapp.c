@@ -2,6 +2,7 @@
 #include "services/storage.h"
 
 #include "core/power.h"
+#include "core/recovery.h"
 #include "hardware/sdcard.h"
 
 #include "cJSON.h"
@@ -607,6 +608,10 @@ const char *extapp_last_error(void)
 /* A launch cannot read an application while its files are being published. */
 esp_err_t extapp_launch(const extapp_t *app, void (*progress)(int, void *), void *ctx)
 {
+    if (recovery_active())
+    {
+        return fail("App esterne sospese in recovery: il controllo remoto deve restare disponibile", ESP_ERR_INVALID_STATE);
+    }
     if (!storage_files_acquire()) return fail("Memoria file occupata", ESP_ERR_INVALID_STATE);
     esp_err_t result = launch_exclusive(app, progress, ctx);
     storage_files_release();

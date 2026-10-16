@@ -20,3 +20,5 @@ Build finali riuscite: 1.75, 1.75C, AMOLED 1.8, Knob 1.8 e SenseCAP Watcher. Tes
 La companion include lo schermo remoto Windows/Android. 25 test e analisi statica passati; build native GitHub riuscite e avvio del pacchetto Windows verificato. Run privata: https://github.com/matteo-forcinito/Orbit-Companion/actions/runs/38832169601. Nessuna release companion pubblicata in questa fase.
 
 Non ancora verificati: ascolto fisico dello speaker C (clock corretto a GPIO16, conferma utente pendente), autonomia e portata radio. Delega del controllo e richiesta codice via Family, condivisione dei sensori e continuita delle app esterne richiedono sviluppi ulteriori: vedi REMOTE-CONTROL.md. Non sono dichiarati implementati.
+
+Chiusura finale: il blocco delle app esterne e applicato anche nel servizio extapp_launch, prima di qualsiasi accesso ai file o cambio della partizione. Copre quindi launcher, touch remoto e API. Ricompilati con successo tutti e cinque i target dopo questa protezione.
