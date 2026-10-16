@@ -84,8 +84,14 @@ def main():
     else: raise RuntimeError('Build timeout')
     status = api('repos/'+a.repo+'/actions/runs/'+str(run))
     source_sha = status['head_sha']
-    packages = work/'packages'; packages.mkdir()
-    gh('run','download',run,'-R',a.repo,'--name',expected_name,'--dir',packages)
+    for download_attempt in range(3):
+        # Fresh directories avoid consuming partially downloaded packages.
+        packages = work/('packages-' + str(download_attempt)); packages.mkdir()
+        result = gh('run','download',run,'-R',a.repo,'--name',expected_name,'--dir',packages,optional=True)
+        if not result.returncode: break
+        if download_attempt == 2: raise RuntimeError('Package download failed: ' + result.stderr.strip())
+        print('Package download interrupted; retrying...', flush=True)
+        time.sleep(5)
     firmware = packages/'firmware.bin'
     data = firmware.read_bytes()
     if len(data)<256 or struct.unpack_from('<I',data,32)[0]!=0xABCD5432: raise RuntimeError('Invalid ESP application image')

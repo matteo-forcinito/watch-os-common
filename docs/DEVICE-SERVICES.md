@@ -33,3 +33,5 @@ Le richieste alla UI hanno un limite di tre secondi e contesti allocati con prop
 ## Sviluppo successivo alla 1.8.0
 
 Aggiunte API autenticate GET /api/battery, /api/sensors e /api/weather con pagine dedicate e annuncio capabilities. Batteria espone stime e valori sconosciuti, senza avviare test sotto carico o azzerare la storia. Sensori legge solo snapshot esistenti: fresh richiede acquisizione attiva e un campione non oltre un secondo; valori obsoleti non sono inclusi. Non accende l'IMU. Meteo legge dati memorizzati, origine e timestamp; nessun download o geocoding implicito. Le viste native della companion seguono le stesse regole e non effettuano polling. Non ancora incluse nella release 1.8.0.
+
+Prova hardware aggiuntiva 16 ottobre: 1.75 in hotspot di recovery e 1.75C sulla LAN domestica, radio sullo stesso canale. Raggiungibilita Family e risposta cifrata delle risorse verificate dalla dashboard della 1.75C. Non equivale a un proxy delle API applicative.
