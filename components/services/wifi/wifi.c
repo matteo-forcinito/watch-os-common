@@ -54,6 +54,7 @@ static esp_pm_lock_handle_t s_ap_lock = NULL;   /* no light sleep while our acce
 
 static wifi_known_t s_known[WIFI_KNOWN_MAX];
 static int s_known_count = 0;
+static char s_preferred[33];
 
 /* ------------------------------------------------------ known networks */
 
@@ -103,6 +104,8 @@ static void known_load(void)
         return;
     }
 
+    size_t preferred_size = sizeof(s_preferred);
+    if (nvs_get_str(nvs, "preferred", s_preferred, &preferred_size) != ESP_OK) s_preferred[0] = '\0';
     size_t size = sizeof(s_known);
 
     if (nvs_get_blob(nvs, NVS_KEY, s_known, &size) == ESP_OK &&
@@ -517,9 +520,12 @@ static void off_timer_cb(void *arg)
 /* Join one network. Called with the mutex held. */
 static esp_err_t join(const char *ssid, const char *password, uint32_t timeout_ms)
 {
+    if (ssid == NULL || ssid[0] == '\0' || strlen(ssid) > 32 ||
+        (password != NULL && strlen(password) > 64)) return ESP_ERR_INVALID_ARG;
     wifi_config_t config = {0};
-    snprintf((char *)config.sta.ssid, sizeof(config.sta.ssid), "%s", ssid);
-    snprintf((char *)config.sta.password, sizeof(config.sta.password), "%s", password != NULL ? password : "");
+    /* ESP fields allow full-length SSIDs/PSKs without a trailing NUL. */
+    memcpy(config.sta.ssid, ssid, strlen(ssid));
+    if (password != NULL) memcpy(config.sta.password, password, strlen(password));
     config.sta.threshold.authmode = (password != NULL && password[0] != '\0') ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     config.sta.listen_interval = 3;   /* wake for every 3rd beacon: less power */
@@ -533,11 +539,22 @@ static esp_err_t join(const char *ssid, const char *password, uint32_t timeout_m
     xEventGroupClearBits(s_events, CONNECTED_BIT | FAILED_BIT);
     s_retries = 0;
     s_sta_wanted = true;
-    esp_wifi_set_config(WIFI_IF_STA, &config);
+    esp_err_t configured = esp_wifi_set_config(WIFI_IF_STA, &config);
+    if (configured != ESP_OK) {
+        s_sta_wanted = false;
+        state_set(STATE_WIFI, s_ap_on ? STATE_WIFI_AP : STATE_WIFI_OFF);
+        return configured;
+    }
     state_set(STATE_WIFI, STATE_WIFI_CONNECTING);
 
     ESP_LOGI(TAG, "Joining \"%s\"", ssid);
-    esp_wifi_connect();
+    esp_err_t connecting = esp_wifi_connect();
+    /* A queued disconnect event may already have started the reconnect. */
+    if (connecting != ESP_OK && connecting != ESP_ERR_WIFI_CONN) {
+        s_sta_wanted = false;
+        state_set(STATE_WIFI, s_ap_on ? STATE_WIFI_AP : STATE_WIFI_OFF);
+        return connecting;
+    }
 
     EventBits_t bits = xEventGroupWaitBits(s_events, CONNECTED_BIT | FAILED_BIT, pdFALSE, pdFALSE,
                                            pdMS_TO_TICKS(timeout_ms));
@@ -586,12 +603,22 @@ static esp_err_t join_best_known(uint32_t timeout_ms)
 
     esp_err_t err = ESP_ERR_NOT_FOUND;
 
+    /* An explicit user selection wins over signal strength while available. */
+    int preferred = known_find(s_preferred);
+    bool preferred_heard = count == 0;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(found[i].ssid, s_preferred) == 0) preferred_heard = true;
+    }
+    if (preferred >= 0 && preferred_heard) {
+        err = join(s_known[preferred].ssid, s_known[preferred].password, timeout_ms);
+    }
+
     /* Strongest first (scan order), only networks we know. */
     for (int i = 0; i < count && err != ESP_OK; i++)
     {
         int k = known_find(found[i].ssid);
 
-        if (k >= 0)
+        if (k >= 0 && !(k == preferred && preferred_heard))
         {
             err = join(s_known[k].ssid, s_known[k].password, timeout_ms);
         }
@@ -962,6 +989,55 @@ esp_err_t wifi_connect_new(const char *ssid, const char *password, uint32_t time
 
     xSemaphoreGive(s_mutex);
 
+    return err;
+}
+
+void wifi_preferred_ssid(char *out, size_t size)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    snprintf(out, size, "%s", s_preferred);
+    xSemaphoreGive(s_mutex);
+}
+
+esp_err_t wifi_select_automatic(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_erase_key(nvs, "preferred");
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+        if (err == ESP_OK) err = nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    if (err == ESP_OK) s_preferred[0] = '\0';
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+/* Select a saved profile without exposing or rewriting its credentials. */
+esp_err_t wifi_connect_saved(const char *ssid, uint32_t timeout_ms)
+{
+    if (ssid == NULL || ssid[0] == '\0' || strlen(ssid) > 32) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    int index = known_find(ssid);
+    if (index < 0) { xSemaphoreGive(s_mutex); return ESP_ERR_NOT_FOUND; }
+    s_refs++;
+    esp_timer_stop(s_off_timer);
+    esp_err_t err = join(s_known[index].ssid, s_known[index].password, timeout_ms);
+    if (err == ESP_OK && strcmp(s_preferred, ssid) != 0) {
+        nvs_handle_t nvs;
+        esp_err_t saved = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+        if (saved == ESP_OK) {
+            saved = nvs_set_str(nvs, "preferred", ssid);
+            if (saved == ESP_OK) saved = nvs_commit(nvs);
+            nvs_close(nvs);
+        }
+        if (saved == ESP_OK) snprintf(s_preferred, sizeof(s_preferred), "%s", ssid);
+        else ESP_LOGW(TAG, "Connected; preferred network could not be persisted: %s", esp_err_to_name(saved));
+    }
+    if (err != ESP_OK && --s_refs == 0) esp_timer_start_once(s_off_timer, 1000);
+    xSemaphoreGive(s_mutex);
     return err;
 }
 

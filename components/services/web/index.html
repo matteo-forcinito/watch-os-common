@@ -397,8 +397,11 @@ async function loadWifi() {
   const list = await kit.api('/api/wifi'), box = $('#wifi');
   box.innerHTML = '';
   for (const n of list) box.append(el('div', {class: 'row2'}, el('span', {class: 'grow'}, n),
+    el('button', {class: 'btn sm', onclick: () => act(() => call('/api/wifi', {body:{ssid:n,saved:true,connect:true}}), 'Cambio rete richiesto. Se cambia indirizzo, riconnetti dalla companion.').then(() => pollWifi(0))}, 'Collega'),
     el('button', {class: 'btn sm danger', onclick: () => confirm('Dimenticare ' + n + '?') && act(() => call('/api/wifi', {body: {ssid: n, delete: true}}), 'Rimossa').then(loadWifi)}, '✕')));
   if (!list.length) box.append(el('div', {class: 'empty'}, 'Nessuna rete salvata'));
+  box.append(el('button', {class:'btn sm',onclick:()=>act(()=>call('/api/wifi',{body:{automatic:true}}),'Scelta automatica ripristinata')},'Scelta automatica'));
+  await pollWifi(0);
 }
 async function scanWifi() {
   const box = $('#w_scan'); box.textContent = 'Ricerca (qualche secondo)...';
@@ -414,7 +417,7 @@ function addWifi(connect) {
 async function pollWifi(n) {
   const s = await kit.api('/api/wifi/status').catch(() => null), t = $('#w_status');
   t.textContent = !s ? 'In attesa che l\'orologio si ricolleghi...' : s.state == 'connecting' ? `Collegamento a ${s.ssid}...` :
-    s.state == 'ok' ? `Collegato a ${s.ssid} · IP ${s.ip}` : s.state == 'failed' ? `Non collegato a ${s.ssid}: ${s.reason}` : '';
+    s.state == 'ok' ? `Collegato a ${s.ssid} · IP ${s.ip}` : s.state == 'failed' ? `Cambio verso ${s.ssid} non riuscito: ${s.reason}` : s.connected ? `Dispositivo su ${s.current_ssid} - IP ${s.ip}` : 'Dispositivo non collegato al Wi-Fi';
   if (n < 30 && (!s || s.state == 'connecting')) setTimeout(() => pollWifi(n + 1), 2000);
 }
 

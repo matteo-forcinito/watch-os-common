@@ -12,6 +12,8 @@
 #include "services/time_sync.h"
 #include "services/weather.h"
 #include "services/web_server.h"
+#include "services/wifi.h"
+#include "services/storage.h"
 #include "services/fw_update.h"
 #include <stdatomic.h>
 
@@ -198,6 +200,8 @@ typedef struct {
     uint32_t epoch;
     uint16_t conn;
     char request[33];
+    char network[33];
+    bool network_choice;
     cJSON *reply;
 } control_job_t;
 static bool control_current(control_job_t *job) { return s_running && job->epoch == s_control_epoch; }
@@ -225,7 +229,21 @@ static void control_worker(void *arg)
         portENTER_CRITICAL(&s_lock);
         bool held = s_control_lease;
         portEXIT_CRITICAL(&s_lock);
-        err = held ? ESP_OK : web_server_start();
+        if (job->network_choice && job->network[0] == '\0') err = wifi_select_automatic();
+        else if (job->network[0] != '\0') {
+            char previous[33] = "";
+            wifi_current_ssid(previous, sizeof(previous));
+            fw_update_phase_t phase = fw_update_phase();
+            bool busy = storage_files_busy() || phase == FW_UPDATE_CHECKING ||
+                phase == FW_UPDATE_WRITING || phase == FW_UPDATE_RESTARTING;
+            err = busy ? ESP_ERR_INVALID_STATE : wifi_connect_saved(job->network, 12000);
+            if (err == ESP_OK) wifi_release(); /* Web owns the lasting reference. */
+            else if (!busy && previous[0] != '\0' && !wifi_is_connected()) {
+                /* A failed explicit choice must not strand the previous session. */
+                if (wifi_connect_saved(previous, 12000) == ESP_OK) wifi_release();
+            }
+        } else err = ESP_OK;
+        if (err == ESP_OK) err = held ? ESP_OK : web_server_start();
         acquired = !held && err == ESP_OK;
     }
     portENTER_CRITICAL(&s_lock);
@@ -245,7 +263,24 @@ static void control_worker(void *arg)
         cJSON_AddStringToObject(job->reply, "code", recovery ? "" : code);
         cJSON_AddStringToObject(job->reply, "ap", ap);
         cJSON_AddBoolToObject(job->reply, "recovery", recovery);
-    } else cJSON_AddStringToObject(job->reply, "error", "web_unavailable");
+        char ssid[33] = "";
+        wifi_current_ssid(ssid, sizeof(ssid));
+        cJSON_AddStringToObject(job->reply, "ssid", ssid);
+        wifi_preferred_ssid(ssid, sizeof(ssid));
+        cJSON_AddStringToObject(job->reply, "preferred_network", ssid);
+        cJSON_AddBoolToObject(job->reply, "wifi_connected", wifi_is_connected());
+        cJSON_AddBoolToObject(job->reply, "network_control", true);
+        wifi_known_t *known = calloc(WIFI_KNOWN_MAX, sizeof(*known));
+        cJSON *networks = cJSON_AddArrayToObject(job->reply, "networks");
+        if (known != NULL) {
+            int count = wifi_known_list(known, WIFI_KNOWN_MAX);
+            for (int i = 0; i < count; i++) cJSON_AddItemToArray(networks, cJSON_CreateString(known[i].ssid));
+            volatile unsigned char *wipe = (volatile unsigned char *)known;
+            for (size_t i = 0; i < WIFI_KNOWN_MAX * sizeof(*known); i++) wipe[i] = 0;
+            free(known);
+        }
+    } else cJSON_AddStringToObject(job->reply, "error",
+        job->network[0] != '\0' ? "network_unavailable" : "web_unavailable");
     xSemaphoreTake(s_control_guard, portMAX_DELAY);
     if (control_current(job)) {
         ble_npl_event_init(&job->event, control_deliver, job);
@@ -273,10 +308,16 @@ static void control_request(const cJSON *msg)
     }
     bool expected = false;
     if (!atomic_compare_exchange_strong(&s_control_busy, &expected, true)) return;
+    const cJSON *network = cJSON_GetObjectItemCaseSensitive(msg, "network");
+    if (network != NULL && (!cJSON_IsString(network) || strlen(network->valuestring) > 32)) {
+        atomic_store(&s_control_busy, false); return;
+    }
     control_job_t *job = calloc(1, sizeof(*job));
     if (job == NULL) { atomic_store(&s_control_busy, false); return; }
     job->epoch = s_control_epoch; job->conn = s_conn;
     memcpy(job->request, request, sizeof(job->request));
+    job->network_choice = network != NULL;
+    if (network != NULL) snprintf(job->network, sizeof(job->network), "%s", network->valuestring);
     if (!sys_task_create(control_worker, "ble_control", 4096, job, 2, SYS_CORE_ANY)) {
         free(job); atomic_store(&s_control_busy, false);
     }

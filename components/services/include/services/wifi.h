@@ -104,6 +104,12 @@ int wifi_scan_detail(wifi_ap_detail_t *out, int max);
 /* Try a network; on success it is saved as known. Holds Wi-Fi like wifi_acquire(). */
 esp_err_t wifi_connect_new(const char *ssid, const char *password, uint32_t timeout_ms);
 
+/* Select an existing profile; holds Wi-Fi on success, release with wifi_release(). */
+esp_err_t wifi_connect_saved(const char *ssid, uint32_t timeout_ms);
+void wifi_preferred_ssid(char *out, size_t size);
+/* Return to strongest-known selection on the next reconnect, retaining the current link. */
+esp_err_t wifi_select_automatic(void);
+
 /* Known networks. */
 int wifi_known_list(wifi_known_t *out, int max);
 esp_err_t wifi_known_add(const char *ssid, const char *password);

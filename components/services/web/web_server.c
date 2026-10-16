@@ -119,6 +119,7 @@ typedef struct
 {
     char ssid[33];
     char password[65];
+    bool saved;
 } connect_job_t;
 
 static volatile connect_state_t s_connect = CONNECT_IDLE;
@@ -555,7 +556,17 @@ static void connect_task(void *arg)
     connect_job_t *job = arg;
 
     /* With our access point on, the radio moves to the router's channel: phones reconnect by themselves. */
-    esp_err_t err = wifi_connect_new(job->ssid, job->password, 20000);
+    char previous[33] = "";
+    wifi_current_ssid(previous, sizeof(previous));
+    vTaskDelay(pdMS_TO_TICKS(250)); /* Acknowledge HTTP before changing networks. */
+    fw_update_phase_t phase = fw_update_phase();
+    bool busy = storage_files_busy() || phase == FW_UPDATE_CHECKING ||
+        phase == FW_UPDATE_WRITING || phase == FW_UPDATE_RESTARTING;
+    esp_err_t err = busy ? ESP_ERR_INVALID_STATE : job->saved ?
+        wifi_connect_saved(job->ssid, 12000) : wifi_connect_new(job->ssid, job->password, 20000);
+    if (err != ESP_OK && !busy && previous[0] != '\0' && !wifi_is_connected()) {
+        if (wifi_connect_saved(previous, 12000) == ESP_OK) wifi_release();
+    }
 
     if (err == ESP_OK && !s_connect_holds_wifi)
     {
@@ -581,14 +592,20 @@ static esp_err_t handle_wifi_add(httpd_req_t *req)
     get_string(json, "password", password, sizeof(password));
     bool remove = get_bool(json, "delete", false);
     bool connect = get_bool(json, "connect", false);
+    bool saved = get_bool(json, "saved", false);
+    bool automatic = get_bool(json, "automatic", false);
     cJSON_Delete(json);
+    if (automatic) return send_ok(req, wifi_select_automatic() == ESP_OK, "Selezione automatica dal prossimo collegamento");
+    if (connect && (s_connect == CONNECT_RUNNING || storage_files_busy() ||
+        fw_update_phase() == FW_UPDATE_CHECKING || fw_update_phase() == FW_UPDATE_WRITING ||
+        fw_update_phase() == FW_UPDATE_RESTARTING)) return send_ok(req, false, "Operazione in corso: attendi prima di cambiare rete");
 
     if (ssid[0] == '\0')
     {
         return send_ok(req, false, "Nome rete mancante");
     }
 
-    esp_err_t err = remove ? wifi_known_remove(ssid) : wifi_known_add(ssid, password);
+    esp_err_t err = remove ? wifi_known_remove(ssid) : (saved || connect) ? ESP_OK : wifi_known_add(ssid, password);
 
     if (err != ESP_OK || remove || !connect)
     {
@@ -607,6 +624,7 @@ static esp_err_t handle_wifi_add(httpd_req_t *req)
         return send_ok(req, false, "Memoria insufficiente");
     }
 
+    job->saved = saved;
     snprintf(job->ssid, sizeof(job->ssid), "%s", ssid);
     snprintf(job->password, sizeof(job->password), "%s", password);
     snprintf(s_connect_ssid, sizeof(s_connect_ssid), "%s", ssid);
@@ -637,6 +655,12 @@ static esp_err_t handle_wifi_status(httpd_req_t *req)
     cJSON_AddStringToObject(json, "ssid", s_connect_ssid);
     cJSON_AddStringToObject(json, "reason", wifi_reason_text(wifi_last_reason()));
     cJSON_AddStringToObject(json, "ip", ip);
+    char current[33] = "";
+    wifi_current_ssid(current, sizeof(current));
+    cJSON_AddStringToObject(json, "current_ssid", current);
+    cJSON_AddBoolToObject(json, "connected", wifi_is_connected());
+    wifi_preferred_ssid(current, sizeof(current));
+    cJSON_AddStringToObject(json, "preferred_network", current);
 
     return send_json(req, json);
 }
