@@ -1167,6 +1167,15 @@ static esp_err_t weather_get_api(httpd_req_t *req)
     return send_out(req, out);
 }
 
+static esp_err_t display_get(httpd_req_t *req)
+{
+    cJSON *out = cJSON_CreateObject();
+    power_screen_t state = power_screen();
+    cJSON_AddNumberToObject(out, "state", state);
+    cJSON_AddBoolToObject(out, "on", state < POWER_SCREEN_AOD);
+    cJSON_AddBoolToObject(out, "physical", !lv_port_headless());
+    return send_out(req, out);
+}
 static esp_err_t display_post(httpd_req_t *req)
 {
     cJSON *json = body(req);
@@ -1230,6 +1239,7 @@ static esp_err_t recovery_post(httpd_req_t *req)
 void web_system_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
+        {.uri = "/api/display", .method = HTTP_GET, .handler = display_get},
         {.uri = "/api/display", .method = HTTP_POST, .handler = display_post},
         {.uri = "/api/battery", .method = HTTP_GET, .handler = battery_get},
         {.uri = "/api/sensors", .method = HTTP_GET, .handler = sensors_get},
