@@ -511,6 +511,14 @@ static void set_ble(lv_event_t *e)
     EDIT_SETTINGS(s->ble_enabled = on);   /* the companion follows the setting */
 }
 
+static void on_ecos_mode(lv_event_t *e)
+{
+    (void)e;
+    EDIT_SETTINGS(s->ecos_mode = (s->ecos_mode + 1) % 3);
+    static const char *const labels[] = {"Family: automatico", "Family: background", "Family: spento fuori recovery"};
+    ui_toast(labels[settings_get()->ecos_mode]);
+}
+
 static void name_entered(const char *text, void *user_data)
 {
     (void)user_data;
@@ -551,6 +559,8 @@ static void bluetooth_create(lv_obj_t *screen, void *arg)
     lv_obj_t *page = ui_page(screen, "Bluetooth");
     s_ble_status = ui_text(page, "", true);
     ui_switch_row(page, LV_SYMBOL_BLUETOOTH, UI_COLOR_INDIGO, "Bluetooth", settings_get()->ble_enabled, set_ble, NULL);
+    static const char *const ecos_modes[] = {"Automatico", "Background", "Spento fuori recovery"};
+    ui_row(page, LV_SYMBOL_LOOP, UI_COLOR_TEAL, "Ecosistema", ecos_modes[settings_get()->ecos_mode], on_ecos_mode, NULL);
     ui_row(page, LV_SYMBOL_EDIT, UI_COLOR_GRAY, "Nome", settings_get()->device_name, on_name, NULL);
     ui_row(page, LV_SYMBOL_GPS, UI_COLOR_GREEN, "Trova telefono", NULL, on_find_phone, NULL);
     ui_text(page,

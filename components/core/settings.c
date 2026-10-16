@@ -63,6 +63,9 @@ static void sanitize(settings_t *s)
         s->remote_ui_enabled = false;
         s->remote_preferences_version = 1;
     }
+    if (s->ecos_preferences_version != 1 || s->ecos_mode > 2) {
+        s->ecos_mode = 0; s->ecos_preferences_version = 1;
+    }
     if (s->brightness < 10)
     {
         s->brightness = 10;

@@ -462,6 +462,7 @@ static esp_err_t handle_state(httpd_req_t *req)
     cJSON_AddStringToObject(set, "timezone", s->timezone);
     cJSON_AddBoolToObject(set, "auto_time", s->auto_time);
     cJSON_AddBoolToObject(set, "ble", s->ble_enabled);
+    cJSON_AddNumberToObject(set, "ecos_mode", s->ecos_mode);
     cJSON_AddStringToObject(set, "device_name", s->device_name);
     cJSON_AddStringToObject(set, "weather_city", s->weather_city);
     cJSON_AddNumberToObject(set, "watchface", s->watchface);
@@ -490,6 +491,14 @@ static esp_err_t handle_settings(httpd_req_t *req)
     s.time_24h = get_bool(json, "time_24h", s.time_24h);
     s.auto_time = get_bool(json, "auto_time", s.auto_time);
     s.ble_enabled = get_bool(json, "ble", s.ble_enabled);
+    const cJSON *ecos_mode = cJSON_GetObjectItemCaseSensitive(json, "ecos_mode");
+    if (ecos_mode != NULL) {
+        if (!cJSON_IsNumber(ecos_mode) || ecos_mode->valuedouble < 0 ||
+            ecos_mode->valuedouble > 2 || ecos_mode->valuedouble != ecos_mode->valueint) {
+            cJSON_Delete(json); return send_ok(req, false, "Modalita Ecosystem non valida");
+        }
+        s.ecos_mode = (uint8_t)ecos_mode->valueint;
+    }
     s.watchface = (uint8_t)get_int(json, "watchface", s.watchface);
     get_string(json, "timezone", s.timezone, sizeof(s.timezone));
     get_string(json, "device_name", s.device_name, sizeof(s.device_name));

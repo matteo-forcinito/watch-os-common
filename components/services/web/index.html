@@ -22,6 +22,7 @@
 .fsrow .n{cursor:pointer;word-break:break-all}.fsrow .n:hover{color:var(--accent)}
 .crumbs span{cursor:pointer;color:var(--accent)}
 .progressbar{height:8px;background:var(--panel2);border-radius:99px;overflow:hidden;display:none;margin-top:8px}.progressbar i{display:block;height:100%;background:var(--accent);width:0}
+details.card>summary{cursor:pointer;font-weight:700;padding:8px 0}details.card[open]>summary{margin-bottom:12px;border-bottom:1px solid var(--line)}
 .badge{display:inline-block;min-width:18px;padding:0 6px;border-radius:99px;background:var(--warn);color:#000;font-size:11px;font-weight:800;margin-left:6px}
 </style>
 </head>
@@ -77,6 +78,7 @@
       <button class="btn" onclick="remoteFrame()">Aggiorna</button>
       <label><input type="checkbox" id="remote-enable" onchange="remoteEnable(this.checked)"> Abilita schermo remoto</label>
       <label><input type="checkbox" id="remote-live"> Aggiornamento automatico</label></div>
+    <div class="row"><button class="btn" onclick="kit.try(() => kit.api('/api/display', {body:{on:true}}))">Accendi schermo</button><button class="btn" onclick="kit.try(() => kit.api('/api/display', {body:{on:false}}))">Spegni schermo</button></div>
     <p id="remote-status" class="faint" role="status"></p>
     <canvas id="remote-screen" style="display:block;max-width:100%;width:360px;touch-action:none;background:#000;border-radius:16px" aria-label="Schermo interattivo del dispositivo"></canvas>
   </div>
@@ -91,6 +93,8 @@
   </div>
   <div class="card"><div class="row"><h2 class="grow" style="margin:0">Ecosistema · Famiglia</h2>
     <button class="btn" id="fam-search" onclick="familyAction('refresh')">↻ Cerca</button></div>
+    <label>Ecosystem <select id="ecos-mode" onchange="kit.try(() => kit.api('/api/settings', {body:{ecos_mode:Number(this.value)}}))"><option value="0">Automatico</option><option value="1">Background</option><option value="2">Spento fuori recovery</option></select></label>
+    <p class="faint">Il background cede priorita ad audio, aggiornamenti e trasferimenti. In recovery Family resta attiva.</p>
     <p id="fam-status" class="dim" role="status" aria-live="polite"></p>
     <div id="fam-list" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))"></div>
     <p class="faint">In recovery i membri restano disponibili anche a batteria. Fuori recovery rispondono i dispositivi in carica a schermo spento (Watcher, Knob, un orologio sul caricatore)
@@ -532,7 +536,10 @@ async function loadFamily() {
   if (!famSearched) { famSearched = true; familyAction('refresh', null, true); }
   $('#fam-status').textContent = f.busy ? 'Cerco i dispositivi...' : f.message || '';
   $('#fam-search').disabled = f.busy;
+  const settings = (await kit.api('/api/state')).settings;
+  if (document.activeElement !== $('#ecos-mode')) $('#ecos-mode').value = settings.ecos_mode ?? 0;
   const list = $('#fam-list');
+  const expanded = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.member));
   list.replaceChildren();
   for (const m of f.members || []) {
     const battery = m.known && m.battery >= 0 ? `${m.battery}%${m.charging ? ' in carica' : m.usb ? ' al cavo' : ''}` : m.known ? 'alimentato' : '–';
@@ -542,7 +549,7 @@ async function loadFamily() {
       `Rete: ${m.ssid ? m.ssid + ' · ' + m.ip : 'non collegato'}`,
       `Segnale ${m.rssi} dBm · canale ${m.channel} · RAM libera ${m.ram_kb} KB · acceso da ${Math.floor(m.uptime_min / 60)} h`,
     ] : ['Nessuna informazione ancora'];
-    const card = el('div', {class: 'card'},
+    const card = el('details', {class: 'card'},
       el('div', {class: 'row'}, el('b', {class: 'grow'}, m.name),
         el('span', {class: m.reachable ? 'good' : 'faint'}, m.reachable ? '● raggiungibile' : '○ ' + famAgo(m.seen_ago))),
       ...lines.map(t => el('p', {class: 'dim', style: 'margin:4px 0'}, t)),
@@ -583,6 +590,9 @@ async function loadFamily() {
           a.imu_supported ? 'Sensore presente, nessun campione recente: la lettura non lo attiva.' : 'Sensore di movimento non disponibile.');
       card.append(el('p', {class: 'dim'}, text));
     }
+    card.dataset.member = m.id;
+    card.open = expanded.has(m.id);
+    card.prepend(el('summary', {}, `${m.name || m.id} - ${m.reachable ? 'Raggiungibile' : 'Non raggiungibile'} - ${battery}`));
     list.append(card);
   }
   if (!list.children.length) list.append(el('p', {class: 'dim'}, 'Nessun dispositivo abbinato: abbinane uno qui sotto.'));

@@ -1167,6 +1167,19 @@ static esp_err_t weather_get_api(httpd_req_t *req)
     return send_out(req, out);
 }
 
+static esp_err_t display_post(httpd_req_t *req)
+{
+    cJSON *json = body(req);
+    const cJSON *on = cJSON_GetObjectItemCaseSensitive(json, "on");
+    bool valid = cJSON_IsBool(on);
+    if (valid) {
+        if (cJSON_IsTrue(on)) power_wake(POWER_WAKE_OTHER);
+        else power_sleep_now();
+    }
+    cJSON_Delete(json);
+    return reply(req, valid, valid ? "Comando schermo ricevuto" : "Richiesto on: true oppure false");
+}
+
 static esp_err_t capabilities_get(httpd_req_t *req)
 {
     cJSON *out = cJSON_CreateObject();
@@ -1217,6 +1230,7 @@ static esp_err_t recovery_post(httpd_req_t *req)
 void web_system_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
+        {.uri = "/api/display", .method = HTTP_POST, .handler = display_post},
         {.uri = "/api/battery", .method = HTTP_GET, .handler = battery_get},
         {.uri = "/api/sensors", .method = HTTP_GET, .handler = sensors_get},
         {.uri = "/api/weather", .method = HTTP_GET, .handler = weather_get_api},

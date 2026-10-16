@@ -11,12 +11,16 @@
 #include "services/sound.h"
 #include "services/time_sync.h"
 #include "services/weather.h"
+#include "services/web_server.h"
+#include "services/fw_update.h"
+#include <stdatomic.h>
 
 #include "cJSON.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -54,7 +58,8 @@ static const ble_uuid128_t s_tx_uuid = BLE_UUID128_INIT(
 static uint16_t s_tx_handle = 0;
 static volatile uint16_t s_conn = BLE_HS_CONN_HANDLE_NONE;
 static uint8_t s_own_addr_type = 0;
-static bool s_running = false;
+static atomic_bool s_running;
+static SemaphoreHandle_t s_control_guard;
 static char *s_line = NULL;
 static size_t s_line_len = 0;
 static ble_music_t s_music;
@@ -63,6 +68,9 @@ static esp_timer_handle_t s_status_timer = NULL;
 static esp_timer_handle_t s_slow_timer = NULL;    /* fast advertising -> slow */
 static esp_timer_handle_t s_retry_timer = NULL;   /* NimBLE could not start: try again */
 static bool s_fast = true;
+static atomic_uint s_control_epoch;
+static bool s_control_lease;
+static atomic_bool s_control_busy;
 
 static void start_advertising(void);
 
@@ -130,7 +138,8 @@ static void send_version(void)
 {
     cJSON *json = cJSON_CreateObject();
     cJSON_AddStringToObject(json, "t", "ver");
-    cJSON_AddStringToObject(json, "fw", "1.0");
+    cJSON_AddStringToObject(json, "fw", fw_update_running_version());
+    cJSON_AddNumberToObject(json, "control", 1);
     cJSON_AddStringToObject(json, "hw", board_info()->name);
     send_json(json);
 }
@@ -182,11 +191,103 @@ static int owm_to_wmo(int code)
     return 3;
 }
 
+
+/* Bootstrap only across an encrypted OS bond. Network work never runs in NimBLE. */
+typedef struct {
+    struct ble_npl_event event;
+    uint32_t epoch;
+    uint16_t conn;
+    char request[33];
+    cJSON *reply;
+} control_job_t;
+static bool control_current(control_job_t *job) { return s_running && job->epoch == s_control_epoch; }
+static bool control_trusted(control_job_t *job)
+{
+    struct ble_gap_conn_desc desc;
+    return job->epoch == s_control_epoch && job->conn == s_conn &&
+        ble_gap_conn_find(job->conn, &desc) == 0 && desc.sec_state.encrypted && desc.sec_state.bonded;
+}
+static void control_deliver(struct ble_npl_event *event)
+{
+    control_job_t *job = ble_npl_event_get_arg(event);
+    if (control_trusted(job)) send_json(job->reply);
+    else cJSON_Delete(job->reply);
+    free(job);
+    atomic_store(&s_control_busy, false);
+}
+static void control_stop(void *arg) { (void)arg; web_server_stop(); }
+static void control_worker(void *arg)
+{
+    control_job_t *job = arg;
+    bool acquired = false;
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (control_current(job)) {
+        portENTER_CRITICAL(&s_lock);
+        bool held = s_control_lease;
+        portEXIT_CRITICAL(&s_lock);
+        err = held ? ESP_OK : web_server_start();
+        acquired = !held && err == ESP_OK;
+    }
+    portENTER_CRITICAL(&s_lock);
+    bool current = job->epoch == s_control_epoch && job->conn == s_conn;
+    if (current && acquired) s_control_lease = true;
+    portEXIT_CRITICAL(&s_lock);
+    if (!current && acquired) web_server_stop();
+    job->reply = cJSON_CreateObject();
+    cJSON_AddStringToObject(job->reply, "t", "control");
+    cJSON_AddStringToObject(job->reply, "request", job->request);
+    char code[7] = "", url[96] = "", ap[40] = "";
+    bool recovery = false;
+    if (err == ESP_OK && control_current(job) && web_server_pairing_snapshot(code, &recovery)) {
+        web_server_url(url, sizeof(url));
+        web_server_ap_name(ap, sizeof(ap));
+        cJSON_AddStringToObject(job->reply, "url", url);
+        cJSON_AddStringToObject(job->reply, "code", recovery ? "" : code);
+        cJSON_AddStringToObject(job->reply, "ap", ap);
+        cJSON_AddBoolToObject(job->reply, "recovery", recovery);
+    } else cJSON_AddStringToObject(job->reply, "error", "web_unavailable");
+    xSemaphoreTake(s_control_guard, portMAX_DELAY);
+    if (control_current(job)) {
+        ble_npl_event_init(&job->event, control_deliver, job);
+        ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &job->event);
+    } else {
+        cJSON_Delete(job->reply); free(job); atomic_store(&s_control_busy, false);
+    }
+    xSemaphoreGive(s_control_guard);
+    vTaskDelete(NULL);
+}
+static void control_request(const cJSON *msg)
+{
+    const char *request = json_string(msg, "request");
+    if (strlen(request) != 32 || strspn(request, "0123456789abcdef") != 32) return;
+    struct ble_gap_conn_desc desc;
+    if (ble_gap_conn_find(s_conn, &desc) != 0) return;
+    if (!desc.sec_state.encrypted || !desc.sec_state.bonded) {
+        ble_gap_security_initiate(s_conn);
+        cJSON *out = cJSON_CreateObject();
+        cJSON_AddStringToObject(out, "t", "control");
+        cJSON_AddStringToObject(out, "request", request);
+        cJSON_AddStringToObject(out, "error", "pairing_required");
+        send_json(out);
+        return;
+    }
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&s_control_busy, &expected, true)) return;
+    control_job_t *job = calloc(1, sizeof(*job));
+    if (job == NULL) { atomic_store(&s_control_busy, false); return; }
+    job->epoch = s_control_epoch; job->conn = s_conn;
+    memcpy(job->request, request, sizeof(job->request));
+    if (!sys_task_create(control_worker, "ble_control", 4096, job, 2, SYS_CORE_ANY)) {
+        free(job); atomic_store(&s_control_busy, false);
+    }
+}
+
 static void handle_gb(const cJSON *msg)
 {
     const char *type = json_string(msg, "t");
 
-    if (strcmp(type, "notify") == 0)
+    if (strcmp(type, "control") == 0) { control_request(msg); }
+    else if (strcmp(type, "notify") == 0)
     {
         notify_t n = {0};
         n.id = (uint32_t)cJSON_GetNumberValue(cJSON_GetObjectItem(msg, "id"));
@@ -379,7 +480,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         case BLE_GAP_EVENT_CONNECT:
             if (event->connect.status == 0)
             {
+                portENTER_CRITICAL(&s_lock);
+                s_control_epoch++;
                 s_conn = event->connect.conn_handle;
+                portEXIT_CRITICAL(&s_lock);
                 state_set(STATE_BLE, STATE_BLE_CONNECTED);
                 ESP_LOGI(TAG, "Phone connected");
 
@@ -400,6 +504,17 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             break;
 
         case BLE_GAP_EVENT_DISCONNECT:
+            portENTER_CRITICAL(&s_lock);
+            s_control_epoch++;
+            bool release_control = s_control_lease;
+            s_control_lease = false;
+            portEXIT_CRITICAL(&s_lock);
+            if (release_control && !sys_post(control_stop, NULL)) {
+                /* Retain ownership so the next connection can reuse/release it. */
+                portENTER_CRITICAL(&s_lock);
+                s_control_lease = true;
+                portEXIT_CRITICAL(&s_lock);
+            }
             s_conn = BLE_HS_CONN_HANDLE_NONE;
             s_line_len = 0;
             esp_timer_stop(s_status_timer);
@@ -678,7 +793,15 @@ static void stop(void)
         return;
     }
 
+    xSemaphoreTake(s_control_guard, portMAX_DELAY);
     s_running = false;
+    portENTER_CRITICAL(&s_lock);
+    s_control_epoch++;
+    bool release_control = s_control_lease;
+    s_control_lease = false;
+    portEXIT_CRITICAL(&s_lock);
+    xSemaphoreGive(s_control_guard);
+    if (release_control) web_server_stop();
 
     if (s_conn != BLE_HS_CONN_HANDLE_NONE)
     {
@@ -753,6 +876,8 @@ void ble_companion_restart(void)
 
 esp_err_t ble_companion_init(void)
 {
+    if (s_control_guard == NULL) s_control_guard = xSemaphoreCreateMutex();
+    if (s_control_guard == NULL) return ESP_ERR_NO_MEM;
     s_line = malloc(BLE_LINE_MAX);
 
     if (s_line == NULL)

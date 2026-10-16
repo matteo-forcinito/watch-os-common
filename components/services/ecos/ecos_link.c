@@ -30,6 +30,10 @@
 #include "core/power.h"
 #include "core/state.h"
 #include "core/sys.h"
+#include "core/settings.h"
+#include "services/storage.h"
+#include "services/fw_update.h"
+#include "hardware/audio.h"
 #include "hardware/board.h"
 #include "hardware/pmu.h"
 #include "esp_app_desc.h"
@@ -197,14 +201,23 @@ static bool powered(void)
 }
 
 /* Answer the others: on the cable, with nobody using the screen. */
+static bool background_busy(void)
+{
+    return storage_files_busy() || audio_is_running() ||
+        fw_update_phase() == FW_UPDATE_WRITING || fw_update_phase() == FW_UPDATE_RESTARTING;
+}
+static bool family_disabled(void) { return !recovery_active() && settings_get()->ecos_mode == 2; }
 static bool auto_wanted(void)
 {
-    return recovery_active() || web_server_running() ||
+    if (recovery_active()) return true;
+    if (family_disabled() || background_busy()) return false;
+    return settings_get()->ecos_mode == 1 || web_server_running() ||
            (powered() && state_get(STATE_SCREEN) >= POWER_SCREEN_AOD);
 }
 
 static bool wanted(void)
 {
+    if (family_disabled()) return false;
     portENTER_CRITICAL(&s_lock);
     bool want = s_holds > 0 || esp_timer_get_time() < s_web_until || s_refresh || s_cmd != CMD_NONE;
     portEXIT_CRITICAL(&s_lock);
@@ -1009,6 +1022,7 @@ static void link_task(void *arg);
 
 static void start_link(void)
 {
+    if (family_disabled()) return;
     portENTER_CRITICAL(&s_lock);
     bool start = !s_running && !s_suspend;
     if (start)
@@ -1028,7 +1042,7 @@ static void start_link(void)
 static void start_job(void *arg)
 {
     (void)arg;
-    start_link();
+    if (wanted()) start_link();
 }
 
 static void link_task(void *arg)
@@ -1098,7 +1112,13 @@ static void link_task(void *arg)
         memcpy(text, s_cmd_text, sizeof(text));
         s_reload = false;
         portEXIT_CRITICAL(&s_lock);
-        if (stop || reload)
+        bool policy_off = family_disabled();
+        if (policy_off) {
+            portENTER_CRITICAL(&s_lock);
+            s_cmd = CMD_NONE; s_refresh = false;
+            portEXIT_CRITICAL(&s_lock);
+        }
+        if (stop || reload || policy_off || (!recovery_active() && background_busy() && !wanted()))
         {
             restart = reload && !stop;
             break;
@@ -1433,6 +1453,7 @@ void ecos_family_touch(void)
 
 esp_err_t ecos_family_refresh(void)
 {
+    if (family_disabled()) return ESP_ERR_INVALID_STATE;
     portENTER_CRITICAL(&s_lock);
     bool suspended = s_suspend;
     s_refresh = !suspended;
@@ -1448,6 +1469,7 @@ esp_err_t ecos_family_refresh(void)
 
 static esp_err_t command(cmd_kind_t kind, const char *id, const char *text)
 {
+    if (family_disabled()) return ESP_ERR_INVALID_STATE;
     uint8_t mac[6];
     if (!parse_id(id, mac))
     {
