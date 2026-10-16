@@ -36,6 +36,10 @@ def main():
     a = p.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', a.repo): p.error('Invalid source repository')
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?', a.version): p.error('Invalid version')
+    executable = shutil.which(a.gh)
+    if executable is None and Path(a.gh).is_file(): executable = str(Path(a.gh).resolve())
+    if executable is None: p.error('Official gh CLI executable was not found')
+    a.gh = str(Path(executable).resolve())
     public = a.repo.split('/')[0] + '/watch-firmware-releases'
     project = a.project.resolve()
     notes = project / 'release/notes' / (a.version + '.md')
