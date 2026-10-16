@@ -747,6 +747,16 @@ static esp_err_t start(void)
     }
 
     sys_heap_log("ble start");
+    /* The S3 controller allocates a contiguous internal pool (~38 KiB).
+     * Its binary asserts on allocation failure instead of returning an error.
+     * Web/Wi-Fi may fragment the heap after boot: defer before entering it.
+     * Keep room for the controller task and small internal allocations too. */
+    if (sys_internal_largest() < 40 * 1024 || sys_internal_free() < 56 * 1024) {
+        ESP_LOGW(TAG, "Bluetooth deferred: insufficient contiguous internal RAM; close heavy services or restart");
+        esp_timer_stop(s_retry_timer);
+        esp_timer_start_once(s_retry_timer, RETRY_US);
+        return ESP_ERR_NO_MEM;
+    }
     esp_err_t err = nimble_port_init();
 
     if (err != ESP_OK)

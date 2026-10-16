@@ -4,6 +4,7 @@
 #include "core/power.h"
 #include "core/recovery.h"
 #include "core/settings.h"
+#include "core/state.h"
 #include "core/sys.h"
 #include "hardware/board.h"
 #include "hardware/pmu.h"
@@ -450,6 +451,7 @@ static esp_err_t handle_state(httpd_req_t *req)
     cJSON_AddBoolToObject(json, "has_sdcard", board_info()->has_sdcard);
     cJSON_AddBoolToObject(json, "files", storage_dir() != NULL);
     cJSON_AddStringToObject(json, "version", fw_update_running_version());
+    cJSON_AddBoolToObject(json, "ble_active", state_get(STATE_BLE) != STATE_BLE_OFF);
 
     cJSON *set = cJSON_AddObjectToObject(json, "settings");
     cJSON_AddNumberToObject(set, "brightness", s->brightness);
@@ -509,7 +511,11 @@ static esp_err_t handle_settings(httpd_req_t *req)
     clock_set_timezone(s.timezone);
     power_settings_changed();
 
-    return send_ok(req, true, NULL);
+    bool bluetooth_pending = s.ble_enabled && state_get(STATE_BLE) == STATE_BLE_OFF &&
+        (sys_internal_largest() < 40 * 1024 || sys_internal_free() < 56 * 1024);
+    return send_ok(req, true, bluetooth_pending
+        ? "Bluetooth salvato: memoria insufficiente ora. Chiudi i servizi pesanti o riavvia il dispositivo."
+        : NULL);
 }
 
 static esp_err_t handle_time(httpd_req_t *req)
