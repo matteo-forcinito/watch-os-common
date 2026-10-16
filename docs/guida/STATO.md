@@ -57,6 +57,12 @@ script `tools/dev/` e il test della dashboard aggiornato: non richiedono una nuo
 
 Nel frattempo la companion si può usare dal PC con `flutter run -d windows` ([pagina 11](11-companion-flutter.md)).
 
+## Prossimo progetto
+
+App **Bilancio** (gestione del denaro): progetto completo in
+[docs/progetti/BILANCIO.md](../progetti/BILANCIO.md), codice da scrivere seguendo
+l'"Ordine di lavoro" del documento.
+
 ## Cose note, non urgenti
 
 - Log `E sleep: sleep_cpu_configure ... Failed to enable CPU power down during light sleep`
