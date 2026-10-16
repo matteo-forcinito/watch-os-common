@@ -2,7 +2,7 @@
 
 Questa guida spiega come è fatto il progetto e come lavorarci, anche senza
 conoscere bene il C, ESP-IDF o Flutter. Ogni pagina è autonoma: parti da quella
-che ti serve.
+che ti serve. Se è la prima volta, leggi la 1 e poi la 13.
 
 | # | Pagina | Quando leggerla |
 |---|---|---|
@@ -18,6 +18,7 @@ che ti serve.
 | 10 | [Automazioni GitHub](10-automazioni-github.md) | Cosa fanno le GitHub Actions e cosa fare se falliscono |
 | 11 | [La companion (Flutter)](11-companion-flutter.md) | Capire, modificare, provare e rilasciare l'app Orbit Companion |
 | 12 | [Flusso di lavoro dalla A alla Z](12-flusso-di-lavoro.md) | La sequenza completa usata per ogni modifica |
+| 13 | [Leggere il codice](13-leggere-il-codice.md) | VS Code "vai alla definizione", da dove viene una funzione, cicli di vita di app e servizi, memoria |
 
 ## Le tre regole da ricordare sempre
 
