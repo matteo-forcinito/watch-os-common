@@ -325,6 +325,10 @@ static esp_err_t guard(httpd_req_t *req)
         httpd_resp_set_type(req, "text/plain; charset=utf-8");
         return httpd_resp_sendstr(req, "Abbina la dashboard");
     }
+    if (web_storage_maintenance() && strcmp(req->uri, "/api/storage") != 0)
+        return httpd_resp_set_status(req, "503 Service Unavailable"), httpd_resp_sendstr(req, "Manutenzione SD in corso");
+    if (storage_files_busy() && strncmp(req->uri, "/api/fs/", 8) == 0)
+        return httpd_resp_set_status(req, "503 Service Unavailable"), httpd_resp_sendstr(req, "Archiviazione occupata");
     esp_err_t (*handler)(httpd_req_t *) = (esp_err_t (*)(httpd_req_t *))req->user_ctx;
     return handler(req);
 }
@@ -919,7 +923,7 @@ static esp_err_t handle_not_found(httpd_req_t *req, httpd_err_code_t error)
 static esp_err_t start_httpd(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 64;
+    config.max_uri_handlers = 80;
     config.stack_size = 6144;
     config.uri_match_fn = httpd_uri_match_wildcard; /* folders like /pieno/... */
     config.lru_purge_enable = true;

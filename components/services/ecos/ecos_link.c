@@ -654,6 +654,8 @@ static void answer_access(session_t *s, link_peer_t *peer, const uint8_t *reques
             reply.battery = status.battery;
             reply.battery_mv = pmu_present() ? (uint16_t)pmu_battery_mv() : 0;
             reply.ram_kb = status.ram_kb;
+            if (board_info()->has_sdcard) reply.flags |= ECOS_ACCESS_SD;
+            if (web_server_running()) reply.flags |= ECOS_ACCESS_WEB_READY;
             if (imu_supported())
             {
                 reply.flags |= ECOS_ACCESS_IMU;
@@ -1191,7 +1193,7 @@ done:
     }
     if (radio)
     {
-        wifi_release();
+        wifi_radio_release();
     }
     if (s != NULL)
     {
@@ -1375,7 +1377,7 @@ void ecos_family(ecos_family_t *out)
                 m->access_result = 3; /* No supported reply within the request window. */
             }
             m->known = info->known;
-            m->reachable = info->reachable;
+            m->reachable = info->reachable && info->seen_at != 0 && now - info->seen_at <= 90000000;
             m->seen_ago = info->seen_at != 0 ? (uint32_t)((now - info->seen_at) / 1000000) : UINT32_MAX;
             m->rssi = info->rssi;
             m->channel = info->channel;

@@ -675,7 +675,7 @@ done:
     }
     if (wifi_held)
     {
-        wifi_release();
+        wifi_radio_release();
     }
     portENTER_CRITICAL(&s_guard);
     if (s != NULL)

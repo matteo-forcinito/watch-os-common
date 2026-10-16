@@ -43,11 +43,15 @@
 #include "core/power.h"
 
 #include <stdatomic.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static atomic_bool s_update_all;
+static bool remote_ui_pending(void);
+bool web_server_ui_pending(void) { return remote_ui_pending(); }
 
 static esp_err_t send_out(httpd_req_t *req, cJSON *json)
 {
@@ -105,6 +109,7 @@ static cJSON *body(httpd_req_t *req)
 
 static esp_err_t system_get(httpd_req_t *req)
 {
+    if (storage_files_busy()) return httpd_resp_set_status(req, "503 Service Unavailable"), httpd_resp_sendstr(req, "Archiviazione occupata");
     const board_info_t *b = board_info();
     cJSON *out = cJSON_CreateObject();
     cJSON_AddStringToObject(out, "product", b->product);
@@ -122,6 +127,7 @@ static esp_err_t system_get(httpd_req_t *req)
 #else
     cJSON_AddBoolToObject(control, "remote_screen", false);
 #endif
+    cJSON_AddBoolToObject(control, "remote_screen_enabled", settings_get()->remote_ui_enabled);
     cJSON_AddBoolToObject(control, "physical_display", !lv_port_headless());
     cJSON_AddBoolToObject(control, "persistent_recovery_access", recovery_active());
     cJSON_AddBoolToObject(control, "recovery_network_watchdog", recovery_active());
@@ -181,6 +187,7 @@ static void restart_job(void *arg)
 /* The page's power button: close the Web page app on the watch (Wi-Fi off). */
 static esp_err_t kit_off(httpd_req_t *req)
 {
+    if (remote_ui_pending()) return reply(req, false, "Interfaccia occupata");
     cJSON *out = cJSON_CreateObject();
     cJSON_AddBoolToObject(out, "ok", true);
     esp_err_t err = send_out(req, out);
@@ -196,6 +203,7 @@ static esp_err_t kit_off(httpd_req_t *req)
 
 static esp_err_t reboot_post(httpd_req_t *req)
 {
+    if (storage_files_busy()) return reply(req, false, "Archiviazione occupata");
     esp_err_t err = reply(req, true, "Riavvio...");
     sys_post(restart_job, NULL);
     return err;
@@ -205,6 +213,7 @@ static esp_err_t reboot_post(httpd_req_t *req)
 
 static esp_err_t apps_get(httpd_req_t *req)
 {
+    if (storage_files_busy()) return reply(req, false, "Archiviazione occupata");
     cJSON *out = cJSON_CreateObject();
     cJSON *builtin = cJSON_AddArrayToObject(out, "builtin");
     for (size_t i = 0; i < app_count(); i++)
@@ -224,6 +233,18 @@ static esp_err_t apps_get(httpd_req_t *req)
         {
             cJSON_AddStringToObject(j, "dashboard", folder);   /* opening it opens the app */
         }
+        const char *view = NULL;
+        if (strcmp(a->id, "sdcard") == 0) view = "v-storage";
+        else if (strcmp(a->id, "alarms") == 0) view = "v-alarms";
+        else if (strcmp(a->id, "ecos") == 0) view = "v-ecos";
+        else if (strcmp(a->id, "settings") == 0) view = "v-settings";
+        else if (strcmp(a->id, "market") == 0) view = "v-market";
+        if (view != NULL && !cJSON_HasObjectItem(j, "dashboard"))
+        {
+            char url[40]; snprintf(url, sizeof(url), "/#%s", view);
+            cJSON_AddStringToObject(j, "dashboard", url);
+        }
+        cJSON_AddStringToObject(j, "interaction", cJSON_HasObjectItem(j, "dashboard") ? "page" : "screen");
         cJSON_AddItemToArray(builtin, j);
     }
     extapp_t *ext = heap_caps_calloc(EXTAPP_MAX, sizeof(extapp_t), MALLOC_CAP_SPIRAM);
@@ -256,6 +277,8 @@ static esp_err_t apps_get(httpd_req_t *req)
 
 static esp_err_t apps_open(httpd_req_t *req)
 {
+    if (remote_ui_pending()) return reply(req, false, "Interfaccia occupata, usa le funzioni dirette");
+    if (storage_files_busy()) return reply(req, false, "Archiviazione occupata");
     cJSON *json = body(req);
     const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(json, "id"));
     const char *ext_id = cJSON_GetStringValue(cJSON_GetObjectItem(json, "ext"));
@@ -561,6 +584,12 @@ static esp_err_t family_get(httpd_req_t *req)
         cJSON_AddBoolToObject(j, "reachable", m->reachable);
         cJSON_AddNumberToObject(j, "permissions", m->permissions);
         cJSON_AddBoolToObject(j, "access_pending", m->access_pending);
+        const char *hint = !m->reachable ? "Cerca il membro o apri Ecosistema sul dispositivo" :
+            m->recovery ? "Recovery: usa pagine dedicate; schermo remoto solo se necessario" :
+            !m->wifi ? "Radio Family disponibile; serve Wi-Fi per usare le pagine del membro" :
+            m->battery >= 0 && m->battery < 15 && !m->usb ? "Batteria bassa: preferisci letture su richiesta" :
+            "Richiedi le risorse per conoscere i servizi disponibili";
+        cJSON_AddStringToObject(j, "suggestion", hint);
         if (m->access_known)
         {
             cJSON *access = cJSON_AddObjectToObject(j, "access");
@@ -579,6 +608,8 @@ static esp_err_t family_get(httpd_req_t *req)
                     cJSON_AddNumberToObject(access, "battery_mv", m->battery_mv);
                     cJSON_AddNumberToObject(access, "battery", m->resource_battery);
                     cJSON_AddNumberToObject(access, "ram_kb", m->resource_ram_kb);
+                    cJSON_AddBoolToObject(access, "sd_slot", (m->resource_flags & 64) != 0);
+                    cJSON_AddBoolToObject(access, "web_available", (m->resource_flags & 128) != 0);
                     cJSON_AddBoolToObject(access, "imu_supported", (m->resource_flags & 2) != 0);
                     uint64_t age = (uint64_t)m->sample_age_ms + (uint64_t)m->access_age_s * 1000;
                     bool valid = (m->resource_flags & 4) != 0 && age <= 1000;
@@ -675,7 +706,6 @@ static esp_err_t ecos_get(httpd_req_t *req)
 #endif
 
 
-#if CONFIG_WATCH_REMOTE_UI
 /* Remote UI: snapshots and navigation run in the LVGL task, never HTTP. */
 typedef struct
 {
@@ -685,35 +715,96 @@ typedef struct
     int action;
 } remote_call_t;
 
+/* A delayed UI callback must never keep the HTTP task or a caller stack alive.
+ * The UI and HTTP each own a reference; at most one pending UI job is retained. */
+typedef struct
+{
+    remote_call_t call;
+    atomic_int references;
+    atomic_bool cancelled;
+} remote_shared_t;
+static atomic_bool s_remote_pending;
+static bool remote_ui_pending(void) { return atomic_load(&s_remote_pending); }
+static void remote_destroy(void *arg)
+{
+    remote_shared_t *shared = arg;
+    if (shared->call.screen != NULL) lv_draw_buf_destroy(shared->call.screen);
+    if (shared->call.top != NULL) lv_draw_buf_destroy(shared->call.top);
+    vSemaphoreDelete(shared->call.done);
+    free(shared);
+    atomic_store(&s_remote_pending, false);
+}
+static void remote_release(remote_shared_t *shared, bool in_ui)
+{
+    if (atomic_fetch_sub(&shared->references, 1) != 1) return;
+    if (in_ui || (shared->call.screen == NULL && shared->call.top == NULL)) remote_destroy(shared);
+    else if (!ui_async(remote_destroy, shared))
+    {
+        /* Keep this single allocation, never free LVGL buffers from HTTP.
+         * The pending guard rejects further captures instead of growing a queue. */
+    }
+}
 static void remote_ui(void *arg)
 {
-    remote_call_t *call = arg;
-    if (call->action == 0)
+    remote_shared_t *shared = arg;
+    remote_call_t *call = &shared->call;
+    if (!atomic_load(&shared->cancelled) || call->action == 1)
     {
-        call->screen = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
-        if (lv_obj_get_child_count(lv_layer_top()) > 0)
+        if (call->action == 0)
         {
-            call->top = lv_snapshot_take(lv_layer_top(), LV_COLOR_FORMAT_ARGB8888);
+#if CONFIG_WATCH_REMOTE_UI
+            call->screen = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
+            if (lv_obj_get_child_count(lv_layer_top()) > 0)
+                call->top = lv_snapshot_take(lv_layer_top(), LV_COLOR_FORMAT_ARGB8888);
+#endif
         }
+        else if (call->action == 1)
+        {
+            if (call->screen != NULL) lv_draw_buf_destroy(call->screen);
+            if (call->top != NULL) lv_draw_buf_destroy(call->top);
+            call->screen = call->top = NULL;
+        }
+        else if (call->action == 2) app_back_user();
+        else if (call->action == 3) app_home();
+        else if (call->action == 4) app_close_others("web");
     }
-    else if (call->action == 1)
-    {
-        if (call->screen != NULL) lv_draw_buf_destroy(call->screen);
-        if (call->top != NULL) lv_draw_buf_destroy(call->top);
-    }
-    else if (call->action == 2) app_back_user();
-    else if (call->action == 3) app_home();
     xSemaphoreGive(call->done);
+    remote_release(shared, true);
 }
-
 static bool remote_run(remote_call_t *call)
 {
-    if (!ui_async(remote_ui, call)) return false;
-    /* Stack ownership remains valid until the UI callback completes. */
-    xSemaphoreTake(call->done, portMAX_DELAY);
-    return true;
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&s_remote_pending, &expected, true)) return false;
+    remote_shared_t *shared = calloc(1, sizeof(*shared));
+    if (shared == NULL) { atomic_store(&s_remote_pending, false); return false; }
+    shared->call = *call;
+    shared->call.done = xSemaphoreCreateBinary();
+    if (shared->call.done == NULL)
+    {
+        free(shared); atomic_store(&s_remote_pending, false); return false;
+    }
+    atomic_init(&shared->references, 2);
+    atomic_init(&shared->cancelled, false);
+    if (!ui_async(remote_ui, shared))
+    {
+        /* The job was never accepted; caller still owns its buffers. */
+        shared->call.screen = shared->call.top = NULL;
+        remote_release(shared, true); remote_release(shared, true);
+        return false;
+    }
+    bool ready = xSemaphoreTake(shared->call.done, pdMS_TO_TICKS(3000)) == pdTRUE;
+    if (ready)
+    {
+        SemaphoreHandle_t original = call->done;
+        *call = shared->call; call->done = original;
+        shared->call.screen = shared->call.top = NULL; /* ownership returned to HTTP */
+    }
+    else atomic_store(&shared->cancelled, true);
+    remote_release(shared, false);
+    return ready;
 }
 
+#if CONFIG_WATCH_REMOTE_UI
 static void remote_u32(uint8_t *p, uint32_t value)
 {
     for (int i = 0; i < 4; i++) p[i] = (uint8_t)(value >> (i * 8));
@@ -721,6 +812,7 @@ static void remote_u32(uint8_t *p, uint32_t value)
 
 static esp_err_t remote_frame(httpd_req_t *req)
 {
+    if (!settings_get()->remote_ui_enabled) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Schermo remoto disattivato");
     remote_call_t call = {.done = xSemaphoreCreateBinary()};
     if (call.done == NULL) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memoria insufficiente");
     power_wake(POWER_WAKE_OTHER);
@@ -772,7 +864,7 @@ static esp_err_t remote_frame(httpd_req_t *req)
     }
     else err = httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Schermo non disponibile");
     call.action = 1;
-    remote_run(&call);
+    if (call.screen != NULL || call.top != NULL) remote_run(&call);
     vSemaphoreDelete(call.done);
     return err;
 }
@@ -819,6 +911,7 @@ static void remote_gesture_start(void *arg)
 
 static esp_err_t remote_input(httpd_req_t *req)
 {
+    if (!settings_get()->remote_ui_enabled) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Schermo remoto disattivato");
     cJSON *json = body(req);
     const cJSON *kind = cJSON_GetObjectItemCaseSensitive(json, "action");
     bool ok = false;
@@ -871,8 +964,163 @@ static esp_err_t remote_input(httpd_req_t *req)
 
 #endif
 
+/* Device services are independent of LVGL snapshots. */
+static esp_err_t remote_config_get(httpd_req_t *req)
+{
+    cJSON *out = cJSON_CreateObject();
+#if CONFIG_WATCH_REMOTE_UI
+    cJSON_AddBoolToObject(out, "supported", true);
+#else
+    cJSON_AddBoolToObject(out, "supported", false);
+#endif
+    cJSON_AddBoolToObject(out, "enabled", settings_get()->remote_ui_enabled);
+    cJSON_AddNumberToObject(out, "retained_frame_bytes", remote_ui_pending() ? -1 : 0);
+    cJSON_AddBoolToObject(out, "ui_pending", remote_ui_pending());
+    return send_out(req, out);
+}
+
+static esp_err_t remote_config_post(httpd_req_t *req)
+{
+    cJSON *json = body(req);
+    const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(json, "enabled");
+    bool ok = cJSON_IsBool(enabled);
+#if !CONFIG_WATCH_REMOTE_UI
+    if (cJSON_IsTrue(enabled)) ok = false;
+#endif
+    if (ok)
+    {
+        settings_t s = *settings_get(); s.remote_ui_enabled = cJSON_IsTrue(enabled);
+        settings_save(&s);
+        settings_flush(); /* Explicit switch survives an immediate reboot. */
+    }
+    cJSON_Delete(json);
+    return reply(req, ok, ok ? "Preferenza salvata" : "Richiesta non valida");
+}
+
+/* One asynchronous SD job; the global file lease excludes transfers/USB handover. */
+static atomic_int s_disk_job, s_disk_error;
+static atomic_uint s_disk_generation;
+bool web_storage_maintenance(void)
+{
+    int job = atomic_load(&s_disk_job);
+    return job == 1 || job == 2;
+}
+static void disk_worker(void *arg)
+{
+    int operation = (int)(intptr_t)arg;
+    esp_err_t err = ESP_FAIL;
+    remote_call_t close = {.action = 4};
+    if (remote_run(&close))
+    {
+        atomic_store(&s_disk_job, 2);
+        err = operation == 1 ? sdcard_format() : sdcard_mount();
+        if (err == ESP_OK && operation == 1)
+        {
+            const char *paths[] = {SDCARD_MOUNT "/apps", SDCARD_MOUNT "/config"};
+            for (unsigned i = 0; i < 2; i++)
+                if (mkdir(paths[i], 0775) != 0 && errno != EEXIST) err = ESP_FAIL;
+        }
+    }
+    atomic_store(&s_disk_error, err);
+    atomic_store(&s_disk_job, err == ESP_OK ? 3 : 4);
+    storage_files_release();
+    vTaskDelete(NULL);
+}
+static esp_err_t disk_get(httpd_req_t *req)
+{
+    cJSON *out = cJSON_CreateObject();
+    int job = atomic_load(&s_disk_job);
+    bool busy = job == 1 || job == 2;
+    cJSON_AddBoolToObject(out, "supported", board_info()->has_sdcard);
+    cJSON_AddBoolToObject(out, "busy", busy);
+    cJSON_AddNumberToObject(out, "job", job);
+    cJSON_AddNumberToObject(out, "generation", atomic_load(&s_disk_generation));
+    cJSON_AddStringToObject(out, "error", job == 4 ? esp_err_to_name(atomic_load(&s_disk_error)) : "");
+    /* Never touch FAT or SD registers while the worker formats. */
+    if (!busy)
+    {
+        sdcard_state_t state = sdcard_state();
+        cJSON_AddNumberToObject(out, "state", state);
+        cJSON_AddBoolToObject(out, "can_format", board_info()->has_sdcard &&
+            (state == SDCARD_MOUNTED || state == SDCARD_UNREADABLE) && !storage_files_busy());
+        if (state == SDCARD_MOUNTED)
+        {
+            uint32_t total, free_mb; sdcard_space(&total, &free_mb);
+            cJSON_AddNumberToObject(out, "total_mb", total);
+            cJSON_AddNumberToObject(out, "free_mb", free_mb);
+            sdcard_info_t info;
+            if (sdcard_info(&info) == ESP_OK) cJSON_AddStringToObject(out, "name", info.name);
+        }
+    }
+    return send_out(req, out);
+}
+static esp_err_t disk_post(httpd_req_t *req)
+{
+    cJSON *json = body(req);
+    const char *action = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "action"));
+    const char *confirmation = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "confirmation"));
+    int operation = action != NULL && strcmp(action, "format") == 0 ? 1 :
+                    action != NULL && strcmp(action, "mount") == 0 ? 2 : 0;
+    bool confirmed = operation != 1 || (confirmation != NULL && strcmp(confirmation, "FORMAT SD") == 0);
+    cJSON_Delete(json);
+    if (remote_ui_pending()) return reply(req, false, "Interfaccia occupata: riprova dopo il riavvio");
+    if (!operation || !confirmed || !board_info()->has_sdcard)
+        return reply(req, false, "Operazione non supportata o conferma mancante");
+    fw_update_phase_t update = fw_update_phase();
+    if (update == FW_UPDATE_CHECKING || update == FW_UPDATE_WRITING || update == FW_UPDATE_RESTARTING)
+        return reply(req, false, "Aggiornamento firmware in corso");
+    if (!storage_files_acquire()) return reply(req, false, "Archiviazione occupata");
+    sdcard_state_t state = sdcard_state();
+    if (state == SDCARD_BUSY || (operation == 1 && state != SDCARD_MOUNTED && state != SDCARD_UNREADABLE))
+    {
+        storage_files_release();
+        return reply(req, false, "Scheda assente o occupata da USB");
+    }
+    atomic_store(&s_disk_job, 1);
+    atomic_fetch_add(&s_disk_generation, 1);
+    if (!sys_task_create(disk_worker, "web_sd", 6144, (void *)(intptr_t)operation, 3, SYS_CORE_ANY))
+    {
+        atomic_store(&s_disk_error, ESP_ERR_NO_MEM); atomic_store(&s_disk_job, 4);
+        storage_files_release(); return reply(req, false, "Memoria insufficiente");
+    }
+    return disk_get(req);
+}
+static esp_err_t capabilities_get(httpd_req_t *req)
+{
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddNumberToObject(out, "version", 1);
+    cJSON *features = cJSON_AddArrayToObject(out, "features");
+    const char *services[][3] = {
+        {"settings", "/api/state", "/#v-settings"}, {"wifi", "/api/wifi/status", "/#v-wifi"},
+        {"alarms", "/api/alarms", "/#v-alarms"}, {"files", "/api/fs/list?path=/", "/#v-files"},
+        {"apps", "/api/apps", "/#v-apps"}, {"updates", "/api/update", "/#v-system"},
+        {"family", "/api/ecos/family", "/#v-ecos"}, {"storage", "/api/storage", "/#v-storage"},
+        {"remote_screen", "/api/remote", "/#v-remote"}
+    };
+    for (unsigned i = 0; i < sizeof(services)/sizeof(services[0]); i++)
+    {
+        cJSON *f = cJSON_CreateObject();
+        cJSON_AddStringToObject(f, "id", services[i][0]);
+        cJSON_AddStringToObject(f, "api", services[i][1]);
+        cJSON_AddStringToObject(f, "page", services[i][2]);
+        bool available = true;
+        if (i == 7) available = board_info()->has_sdcard;
+#if !CONFIG_WATCH_ECOS_PAIRING
+        if (i == 6) available = false;
+#endif
+#if !CONFIG_WATCH_REMOTE_UI
+        if (i == 8) available = false;
+#endif
+        cJSON_AddBoolToObject(f, "available", available);
+        cJSON_AddItemToArray(features, f);
+    }
+    return send_out(req, out);
+}
+
+
 static esp_err_t recovery_post(httpd_req_t *req)
 {
+    if (storage_files_busy()) return reply(req, false, "Archiviazione occupata");
     cJSON *json = body(req);
     const cJSON *enabled = cJSON_GetObjectItemCaseSensitive(json, "enabled");
     bool ok = cJSON_IsBool(enabled) && recovery_request(cJSON_IsTrue(enabled));
@@ -883,6 +1131,11 @@ static esp_err_t recovery_post(httpd_req_t *req)
 void web_system_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
+        {.uri = "/api/capabilities", .method = HTTP_GET, .handler = capabilities_get},
+        {.uri = "/api/storage", .method = HTTP_GET, .handler = disk_get},
+        {.uri = "/api/storage", .method = HTTP_POST, .handler = disk_post},
+        {.uri = "/api/remote", .method = HTTP_GET, .handler = remote_config_get},
+        {.uri = "/api/remote", .method = HTTP_POST, .handler = remote_config_post},
 #if CONFIG_WATCH_REMOTE_UI
         {.uri = "/api/remote/frame", .method = HTTP_GET, .handler = remote_frame},
         {.uri = "/api/remote/input", .method = HTTP_POST, .handler = remote_input},

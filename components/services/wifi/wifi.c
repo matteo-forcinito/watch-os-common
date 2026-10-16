@@ -46,6 +46,7 @@ static bool s_sta_wanted = false;
 static bool s_ap_on = false;
 static int s_retries = 0;
 static int s_refs = 0;
+static unsigned s_radio_refs; /* ESP-NOW needs STA even alongside the fallback AP. */
 static unsigned s_scans;       /* STA must stay enabled through concurrent radio owners. */
 static int s_last_reason = 0;   /* wifi_err_reason_t of the last disconnection */
 static uint8_t s_home_channel = 0;   /* channel of the last network joined */
@@ -351,7 +352,7 @@ static wifi_mode_t wanted_mode(bool need_sta)
         return WIFI_MODE_STA;
     }
 
-    return (need_sta || s_sta_wanted || s_scans > 0 || wifi_is_connected()) ? WIFI_MODE_APSTA : WIFI_MODE_AP;
+    return (need_sta || s_radio_refs > 0 || s_sta_wanted || s_scans > 0 || wifi_is_connected()) ? WIFI_MODE_APSTA : WIFI_MODE_AP;
 }
 
 /*
@@ -689,11 +690,13 @@ esp_err_t wifi_radio_acquire(void)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_refs++;
+    s_radio_refs++;
     esp_timer_stop(s_off_timer);
     esp_err_t err = radio_on(wanted_mode(false)) ? ESP_OK : ESP_ERR_NO_MEM;
     if (err != ESP_OK)
     {
         s_refs--;
+        s_radio_refs--;
         if (s_refs == 0)
         {
             esp_timer_start_once(s_off_timer, 1000);
@@ -728,6 +731,22 @@ bool wifi_radio_set_channel(uint8_t channel)
     return ok;
 }
 
+void wifi_radio_release(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_radio_refs > 0)
+    {
+        s_radio_refs--;
+        if (s_refs > 0 && --s_refs == 0)
+        {
+            esp_timer_stop(s_off_timer);
+            esp_timer_start_once(s_off_timer, OFF_DELAY_US);
+        }
+        if (s_ap_on) radio_on(wanted_mode(false));
+    }
+    xSemaphoreGive(s_mutex);
+}
+
 void wifi_release(void)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -757,6 +776,17 @@ void wifi_set_fast(bool fast)
 }
 
 #if CONFIG_WATCH_DEV_CONSOLE
+void wifi_diagnostic_status(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    wifi_sta_list_t clients = {0};
+    if (s_ap_on) esp_wifi_ap_get_sta_list(&clients);
+    char ip[20] = ""; wifi_get_ip(ip, sizeof(ip));
+    printf("@WIFI connected=%d ap=%d clients=%d radio_refs=%u known=%d reason=%d ip=%s\n",
+        wifi_is_connected(), s_ap_on, clients.num, s_radio_refs, s_known_count, s_last_reason, ip);
+    for (int i = 0; i < s_known_count; i++) printf("@WIFI ssid=%s\n", s_known[i].ssid);
+    xSemaphoreGive(s_mutex);
+}
 void wifi_diagnostic_drop(void)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);

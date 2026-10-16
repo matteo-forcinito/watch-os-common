@@ -34,6 +34,7 @@
 static const char *TAG = "devcon";
 
 /* Optional diagnostic hook: core does not depend on network services. */
+extern void wifi_diagnostic_status(void) __attribute__((weak));
 extern void wifi_diagnostic_drop(void) __attribute__((weak));
 
 #if CONFIG_WATCH_DEV_CONSOLE
@@ -395,7 +396,11 @@ static void handle(char *line)
     char *a3 = strtok(NULL, " ");
     char *a4 = strtok(NULL, " ");
 
-    if (strcmp(cmd, "wifi-drop") == 0)
+    if (strcmp(cmd, "wifi-status") == 0)
+    {
+        if (wifi_diagnostic_status != NULL) wifi_diagnostic_status();
+    }
+    else if (strcmp(cmd, "wifi-drop") == 0)
     {
         if (wifi_diagnostic_drop != NULL)
         {

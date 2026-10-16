@@ -38,6 +38,7 @@
     <button data-view="v-ecos">Ecosistema</button>
     <button data-view="v-settings">Impostazioni</button>
     <button data-view="v-files">File</button>
+    <button data-view="v-storage">Scheda SD</button>
     <button data-view="v-system">Sistema</button>
   </nav>
   <div class="kit-dev"></div>
@@ -64,11 +65,12 @@
 
 <section class="view" id="v-remote">
   <div class="card"><h2>Schermo remoto</h2>
-    <p class="faint">Usa le app con tocchi e scorrimenti. In recovery lo schermo e virtuale: il pannello fisico resta spento.</p>
+    <p class="faint">Opzione di emergenza: preferisci le pagine dedicate delle app. Disattivato non vengono allocate catture. Usa le app con tocchi e scorrimenti. In recovery lo schermo e virtuale: il pannello fisico resta spento.</p>
     <div class="row"><button class="btn" onclick="remoteAction('back')">Indietro</button>
       <button class="btn" onclick="remoteAction('home')">Home</button>
       <button class="btn" onclick="remoteFrame()">Aggiorna</button>
-      <label><input type="checkbox" id="remote-live" checked> Aggiornamento automatico</label></div>
+      <label><input type="checkbox" id="remote-enable" onchange="remoteEnable(this.checked)"> Abilita schermo remoto</label>
+      <label><input type="checkbox" id="remote-live"> Aggiornamento automatico</label></div>
     <p id="remote-status" class="faint" role="status"></p>
     <canvas id="remote-screen" style="display:block;max-width:100%;width:360px;touch-action:none;background:#000;border-radius:16px" aria-label="Schermo interattivo del dispositivo"></canvas>
   </div>
@@ -86,7 +88,7 @@
     <p id="fam-status" class="dim" role="status" aria-live="polite"></p>
     <div id="fam-list" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))"></div>
     <p class="faint">In recovery i membri restano disponibili anche a batteria. Fuori recovery rispondono i dispositivi in carica a schermo spento (Watcher, Knob, un orologio sul caricatore)
-      o con Ecosistema aperto. Radio diretta e cifrata tra dispositivi abbinati, senza router: mentre guardi questa
+      o con Ecosistema aperto. I membri con webserver attivo sono disponibili anche a schermo acceso. Radio diretta e cifrata tra dispositivi abbinati, senza router: mentre guardi questa
       pagina la radio di questo dispositivo resta accesa.</p></div>
   <div class="card" style="margin-top:16px"><h2>Ecosistema · Abbinamento</h2>
     <p>Avvia l'abbinamento su due dispositivi vicini: si parlano direttamente via radio (ESP-NOW),
@@ -187,6 +189,15 @@
     <textarea id="fs_text" rows="16" style="width:100%;margin-top:10px;font-family:ui-monospace,monospace"></textarea></div>
 </section>
 
+<section class="view" id="v-storage">
+  <div class="card"><h2>Scheda microSD</h2>
+    <p id="disk-status" role="status"></p>
+    <div class="row"><button class="btn" id="disk-mount" onclick="diskAction('mount')">Rileva e monta</button>
+      <button class="btn danger" id="disk-format" onclick="diskAction('format')" disabled>Formatta FAT32</button></div>
+    <p class="faint">La formattazione cancella tutti i file della sola microSD, chiude le app che la usano e ricrea le cartelle apps/config. Impostazioni e abbinamenti in memoria interna rimangono salvati.</p>
+  </div>
+</section>
+
 <!-- ========================================================== SYSTEM -->
 <section class="view" id="v-system">
   <div class="grid g2">
@@ -283,7 +294,7 @@ async function loadApps() {
     el('div', {class: 'top'}, el('div', {class: 'dot', style: {background: hex(x.color)}}, x.name[0]), el('b', {}, x.name), star(x.id)),
     el('div', {class: 'about'}, x.about || ''),
     el('div', {class: 'row'}, el('button', {class: 'btn sm', onclick: () => act(() => call('/api/apps/open', {body: {id: x.id}}), x.name + ' aperta sull\'orologio')}, '▶ Apri sull\'orologio'),
-      x.dashboard ? el('a', {class: 'btn sm primary', href: x.dashboard, target: '_blank'}, 'Dashboard ↗') : '')));
+      x.dashboard ? el('a', {class: 'btn sm primary', href: x.dashboard, target: '_blank'}, 'Usa nel browser ↗') : '')));
   const e = $('#external');
   e.innerHTML = '';
   for (const x of a.external) e.append(el('div', {class: 'app'},
@@ -530,6 +541,7 @@ async function loadFamily() {
         el('span', {class: m.reachable ? 'good' : 'faint'}, m.reachable ? '● raggiungibile' : '○ ' + famAgo(m.seen_ago))),
       ...lines.map(t => el('p', {class: 'dim', style: 'margin:4px 0'}, t)),
       el('p', {class: 'faint', style: 'margin:4px 0'}, 'ID ' + m.id),
+      el('p', {class: 'dim'}, m.suggestion || ''),
       el('div', {class: 'row'},
         el('button', {class: 'btn sm primary', onclick: () => familyAction(m.ringing ? 'stop' : 'ring', m)}, m.ringing ? 'Smetti di suonare' : 'Fai suonare'),
         el('button', {class: 'btn sm', onclick: () => { const t = prompt('Messaggio per ' + m.name + ' (max 90 caratteri)'); if (t && t.trim()) familyAction('message', m, false, t.trim().slice(0, 90)); }}, 'Messaggio'),
@@ -560,7 +572,7 @@ async function loadFamily() {
       let text = ['Richiesta completata', 'Permesso non concesso dal membro', 'Servizio non disponibile sul membro',
         'Nessuna risposta: membro offline o firmware non compatibile'][a.result] || 'Risposta non disponibile';
       if (a.result === 0 && a.operation === 1) text = a.recovery ? 'Recovery: apri la dashboard, accesso persistente senza codice.' : 'Codice web: ' + a.code;
-      if (a.result === 0 && a.operation === 2) text = `Risorse (${a.age_s} s fa): batteria ${a.battery < 0 ? 'n/d' : a.battery + '%'} · ${a.battery_mv} mV · RAM ${a.ram_kb} KB. ` +
+      if (a.result === 0 && a.operation === 2) text = `${a.web_available ? 'Gestione web disponibile' : 'Webserver non attivo'} · ${a.sd_slot ? 'Slot microSD' : 'Senza microSD'}. Risorse (${a.age_s} s fa): batteria ${a.battery < 0 ? 'n/d' : a.battery + '%'} · ${a.battery_mv} mV · RAM ${a.ram_kb} KB. ` +
         (a.imu_valid ? `Accelerazione ${a.acceleration_mg.join(', ')} mg · giroscopio ${a.angular_dps.join(', ')} °/s` :
           a.imu_supported ? 'Sensore presente, nessun campione recente: la lettura non lo attiva.' : 'Sensore di movimento non disponibile.');
       card.append(el('p', {class: 'dim'}, text));
@@ -596,8 +608,20 @@ async function ecosAction(action) {
 }
 
 let remoteBusy = false, remoteStart = null;
+async function loadRemote() {
+  const state = await kit.api('/api/remote');
+  $('#remote-enable').checked = state.enabled;
+  $('#remote-status').textContent = state.enabled ? 'Attivo, cattura su richiesta' : 'Disattivato';
+}
+async function remoteEnable(enabled) {
+  await kit.try(async () => {
+    await kit.api('/api/remote', {body:{enabled}});
+    if (!enabled) { const c = $('#remote-screen'); c.width = c.height = 0; remoteStart = null; }
+    await loadRemote();
+  });
+}
 async function remoteFrame() {
-  if (remoteBusy || document.hidden) return;
+  if (remoteBusy || document.hidden || !$('#remote-enable').checked) return;
   remoteBusy = true;
   try {
     const response = await kit.api('/api/remote/frame', {raw:true});
@@ -634,8 +658,25 @@ setInterval(() => {
   if (S.ready && current === 'v-remote' && $('#remote-live').checked) remoteFrame();
 }, 1500);
 
+async function loadStorage() {
+  const d = await kit.api('/api/storage');
+  $('#disk-mount').disabled = !d.supported || d.busy || d.state === 3;
+  $('#disk-format').disabled = !d.can_format || d.busy;
+  $('#disk-status').textContent = !d.supported ? 'Questo modello non ha uno slot microSD.' : d.busy ? 'Operazione in corso: non rimuovere la scheda.' :
+    d.job === 4 ? 'Operazione non riuscita: ' + d.error : d.state === 1 ? `${d.name || 'microSD'}: ${d.free_mb} MB liberi su ${d.total_mb} MB${d.job === 3 ? ' · operazione completata' : ''}` :
+    d.state === 2 ? 'Scheda presente ma formato non leggibile.' : d.state === 3 ? 'Scheda in uso dal PC tramite USB.' : 'Nessuna scheda rilevata.';
+}
+async function diskAction(action) {
+  let confirmation;
+  if (action === 'format') {
+    confirmation = prompt('Tutti i file della microSD verranno cancellati. Digita FORMAT SD per confermare.');
+    if (confirmation !== 'FORMAT SD') return;
+  }
+  await kit.try(async () => { await kit.api('/api/storage', {body:{action, confirmation}}); await loadStorage(); });
+}
+
 /* ------------------------------------------------------------ start */
-const loaders = {'v-remote': remoteFrame, 'v-home': loadSystem, 'v-apps': loadApps, 'v-market': loadMarket, 'v-alarms': loadAlarms, 'v-wifi': loadWifi,
+const loaders = {'v-storage': loadStorage, 'v-remote': loadRemote, 'v-home': loadSystem, 'v-apps': loadApps, 'v-market': loadMarket, 'v-alarms': loadAlarms, 'v-wifi': loadWifi,
   'v-ecos': loadEcos,
   'v-settings': loadSettings, 'v-files': () => fsLoad(cwd), 'v-system': () => Promise.all([loadUpdate(), loadSystem()])};
 let current = 'v-home';
@@ -649,6 +690,7 @@ kit.start({onReady: () => {
     if (current === 'v-home') await loadSystem();
     else if (current === 'v-system') await loadUpdate();
     else if (current === 'v-ecos') await loadEcos();
+    else if (current === 'v-storage') await loadStorage();
   }, 4000);
   if (current !== 'v-home' && current !== 'v-market') loaders[current]().catch(e => kit.toast(e.message, 'bad'));
 }});

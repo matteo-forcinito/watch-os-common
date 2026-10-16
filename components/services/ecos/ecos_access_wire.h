@@ -13,6 +13,8 @@
 #define ECOS_ACCESS_CHARGING 8
 #define ECOS_ACCESS_USB 16
 #define ECOS_ACCESS_WIFI 32
+#define ECOS_ACCESS_SD 64
+#define ECOS_ACCESS_WEB_READY 128
 #define ECOS_ACCESS_REQUEST_SIZE 9
 #define ECOS_ACCESS_REPLY_SIZE 42
 
@@ -67,7 +69,7 @@ static inline bool ecos_access_decode(const uint8_t *p, size_t n, ecos_access_wi
 {
     if (n != ECOS_ACCESS_REPLY_SIZE || ecos_link_get64(p) == 0 ||
         (p[8] != ECOS_ACCESS_WEB && p[8] != ECOS_ACCESS_RESOURCES) ||
-        p[9] > ECOS_ACCESS_UNAVAILABLE || (p[10] & ~63U) != 0)
+        p[9] > ECOS_ACCESS_UNAVAILABLE)
     {
         return false;
     }

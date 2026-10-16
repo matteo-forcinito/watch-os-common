@@ -525,6 +525,7 @@ static void worker(void *arg)
     s_state.phase = err == ESP_OK ? VOICE_MEMO_IDLE : VOICE_MEMO_ERROR;
     portEXIT_CRITICAL(&s_guard);
     sys_heap_log("memo-closed");
+    storage_files_release();
     __atomic_store_n(&s_busy, false, __ATOMIC_RELEASE);
     vTaskDelete(NULL);
 }
@@ -535,9 +536,11 @@ static bool start(operation_t operation, int index)
     {
         return false;
     }
+    if (!storage_files_acquire()) return false;
     bool expected = false;
     if (!__atomic_compare_exchange_n(&s_busy, &expected, true, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
     {
+        storage_files_release();
         return false;
     }
     command_t *cmd = calloc(1, sizeof(*cmd));
@@ -576,6 +579,7 @@ static bool start(operation_t operation, int index)
     s_state.phase = VOICE_MEMO_ERROR;
     s_state.error = valid ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_ARG;
     portEXIT_CRITICAL(&s_guard);
+    storage_files_release();
     __atomic_store_n(&s_busy, false, __ATOMIC_RELEASE);
     return false;
 }

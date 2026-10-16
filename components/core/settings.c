@@ -58,6 +58,11 @@ static void set_defaults(settings_t *s)
 
 static void sanitize(settings_t *s)
 {
+    if (s->remote_preferences_version != 1)
+    {
+        s->remote_ui_enabled = false;
+        s->remote_preferences_version = 1;
+    }
     if (s->brightness < 10)
     {
         s->brightness = 10;

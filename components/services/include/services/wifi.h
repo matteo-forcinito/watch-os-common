@@ -54,8 +54,9 @@ void wifi_release(void);
 
 /* The radio only (ESP-NOW between devices, no network, no internet): driver on
  * in station mode, not joined. Same reference count as wifi_acquire(): pair
- * it with wifi_release(). Immediate (no scan, no join). */
+ * it with wifi_radio_release(). Immediate (no scan, no join). */
 esp_err_t wifi_radio_acquire(void);
+void wifi_radio_release(void);
 /* Current radio channel (1..13), 0 if the radio is off. */
 uint8_t wifi_radio_channel(void);
 /* Move the radio to `channel`; refused (false) while joined to a network or

@@ -7,6 +7,7 @@
 #include "apps_internal.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#include "core/sys.h"
 #include "esp_heap_caps.h"
 #include "services/ecos.h"
 #include "services/sound.h"
@@ -193,7 +194,7 @@ typedef struct
 {
     char id[13];
     lv_timer_t *timer;
-    lv_obj_t *info, *status, *ring;
+    lv_obj_t *info, *status, *ring, *access, *grants;
     bool ringing;
     ecos_family_t family;
 } device_ui_t;
@@ -251,6 +252,30 @@ static void device_refresh(device_ui_t *ui)
         snprintf(text, sizeof(text), "ID %s\nUltimo contatto: %s\nNessuna informazione ancora: deve essere in carica "
                  "a schermo spento, o con Ecosistema aperto.", m->id, ago);
     }
+    lv_label_set_text_fmt(ui->grants, "Questo membro puo chiedere a me:\nCodice web: %s - Risorse: %s",
+        m->permissions & ECOS_PERMISSION_WEB_CODE ? "si" : "no",
+        m->permissions & ECOS_PERMISSION_RESOURCES ? "si" : "no");
+    const char *result = "Richiedi informazioni al membro con i pulsanti qui sotto.";
+    if (m->access_pending) result = "In attesa del membro...";
+    else if (m->access_known)
+    {
+        if (m->access_result == 1) result = "Permesso non concesso dal membro";
+        else if (m->access_result == 2) result = "Servizio non disponibile sul membro";
+        else if (m->access_result == 3) result = "Nessuna risposta: offline o firmware precedente";
+        else if (m->access_operation == 1)
+        {
+            if (m->resource_flags & 1) result = "Recovery: dashboard senza codice, accesso persistente";
+            else { lv_label_set_text_fmt(ui->access, "Codice web del membro: %s", m->web_code); result = NULL; }
+        }
+        else
+        {
+            lv_label_set_text_fmt(ui->access, "Risorse di %lu s fa\nBatteria %d%% - %u mV\nRAM %u KB\n%s\n%s",
+                (unsigned long)m->access_age_s, m->resource_battery, m->battery_mv, m->resource_ram_kb,
+                m->resource_flags & 128 ? "Webserver disponibile" : "Webserver non attivo",
+                m->resource_flags & 64 ? "Slot microSD presente" : "Senza slot microSD"); result = NULL;
+        }
+    }
+    if (result != NULL) lv_label_set_text(ui->access, result);
     lv_label_set_text(ui->info, text);
     lv_label_set_text(ui->status, ui->family.busy ? "Invio..." : ui->family.message);
     if (ui->ringing != m->ringing)
@@ -289,6 +314,36 @@ static void quick_click(lv_event_t *e)
         ui_toast("Attendi: un invio è in corso");
     }
 }
+
+static void request_web_click(lv_event_t *e)
+{
+    device_ui_t *ui = lv_event_get_user_data(e);
+    if (ecos_family_request(ui->id, 1) != ESP_OK) ui_toast("Attendi: richiesta in corso");
+}
+static void request_resources_click(lv_event_t *e)
+{
+    device_ui_t *ui = lv_event_get_user_data(e);
+    if (ecos_family_request(ui->id, 2) != ESP_OK) ui_toast("Attendi: richiesta in corso");
+}
+typedef struct { char id[13]; uint32_t permissions; } grant_job_t;
+static void save_grant(void *arg)
+{
+    grant_job_t *job = arg;
+    ecos_permissions_set(job->id, job->permissions);
+    free(job);
+}
+static void toggle_grant(lv_event_t *e, uint32_t bit)
+{
+    device_ui_t *ui = lv_event_get_user_data(e);
+    const ecos_member_t *m = device_member(ui);
+    grant_job_t *job = m != NULL ? malloc(sizeof(*job)) : NULL;
+    if (job == NULL) return;
+    snprintf(job->id, sizeof(job->id), "%s", ui->id);
+    job->permissions = m->permissions ^ bit;
+    if (!sys_post(save_grant, job)) { free(job); ui_toast("Impossibile salvare ora"); }
+}
+static void grant_web_click(lv_event_t *e) { toggle_grant(e, ECOS_PERMISSION_WEB_CODE); }
+static void grant_resources_click(lv_event_t *e) { toggle_grant(e, ECOS_PERMISSION_RESOURCES); }
 
 static void forget_answer(bool confirmed, void *user_data)
 {
@@ -349,6 +404,15 @@ static void device_create(lv_obj_t *screen, void *arg)
     lv_obj_t *page = ui_page(screen, m != NULL ? m->name : "Dispositivo");
     ui->info = ui_text(page, "", false);
     ui->status = ui_text(page, "", true);
+    ui_section(page, "Usa le risorse del membro");
+    ui->access = ui_text(page, "", true);
+    ui_button(page, "Richiedi codice web", UI_COLOR_BLUE, request_web_click, ui);
+    ui_button(page, "Leggi risorse", UI_COLOR_BLUE, request_resources_click, ui);
+    ui_section(page, "Permessi concessi al membro");
+    ui->grants = ui_text(page, "", true);
+    ui_text(page, "Disattivare la richiesta codici non revoca accessi web gia abbinati.", true);
+    ui_button(page, "Cambia permesso codice web", UI_COLOR_ORANGE, grant_web_click, ui);
+    ui_button(page, "Cambia permesso risorse", UI_COLOR_ORANGE, grant_resources_click, ui);
     ui->ring = ui_button(page, "Fai suonare", UI_COLOR_ORANGE, ring_click, ui);
     ui_section(page, "Messaggio rapido");
     for (size_t i = 0; i < sizeof(s_quick) / sizeof(s_quick[0]); i++)

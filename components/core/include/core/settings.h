@@ -68,6 +68,8 @@ typedef struct
     uint8_t launcher_cards;
     /* main menu favourites: app ids ("alarms") or external apps ("ext:Pieno"), "" = free */
     char favorites[6][24];
+    uint32_t remote_preferences_version; /* starts after the old persisted struct */
+    bool remote_ui_enabled;      /* opt-in fallback mirroring; default off */
 } settings_t;
 
 esp_err_t settings_init(void);

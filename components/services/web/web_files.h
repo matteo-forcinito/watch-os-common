@@ -25,5 +25,7 @@ void web_files_register(httpd_handle_t server);
 void web_route(httpd_handle_t server, const httpd_uri_t *route);
 /* Device, apps, market and system update API (web_system.c). */
 void web_system_register(httpd_handle_t server);
+/* SD maintenance is active: only its status API remains available. */
+bool web_storage_maintenance(void);
 
 #endif

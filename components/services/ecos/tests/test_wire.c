@@ -174,7 +174,10 @@ int ecos_tests(void)
     CHECK(got.battery_mv == 4210 && got.sample_age_ms == 987654 && got.battery == -1);
     payload[10] = ECOS_ACCESS_IMU_VALID;
     CHECK(!ecos_access_decode(payload, sizeof(payload), &got));
-    payload[10] = 128;
+    payload[10] = ECOS_ACCESS_SD | ECOS_ACCESS_WEB_READY;
+    CHECK(ecos_access_decode(payload, sizeof(payload), &got));
+    CHECK((got.flags & ECOS_ACCESS_SD) && (got.flags & ECOS_ACCESS_WEB_READY));
+    payload[9] = 3;
     CHECK(!ecos_access_decode(payload, sizeof(payload), &got));
     access.result = ECOS_ACCESS_DENIED;
     access.code[0] = '1';

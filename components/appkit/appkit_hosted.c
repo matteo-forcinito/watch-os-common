@@ -18,6 +18,7 @@
 #include "hardware/pmu.h"
 #include "services/web_server.h"
 #include "services/wifi.h"
+#include "services/storage.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -173,6 +174,8 @@ static void folder_of(const char *name, char *out, size_t size)
  * reloads itself in a moment (by then the app serves its dashboard). */
 static esp_err_t open_app(httpd_req_t *request, const registered_t *r)
 {
+    if (storage_files_busy() || web_server_ui_pending())
+        return appkit_error(request, "503 Service Unavailable", "Dispositivo occupato");
     /* A page load carries no token: opening an app is harmless (its data stays
      * behind the pairing). */
     xSemaphoreTake(s_lock, portMAX_DELAY);
