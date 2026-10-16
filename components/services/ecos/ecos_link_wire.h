@@ -27,6 +27,8 @@
 #define ECOS_LINK_STATUS_REQ 1   /* "here is my status, send me yours" */
 #define ECOS_LINK_STATUS 2
 #define ECOS_LINK_RING 3         /* payload byte: 1 ring, 0 stop */
+#define ECOS_LINK_ACCESS_REQ 5
+#define ECOS_LINK_ACCESS_REPLY 6
 #define ECOS_LINK_MESSAGE 4      /* payload: bounded text bytes, length from frame */
 
 /* Every payload starts with the sender's clock (unix seconds, 0 = unknown). */
@@ -101,7 +103,7 @@ static inline void ecos_link_header(uint8_t *p, uint8_t type, const uint8_t send
 static inline bool ecos_link_valid(const uint8_t *p, size_t n)
 {
     return n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG && n <= ECOS_LINK_FRAME_MAX &&
-           memcmp(p, "EL02", 4) == 0 && p[4] >= ECOS_LINK_STATUS_REQ && p[4] <= ECOS_LINK_MESSAGE;
+           memcmp(p, "EL02", 4) == 0 && p[4] >= ECOS_LINK_STATUS_REQ && p[4] <= ECOS_LINK_ACCESS_REPLY;
 }
 
 /* Fixed-size text field: copies at most size-1 bytes, always terminated. */

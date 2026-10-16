@@ -63,6 +63,7 @@ static bool s_recovery_sta;
 static int64_t s_recovery_next_join;
 static int s_users;                      /* web_server_start() calls not yet stopped */
 static SemaphoreHandle_t s_lock;
+static void lock_init(void);
 
 #define FOLDERS_MAX 8
 typedef struct
@@ -343,6 +344,23 @@ void web_route(httpd_handle_t server, const httpd_uri_t *route)
 const char *web_server_code(void)
 {
     return s_code;
+}
+
+bool web_server_pairing_snapshot(char code[7], bool *recovery)
+{
+    lock_init();
+    if (xSemaphoreTake(s_lock, 0) != pdTRUE)
+    {
+        return false;
+    }
+    bool ready = s_server != NULL;
+    if (ready)
+    {
+        *recovery = recovery_active();
+        memcpy(code, s_code, 7);
+    }
+    xSemaphoreGive(s_lock);
+    return ready;
 }
 
 /* Explicit recovery mode is the local-access grant; never expose the normal pairing token. */

@@ -535,6 +535,36 @@ async function loadFamily() {
         el('button', {class: 'btn sm', onclick: () => { const t = prompt('Messaggio per ' + m.name + ' (max 90 caratteri)'); if (t && t.trim()) familyAction('message', m, false, t.trim().slice(0, 90)); }}, 'Messaggio'),
         m.ip ? el('a', {class: 'btn sm', href: 'http://' + m.ip + '/', target: '_blank', rel: 'noopener'}, 'Dashboard') : '',
         el('button', {class: 'btn sm danger', onclick: () => confirm('Dimenticare ' + m.name + '? Per riabbinarlo servirà di nuovo il codice.') && familyAction('forget', m)}, 'Dimentica')));
+    const rights = el('div', {class: 'card'}, el('b', {}, 'Permessi concessi a questo membro'),
+      el('p', {class: 'dim'}, 'Può richiedere informazioni a questo dispositivo. Gli accessi web già abbinati restano validi.'));
+    for (const [bit, label] of [[1, 'Consenti richiesta codice web'], [2, 'Consenti lettura risorse e sensori']]) {
+      const input = el('input', {type: 'checkbox'});
+      input.checked = !!(m.permissions & bit);
+      input.onchange = async () => {
+        input.disabled = true;
+        try { await kit.api('/api/ecos/family', {body: {action: 'permissions', id: m.id,
+          permissions: input.checked ? (m.permissions | bit) : (m.permissions & ~bit)}}); await loadFamily(); }
+        catch (e) { input.checked = !input.checked; kit.toast(e.message, 'bad'); }
+        finally { input.disabled = false; }
+      };
+      rights.append(el('label', {class: 'row'}, input, label));
+    }
+    card.append(rights, el('div', {class: 'row'},
+      el('button', {class: 'btn sm', disabled: f.busy || m.access_pending,
+        onclick: () => familyAction('web_code', m)}, 'Richiedi codice web'),
+      el('button', {class: 'btn sm', disabled: f.busy || m.access_pending,
+        onclick: () => familyAction('resources', m)}, 'Leggi risorse')));
+    if (m.access_pending) card.append(el('p', {class: 'dim'}, 'In attesa del membro…'));
+    else if (m.access) {
+      const a = m.access;
+      let text = ['Richiesta completata', 'Permesso non concesso dal membro', 'Servizio non disponibile sul membro',
+        'Nessuna risposta: membro offline o firmware non compatibile'][a.result] || 'Risposta non disponibile';
+      if (a.result === 0 && a.operation === 1) text = a.recovery ? 'Recovery: apri la dashboard, accesso persistente senza codice.' : 'Codice web: ' + a.code;
+      if (a.result === 0 && a.operation === 2) text = `Risorse (${a.age_s} s fa): batteria ${a.battery < 0 ? 'n/d' : a.battery + '%'} · ${a.battery_mv} mV · RAM ${a.ram_kb} KB. ` +
+        (a.imu_valid ? `Accelerazione ${a.acceleration_mg.join(', ')} mg · giroscopio ${a.angular_dps.join(', ')} °/s` :
+          a.imu_supported ? 'Sensore presente, nessun campione recente: la lettura non lo attiva.' : 'Sensore di movimento non disponibile.');
+      card.append(el('p', {class: 'dim'}, text));
+    }
     list.append(card);
   }
   if (!list.children.length) list.append(el('p', {class: 'dim'}, 'Nessun dispositivo abbinato: abbinane uno qui sotto.'));

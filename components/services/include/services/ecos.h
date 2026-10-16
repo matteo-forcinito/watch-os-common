@@ -10,6 +10,8 @@
 
 #define ECOS_PEERS_MAX 6
 #define ECOS_NAME_SIZE 24
+#define ECOS_PERMISSION_WEB_CODE 1U
+#define ECOS_PERMISSION_RESOURCES 2U
 
 typedef struct
 {
@@ -71,6 +73,14 @@ typedef struct
     char ip[16];
     uint32_t uptime_min;
     unsigned ram_kb;
+    uint32_t permissions; /* What this local device grants to that member. */
+    bool access_pending, access_known;
+    uint8_t access_operation, access_result, resource_flags;
+    uint32_t access_age_s, sample_age_ms;
+    char web_code[7];
+    uint16_t battery_mv, resource_ram_kb;
+    int resource_battery;
+    int16_t acceleration_mg[3], angular_dps[3];
 } ecos_member_t;
 
 typedef struct
@@ -102,6 +112,10 @@ void ecos_family_hold(bool on);
 void ecos_family_touch(void);
 /* Search the paired devices now (all channels). Result in ecos_family(). */
 esp_err_t ecos_family_refresh(void);
+/* Explicit per-member grants, credential-bound in NVS; default deny. */
+esp_err_t ecos_permissions_set(const char *id, uint32_t permissions);
+/* Request another member's grant: 1 = web code, 2 = current resources. */
+esp_err_t ecos_family_request(const char *id, uint8_t operation);
 esp_err_t ecos_family_ring(const char *id, bool on);
 esp_err_t ecos_family_message(const char *id, const char *text);
 /* This device stopped ringing (the user found it). */

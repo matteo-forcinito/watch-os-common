@@ -21,6 +21,10 @@
 #include "services/ecos.h"
 #include "ecos_internal.h"
 #include "ecos_link_wire.h"
+#include "ecos_access_wire.h"
+#include "services/web_server.h"
+#include "services/motion.h"
+#include <math.h>
 #include "services/notify.h"
 #include "services/wifi.h"
 #include "core/power.h"
@@ -75,6 +79,11 @@ typedef struct
     uint8_t fingerprint[16];
     uint64_t last_boot;
     uint32_t last_seq;
+    uint32_t permissions;
+    uint64_t pending_request;
+    uint8_t pending_operation;
+    int64_t pending_until, access_at;
+    ecos_access_wire_t access;
 } member_info_t;
 
 typedef enum
@@ -83,6 +92,8 @@ typedef enum
     CMD_RING,
     CMD_STOP,
     CMD_MESSAGE,
+    CMD_WEB_CODE,
+    CMD_RESOURCES,
 } cmd_kind_t;
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -98,6 +109,11 @@ static void (*s_handler)(const ecos_event_t *event);
 static esp_timer_handle_t s_auto_timer;
 static uint64_t s_boot_epoch;
 static uint32_t s_tx_sequence;
+static bool parse_id(const char *id, uint8_t mac[6]);
+static void id_text(const uint8_t mac[6], char text[13])
+{
+    snprintf(text, 13, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
 
 /* ---- radio queues (only while the task runs) */
 
@@ -154,6 +170,7 @@ typedef struct
     uint8_t fingerprint[16];
     uint64_t last_boot;
     uint32_t last_seq;
+    int64_t last_access_us;
 } link_peer_t;
 
 typedef struct
@@ -182,7 +199,8 @@ static bool powered(void)
 /* Answer the others: on the cable, with nobody using the screen. */
 static bool auto_wanted(void)
 {
-    return recovery_active() || (powered() && state_get(STATE_SCREEN) >= POWER_SCREEN_AOD);
+    return recovery_active() || web_server_running() ||
+           (powered() && state_get(STATE_SCREEN) >= POWER_SCREEN_AOD);
 }
 
 static bool wanted(void)
@@ -235,6 +253,81 @@ static bool hmac16(const uint8_t key[32], const uint8_t *message, size_t length,
     memcpy(out, full, 16);
     mbedtls_platform_zeroize(full, sizeof(full));
     return ok;
+}
+
+/* Grants are bound to the pairing credential, not just the MAC address. */
+static uint32_t permissions_read(const uint8_t mac[6], const uint8_t fingerprint[16])
+{
+    char key[13];
+    id_text(mac, key);
+    nvs_handle_t handle;
+    uint8_t record[18] = {0};
+    size_t size = sizeof(record);
+    uint32_t permissions = 0;
+    if (nvs_open("ecos_rights", NVS_READONLY, &handle) == ESP_OK)
+    {
+        if (nvs_get_blob(handle, key, record, &size) == ESP_OK && size == sizeof(record) &&
+            record[0] == 1 && memcmp(record + 1, fingerprint, 16) == 0)
+        {
+            permissions = record[17] & (ECOS_PERMISSION_WEB_CODE | ECOS_PERMISSION_RESOURCES);
+        }
+        nvs_close(handle);
+    }
+    return permissions;
+}
+
+esp_err_t ecos_permissions_set(const char *id, uint32_t permissions)
+{
+    uint8_t mac[6], store[ECOS_STORE_SIZE], record[18] = {1};
+    if (!parse_id(id, mac) || (permissions & ~(ECOS_PERMISSION_WEB_CODE | ECOS_PERMISSION_RESOURCES)) != 0)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!ecos_store_load(store))
+    {
+        return ESP_FAIL;
+    }
+    esp_err_t err = ESP_ERR_NOT_FOUND;
+    for (unsigned i = 0; i < store[1]; i++)
+    {
+        const uint8_t *peer = store + 2 + i * ECOS_RECORD_SIZE;
+        if (memcmp(peer, mac, 6) != 0)
+        {
+            continue;
+        }
+        if (psa_crypto_init() != PSA_SUCCESS ||
+            !hmac16(peer + 6 + ECOS_NAME_SIZE, (const uint8_t *)"REPLAY", 6, record + 1))
+        {
+            err = ESP_FAIL;
+            break;
+        }
+        char key[13];
+        id_text(mac, key);
+        record[17] = (uint8_t)permissions;
+        nvs_handle_t handle;
+        err = nvs_open("ecos_rights", NVS_READWRITE, &handle);
+        if (err == ESP_OK)
+        {
+            err = nvs_set_blob(handle, key, record, sizeof(record));
+            if (err == ESP_OK)
+            {
+                err = nvs_commit(handle);
+            }
+            nvs_close(handle);
+        }
+        if (err == ESP_OK)
+        {
+            portENTER_CRITICAL(&s_lock);
+            member_info_t *info = info_slot(mac);
+            info->permissions = permissions;
+            memcpy(info->fingerprint, record + 1, 16);
+            portEXIT_CRITICAL(&s_lock);
+        }
+        break;
+    }
+    mbedtls_platform_zeroize(store, sizeof(store));
+    mbedtls_platform_zeroize(record, sizeof(record));
+    return err;
 }
 
 static bool aes_key(const uint8_t raw[16], psa_key_usage_t usage, psa_key_id_t *out)
@@ -363,8 +456,17 @@ static bool load_peers(session_t *s)
             direction_key(credential, peer->mac, PSA_KEY_USAGE_DECRYPT, &peer->recv_key) &&
             hmac16(credential, (const uint8_t *)"REPLAY", 6, peer->fingerprint) && replay_record(peer, false, 0, 0))
         {
+            uint32_t permissions = permissions_read(peer->mac, peer->fingerprint);
             portENTER_CRITICAL(&s_lock);
             member_info_t *info = info_slot(peer->mac);
+            if (memcmp(info->fingerprint, peer->fingerprint, 16) != 0)
+            {
+                memset(info, 0, sizeof(*info));
+                info->used = true;
+                memcpy(info->mac, peer->mac, 6);
+                memcpy(info->fingerprint, peer->fingerprint, 16);
+            }
+            info->permissions = permissions;
             if (memcmp(info->fingerprint, peer->fingerprint, 16) == 0 &&
                 ecos_link_newer(info->last_boot, info->last_seq, peer->last_boot, peer->last_seq))
             {
@@ -505,6 +607,87 @@ static void deliver_message(const char *from, const char *text)
     notify_add(&n);
 }
 
+
+static int16_t scaled_sensor(float value, float scale)
+{
+    if (!isfinite(value))
+    {
+        return 0;
+    }
+    float scaled = value * scale;
+    return scaled > INT16_MAX ? INT16_MAX : scaled < INT16_MIN ? INT16_MIN : (int16_t)scaled;
+}
+
+static void answer_access(session_t *s, link_peer_t *peer, const uint8_t *request)
+{
+    uint8_t payload[ECOS_LINK_TIME_SIZE + ECOS_ACCESS_REPLY_SIZE];
+    ecos_access_wire_t reply = {.request = ecos_link_get64(request), .operation = request[8],
+                               .result = ECOS_ACCESS_DENIED, .battery = -1, .sample_age_ms = UINT32_MAX};
+    uint32_t permissions = permissions_read(peer->mac, peer->fingerprint);
+    uint32_t needed = reply.operation == ECOS_ACCESS_WEB ? ECOS_PERMISSION_WEB_CODE : ECOS_PERMISSION_RESOURCES;
+    if ((permissions & needed) != 0)
+    {
+        ecos_link_status_t status;
+        my_status(&status);
+        if (reply.operation == ECOS_ACCESS_WEB)
+        {
+            bool recovery = false;
+            char code[7] = {0};
+            reply.result = ECOS_ACCESS_UNAVAILABLE;
+            if (web_server_pairing_snapshot(code, &recovery))
+            {
+                reply.result = ECOS_ACCESS_OK;
+                if (recovery)
+                {
+                    reply.flags |= ECOS_ACCESS_RECOVERY;
+                }
+                else
+                {
+                    memcpy(reply.code, code, 6);
+                }
+            }
+            mbedtls_platform_zeroize(code, sizeof(code));
+        }
+        else
+        {
+            reply.result = ECOS_ACCESS_OK;
+            reply.battery = status.battery;
+            reply.battery_mv = pmu_present() ? (uint16_t)pmu_battery_mv() : 0;
+            reply.ram_kb = status.ram_kb;
+            if (imu_supported())
+            {
+                reply.flags |= ECOS_ACCESS_IMU;
+            }
+            motion_snapshot_t motion;
+            motion_snapshot(&motion);
+            if (motion.running && motion.valid && motion.sample_monotonic_us > 0)
+            {
+                int64_t age = (esp_timer_get_time() - motion.sample_monotonic_us) / 1000;
+                if (age >= 0 && age <= 1000 && imu_supported())
+                {
+                    reply.flags |= ECOS_ACCESS_IMU_VALID;
+                    reply.sample_age_ms = (uint32_t)age;
+                    for (int i = 0; i < 3; i++)
+                    {
+                        reply.acceleration_mg[i] = scaled_sensor(motion.sample.acceleration_g[i], 1000);
+                        reply.angular_dps[i] = scaled_sensor(motion.sample.angular_dps[i], 1);
+                    }
+                }
+            }
+            if (status.flags & ECOS_LINK_F_CHARGING) reply.flags |= ECOS_ACCESS_CHARGING;
+            if (status.flags & ECOS_LINK_F_USB) reply.flags |= ECOS_ACCESS_USB;
+        }
+        if (status.flags & ECOS_LINK_F_WIFI) reply.flags |= ECOS_ACCESS_WIFI;
+        memcpy(reply.ip, status.ip, 4);
+    }
+    time_t now = time(NULL);
+    ecos_link_put32(payload, now > CLOCK_VALID ? (uint32_t)now : 0);
+    ecos_access_encode(payload + ECOS_LINK_TIME_SIZE, &reply);
+    seal_send(s, peer, ECOS_LINK_ACCESS_REPLY, payload, sizeof(payload), false);
+    mbedtls_platform_zeroize(&reply, sizeof(reply));
+    mbedtls_platform_zeroize(payload, sizeof(payload));
+}
+
 /* One received frame: open it, check it is fresh, act. */
 static void handle_frame(session_t *s, const link_frame_t *frame)
 {
@@ -546,11 +729,21 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
     }
     if (((type == ECOS_LINK_STATUS_REQ || type == ECOS_LINK_STATUS) && body_length != ECOS_LINK_STATUS_SIZE) ||
         (type == ECOS_LINK_RING && (body_length != 1 || body[0] > 1)) ||
-        (type == ECOS_LINK_MESSAGE && (body_length == 0 || body_length >= ECOS_LINK_TEXT_MAX)))
+        (type == ECOS_LINK_MESSAGE && (body_length == 0 || body_length >= ECOS_LINK_TEXT_MAX)) ||
+        (type == ECOS_LINK_ACCESS_REQ && !ecos_access_request_valid(body, body_length)) ||
+        (type == ECOS_LINK_ACCESS_REPLY && body_length != ECOS_ACCESS_REPLY_SIZE))
     {
         return;
     }
-    if ((type == ECOS_LINK_RING || type == ECOS_LINK_MESSAGE) && !replay_record(peer, true, boot, seq))
+    int64_t access_now = esp_timer_get_time();
+    if (type == ECOS_LINK_ACCESS_REQ && peer->last_access_us != 0 &&
+        access_now - peer->last_access_us < 2000000)
+    {
+        return;
+    }
+    if ((type == ECOS_LINK_RING || type == ECOS_LINK_MESSAGE ||
+         (type == ECOS_LINK_ACCESS_REQ && body[8] == ECOS_ACCESS_WEB)) &&
+        !replay_record(peer, true, boot, seq))
     {
         return;
     }
@@ -574,7 +767,30 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
     }
     portEXIT_CRITICAL(&s_lock);
 
-    if (type == ECOS_LINK_STATUS_REQ)
+    if (type == ECOS_LINK_ACCESS_REQ)
+    {
+        peer->last_access_us = access_now;
+        answer_access(s, peer, body);
+    }
+    else if (type == ECOS_LINK_ACCESS_REPLY)
+    {
+        ecos_access_wire_t access;
+        if (ecos_access_decode(body, body_length, &access))
+        {
+            portENTER_CRITICAL(&s_lock);
+            info = info_slot(peer->mac);
+            if (info->pending_request == access.request && info->pending_request != 0 &&
+                info->pending_operation == access.operation && access_now <= info->pending_until)
+            {
+                info->access = access;
+                info->access_at = access_now;
+                info->pending_request = 0;
+            }
+            portEXIT_CRITICAL(&s_lock);
+            mbedtls_platform_zeroize(&access, sizeof(access));
+        }
+    }
+    else if (type == ECOS_LINK_STATUS_REQ)
     {
         send_status(s, peer, ECOS_LINK_STATUS, false);
     }
@@ -726,7 +942,28 @@ static void act(session_t *s, cmd_kind_t kind, const uint8_t mac[6], const char 
     ecos_link_put32(payload, now > CLOCK_VALID ? (uint32_t)now : 0);
     size_t length = ECOS_LINK_TIME_SIZE;
     uint8_t type = ECOS_LINK_RING;
-    if (kind == CMD_MESSAGE)
+    if (kind == CMD_WEB_CODE || kind == CMD_RESOURCES)
+    {
+        uint64_t request;
+        do
+        {
+            esp_fill_random(&request, sizeof(request));
+        } while (request == 0);
+        uint8_t operation = kind == CMD_WEB_CODE ? ECOS_ACCESS_WEB : ECOS_ACCESS_RESOURCES;
+        ecos_link_put64(payload + length, request);
+        payload[length + 8] = operation;
+        length += ECOS_ACCESS_REQUEST_SIZE;
+        type = ECOS_LINK_ACCESS_REQ;
+        portENTER_CRITICAL(&s_lock);
+        member_info_t *info = info_slot(mac);
+        memset(&info->access, 0, sizeof(info->access));
+        info->access_at = 0;
+        info->pending_request = request;
+        info->pending_operation = operation;
+        info->pending_until = esp_timer_get_time() + 10000000;
+        portEXIT_CRITICAL(&s_lock);
+    }
+    else if (kind == CMD_MESSAGE)
     {
         size_t n = strnlen(text, ECOS_LINK_TEXT_MAX - 1);
         memcpy(payload + length, text, n);
@@ -990,7 +1227,16 @@ static void auto_check(void *arg)
 {
     (void)arg;
     bool idle;
+    int64_t now = esp_timer_get_time();
     portENTER_CRITICAL(&s_lock);
+    for (size_t i = 0; i < sizeof(s_info) / sizeof(s_info[0]); i++)
+    {
+        if (s_info[i].access_at != 0 && now - s_info[i].access_at > 60000000)
+        {
+            memset(&s_info[i].access, 0, sizeof(s_info[i].access));
+            s_info[i].access_at = 0;
+        }
+    }
     idle = !s_running && !s_suspend;
     portEXIT_CRITICAL(&s_lock);
     if (idle && auto_wanted())
@@ -1105,6 +1351,29 @@ void ecos_family(ecos_family_t *out)
             {
                 continue;
             }
+            m->permissions = info->permissions;
+            m->access_pending = info->pending_request != 0 && now <= info->pending_until;
+            m->access_known = info->access_at != 0 && now - info->access_at <= 60000000;
+            m->access_age_s = info->access_at != 0 ? (uint32_t)((now - info->access_at) / 1000000) : 0;
+            if (m->access_known)
+            {
+                m->access_operation = info->access.operation;
+                m->access_result = info->access.result;
+                m->resource_flags = info->access.flags;
+                memcpy(m->web_code, info->access.code, sizeof(m->web_code));
+                m->battery_mv = info->access.battery_mv;
+                m->resource_battery = info->access.battery;
+                m->resource_ram_kb = info->access.ram_kb;
+                m->sample_age_ms = info->access.sample_age_ms;
+                memcpy(m->acceleration_mg, info->access.acceleration_mg, sizeof(m->acceleration_mg));
+                memcpy(m->angular_dps, info->access.angular_dps, sizeof(m->angular_dps));
+            }
+            else if (info->pending_request != 0 && now > info->pending_until)
+            {
+                m->access_known = true;
+                m->access_operation = info->pending_operation;
+                m->access_result = 3; /* No supported reply within the request window. */
+            }
             m->known = info->known;
             m->reachable = info->reachable;
             m->seen_ago = info->seen_at != 0 ? (uint32_t)((now - info->seen_at) / 1000000) : UINT32_MAX;
@@ -1185,7 +1454,14 @@ static esp_err_t command(cmd_kind_t kind, const char *id, const char *text)
     char copy[ECOS_LINK_TEXT_MAX] = {0};
     snprintf(copy, sizeof(copy), "%s", text != NULL ? text : "");
     portENTER_CRITICAL(&s_lock);
-    bool free_slot = s_cmd == CMD_NONE && !s_suspend;
+    bool free_slot = s_cmd == CMD_NONE && !s_suspend && !s_busy;
+    if (free_slot && (kind == CMD_WEB_CODE || kind == CMD_RESOURCES))
+    {
+        member_info_t *info = info_slot(mac);
+        int64_t now = esp_timer_get_time();
+        free_slot = (info->pending_request == 0 || now > info->pending_until) &&
+                    (info->access_at == 0 || now - info->access_at >= 2000000);
+    }
     if (free_slot)
     {
         s_cmd = kind;
@@ -1214,6 +1490,15 @@ esp_err_t ecos_family_message(const char *id, const char *text)
         return ESP_ERR_INVALID_ARG;
     }
     return command(CMD_MESSAGE, id, text);
+}
+
+esp_err_t ecos_family_request(const char *id, uint8_t operation)
+{
+    if (operation != ECOS_ACCESS_WEB && operation != ECOS_ACCESS_RESOURCES)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return command(operation == ECOS_ACCESS_WEB ? CMD_WEB_CODE : CMD_RESOURCES, id, NULL);
 }
 
 void ecos_family_ring_done(void)

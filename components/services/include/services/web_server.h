@@ -39,6 +39,8 @@ void web_server_url(char *out, size_t size);
 
 /* Six digits that pair a new browser (shown on the watch and in its QR as #code=...). */
 const char *web_server_code(void);
+/* Nonblocking snapshot for authorized Family requests; never returns an API token. */
+bool web_server_pairing_snapshot(char code[7], bool *recovery);
 bool web_server_ap_name(char *out, size_t size);
 
 /* For internal apps' dashboards (appkit hosted mode): `handler` gets every GET

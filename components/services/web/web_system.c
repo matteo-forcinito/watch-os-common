@@ -559,6 +559,44 @@ static esp_err_t family_get(httpd_req_t *req)
         cJSON_AddStringToObject(j, "name", m->name);
         cJSON_AddBoolToObject(j, "known", m->known);
         cJSON_AddBoolToObject(j, "reachable", m->reachable);
+        cJSON_AddNumberToObject(j, "permissions", m->permissions);
+        cJSON_AddBoolToObject(j, "access_pending", m->access_pending);
+        if (m->access_known)
+        {
+            cJSON *access = cJSON_AddObjectToObject(j, "access");
+            cJSON_AddNumberToObject(access, "operation", m->access_operation);
+            cJSON_AddNumberToObject(access, "result", m->access_result);
+            cJSON_AddNumberToObject(access, "age_s", m->access_age_s);
+            if (m->access_result == 0)
+            {
+                cJSON_AddBoolToObject(access, "recovery", (m->resource_flags & 1) != 0);
+                if (m->access_operation == 1)
+                {
+                    cJSON_AddStringToObject(access, "code", m->web_code);
+                }
+                else
+                {
+                    cJSON_AddNumberToObject(access, "battery_mv", m->battery_mv);
+                    cJSON_AddNumberToObject(access, "battery", m->resource_battery);
+                    cJSON_AddNumberToObject(access, "ram_kb", m->resource_ram_kb);
+                    cJSON_AddBoolToObject(access, "imu_supported", (m->resource_flags & 2) != 0);
+                    uint64_t age = (uint64_t)m->sample_age_ms + (uint64_t)m->access_age_s * 1000;
+                    bool valid = (m->resource_flags & 4) != 0 && age <= 1000;
+                    cJSON_AddBoolToObject(access, "imu_valid", valid);
+                    if (valid)
+                    {
+                        cJSON *acceleration = cJSON_AddArrayToObject(access, "acceleration_mg");
+                        cJSON *angular = cJSON_AddArrayToObject(access, "angular_dps");
+                        for (int axis = 0; axis < 3; axis++)
+                        {
+                            cJSON_AddItemToArray(acceleration, cJSON_CreateNumber(m->acceleration_mg[axis]));
+                            cJSON_AddItemToArray(angular, cJSON_CreateNumber(m->angular_dps[axis]));
+                        }
+                        cJSON_AddNumberToObject(access, "sample_age_ms", (double)age);
+                    }
+                }
+            }
+        }
         cJSON_AddNumberToObject(j, "seen_ago", m->seen_ago == UINT32_MAX ? -1 : (double)m->seen_ago);
         if (m->known)
         {
@@ -605,6 +643,19 @@ static esp_err_t family_post(httpd_req_t *req)
     else if (strcmp(action, "message") == 0 && text != NULL && strlen(text) < 96)
     {
         err = ecos_family_message(id, text);
+    }
+    else if (strcmp(action, "web_code") == 0 || strcmp(action, "resources") == 0)
+    {
+        err = ecos_family_request(id, strcmp(action, "web_code") == 0 ? 1 : 2);
+    }
+    else if (strcmp(action, "permissions") == 0)
+    {
+        const cJSON *permissions = cJSON_GetObjectItemCaseSensitive(json, "permissions");
+        if (cJSON_IsNumber(permissions) && permissions->valuedouble >= 0 &&
+            permissions->valuedouble <= 3 && permissions->valuedouble == permissions->valueint)
+        {
+            err = ecos_permissions_set(id, (uint32_t)permissions->valueint);
+        }
     }
     else if (strcmp(action, "forget") == 0)
     {

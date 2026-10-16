@@ -4,6 +4,7 @@
 #include "core/sys.h"
 #include "core/power.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -30,6 +31,7 @@ static void worker(void *arg)
             state.sample = sample;
             state.valid = true;
             state.samples++;
+            state.sample_monotonic_us = esp_timer_get_time();
             misses = 0;
         }
         else if (err != ESP_ERR_NOT_FINISHED || ++misses >= 20)

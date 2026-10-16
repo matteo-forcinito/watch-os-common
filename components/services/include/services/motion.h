@@ -5,6 +5,7 @@ typedef struct
 {
     imu_sample_t sample;
     uint32_t samples;
+    int64_t sample_monotonic_us;
     bool running;
     bool valid;
     esp_err_t error;

@@ -1,6 +1,7 @@
 /* Actual production codec, executed in an isolated RISC-V emulator. */
 #include "ecos_wire.h"
 #include "ecos_link_wire.h"
+#include "ecos_access_wire.h"
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (0)
 
 void *memset(void *to, int value, size_t size)
@@ -103,12 +104,12 @@ int ecos_tests(void)
     CHECK(ecos_link_get64(link + 17) == epoch);
     CHECK(ecos_link_get32(link + 25) == UINT32_C(0x99aabbcc));
     CHECK(link[17] == 0x11 && link[28] == 0xcc);
-    for (unsigned type = 0; type <= 5; type++)
+    for (unsigned type = 0; type <= 7; type++)
     {
         link[4] = (uint8_t)type;
         for (size_t n = 0; n <= sizeof(link); n++)
         {
-            bool valid = type >= 1 && type <= 4 && n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG &&
+            bool valid = type >= 1 && type <= 6 && n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG &&
                          n <= ECOS_LINK_FRAME_MAX;
             CHECK(ecos_link_valid(link, n) == valid);
         }
@@ -139,6 +140,48 @@ int ecos_tests(void)
     link[72] = 101;
     ecos_link_get_status(link, &decoded);
     CHECK(decoded.name[0] == ' ' && decoded.battery == -1);
+    uint8_t payload[ECOS_ACCESS_REPLY_SIZE] = {0};
+    ecos_link_put64(payload, epoch);
+    payload[8] = ECOS_ACCESS_WEB;
+    CHECK(ecos_access_request_valid(payload, ECOS_ACCESS_REQUEST_SIZE));
+    CHECK(!ecos_access_request_valid(payload, ECOS_ACCESS_REQUEST_SIZE - 1));
+    payload[8] = 3;
+    CHECK(!ecos_access_request_valid(payload, ECOS_ACCESS_REQUEST_SIZE));
+    ecos_access_wire_t access = {.request = epoch, .operation = ECOS_ACCESS_WEB,
+      .result = ECOS_ACCESS_OK, .code = "123456", .battery = -1};
+    ecos_access_wire_t got;
+    ecos_access_encode(payload, &access);
+    CHECK(ecos_access_decode(payload, sizeof(payload), &got));
+    CHECK(memcmp(got.code, "123456", 7) == 0 && got.request == epoch);
+    CHECK(!ecos_access_decode(payload, sizeof(payload)-1, &got));
+    payload[11] = 'X';
+    CHECK(!ecos_access_decode(payload, sizeof(payload), &got));
+    access.flags = ECOS_ACCESS_RECOVERY;
+    ecos_access_encode(payload, &access);
+    CHECK(!ecos_access_decode(payload, sizeof(payload), &got)); /* No code in recovery. */
+    memset(access.code, 0, sizeof(access.code));
+    ecos_access_encode(payload, &access);
+    CHECK(ecos_access_decode(payload, sizeof(payload), &got));
+    access.operation = ECOS_ACCESS_RESOURCES;
+    access.flags = ECOS_ACCESS_IMU | ECOS_ACCESS_IMU_VALID;
+    access.acceleration_mg[0] = -1234;
+    access.angular_dps[2] = 32767;
+    access.battery_mv = 4210;
+    access.sample_age_ms = 987654;
+    ecos_access_encode(payload, &access);
+    CHECK(ecos_access_decode(payload, sizeof(payload), &got));
+    CHECK(got.acceleration_mg[0] == -1234 && got.angular_dps[2] == 32767);
+    CHECK(got.battery_mv == 4210 && got.sample_age_ms == 987654 && got.battery == -1);
+    payload[10] = ECOS_ACCESS_IMU_VALID;
+    CHECK(!ecos_access_decode(payload, sizeof(payload), &got));
+    payload[10] = 128;
+    CHECK(!ecos_access_decode(payload, sizeof(payload), &got));
+    access.result = ECOS_ACCESS_DENIED;
+    access.code[0] = '1';
+    ecos_access_encode(payload, &access);
+    CHECK(!ecos_access_decode(payload, sizeof(payload), &got)); /* Never leak code on denial. */
+    memset(payload, 0, sizeof(payload));
+    CHECK(!ecos_access_decode(payload, sizeof(payload), &got));
     return 0;
 }
 
