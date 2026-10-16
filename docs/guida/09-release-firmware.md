@@ -59,7 +59,8 @@ foreach ($d in "ESP32-S3-Amoled-Touch-1.8","ESP32-S3-Touch-AMOLED-1.75","ESP32-S
     git -C watch-os-common fetch -q origin
     git -C watch-os-common checkout -q $lib
     Copy-Item C:\percorso\note-$v.md "release\notes\$v.md"
-    (Get-Content CMakeLists.txt) -replace 'set\(PROJECT_VER "[^"]+"\)', "set(PROJECT_VER `"$v`")" | Set-Content -Encoding utf8 CMakeLists.txt
+    # solo la versione numerica: la riga "$ENV{FW_VERSION}" deve restare com'è
+    (Get-Content CMakeLists.txt) -replace 'set\(PROJECT_VER "\d[^"]*"\)', "set(PROJECT_VER `"$v`")" | Set-Content -Encoding utf8 CMakeLists.txt
     git add watch-os-common "release/notes/$v.md" CMakeLists.txt
     git commit -m "Release ${v}: <riassunto>"
     git push origin main
