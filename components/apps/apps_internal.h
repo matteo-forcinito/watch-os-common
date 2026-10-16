@@ -49,6 +49,7 @@ void giornata_service_start(void);
 extern const app_t pieno_app;
 extern const app_t ombra_app;           /* CONFIG_APPKIT_HOSTED: Bluetooth trackers (watch-os-common/ombra) */
 extern const app_t copertura_app;
+extern const app_t bilancio_app;         /* CONFIG_APPKIT_HOSTED: money (watch-os-common/bilancio) */
 extern const app_t sentinel_app;        /* CONFIG_APPKIT_HOSTED: Sentinel Lite, home network (watch-os-common/sentinel/lite) */       /* CONFIG_APPKIT_HOSTED: Wi-Fi coverage (watch-os-common/copertura) */           /* CONFIG_APPKIT_HOSTED: fuel prices (watch-os-common/pieno) */
 
 /* ---- shell pieces (tiles of the home screen) */

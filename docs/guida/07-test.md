@@ -30,7 +30,7 @@ quindi si compila anche sul PC.
 
 | Dove | Cosa prova | Come si lancia |
 |---|---|---|
-| `watch-os-common/<app>/tests/run_tests.py` (pieno, giornata, news, copertura, ombra, radar, deck) | Logica delle app hosted | vedi sotto |
+| `watch-os-common/<app>/tests/run_tests.py` (pieno, giornata, news, copertura, ombra, radar, deck, bilancio) | Logica delle app hosted | vedi sotto |
 | `watch-os-common/components/services/ecos/tests` | Formato radio dell'Ecosistema | `run_tests.py` |
 | `watch-os-common/remote/hub/tests`, `sentinel/main/tests`, `vault/main/tests` | Stato hub Remote, pacchetti Sentinel, formato Vault | GitHub Actions (Linux) |
 | `watch-os-common/tools/test_remote_frame.cjs` | Decoder ORF2 della dashboard web | `node` |
@@ -61,7 +61,7 @@ In caso di errore stampa la riga del test fallito, es. `FAIL: test_fuel.c:42`.
 Tutti i test delle app in un colpo:
 
 ```powershell
-foreach ($t in Get-ChildItem -Recurse -Filter run_tests.py -Path pieno,giornata,news,copertura,ombra,radar,deck) {
+foreach ($t in Get-ChildItem -Recurse -Filter run_tests.py -Path pieno,giornata,news,copertura,ombra,radar,deck,bilancio) {
     "== $($t.Directory.Parent.Name)"
     python $t.FullName --deps build\ecos-checks\test-deps --output "$env:TEMP\t-$($t.Directory.Parent.Name)"
 }

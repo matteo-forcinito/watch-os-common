@@ -57,11 +57,63 @@ script `tools/dev/` e il test della dashboard aggiornato: non richiedono una nuo
 
 Nel frattempo la companion si può usare dal PC con `flutter run -d windows` ([pagina 11](11-companion-flutter.md)).
 
-## Prossimo progetto
+## In corso: app Bilancio (gestione del denaro)
 
-App **Bilancio** (gestione del denaro): progetto completo in
-[docs/progetti/BILANCIO.md](../progetti/BILANCIO.md), codice da scrivere seguendo
-l'"Ordine di lavoro" del documento.
+Progetto in [docs/progetti/BILANCIO.md](../progetti/BILANCIO.md). Stato al 17/10/2026, in
+`watch-os-common/bilancio/` (**non ancora committato**, non registrato in nessun firmware):
+
+- **Passo 1 fatto**: `main/calc.c` (logica pura) + `tests/test_calc.c`. Test superato:
+  ```powershell
+  . C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1
+  cd C:\Users\matte\Documents\ESP-IDF\watch-os-common
+  python bilancio\tests\run_tests.py --deps build\ecos-checks\test-deps --output $env:TEMP\bilancio-test
+  ```
+  Atteso: `PASS: bilancio money logic, real C in RISC-V emulator`.
+- **Passo 2 fatto**: `store.c` (dati in PSRAM, `<storage>/config/bilancio.json`), `web.c` (API),
+  `bilancio_dashboard.html` (Panoramica, Movimenti, Fissi e rate, Entrate, Impostazioni con saldo,
+  categorie e backup). Compilati con `-Werror` usando i flag della build AMOLED 1.75C (solo sintassi);
+  dashboard provata in Edge con un server finto. **Mai provata su un orologio vero**: il primo test
+  reale arriva con il passo 6 (registrazione nei firmware).
+- In più rispetto al progetto: voci oltre l'anno (revisione ogni 2 anni, patente ogni 10), movimenti
+  previsti (rimborso 730), pagamenti collegati alle voci fisse con storico delle bollette,
+  accantonamento mensile, mutuo e prestiti con rate rimaste e residuo.
+
+**Su AMOLED 1.75C (COM10)**: build `build-bilancio` (versione ancora `1.8.4`, compilata il 17/10 alle
+01:36) flashata con `app-flash`; avvio fino a `main: Ready`, unico `E (` il noto `sleep_cpu_configure`.
+Schermate e dashboard da controllare a vista sull'orologio (console di sviluppo spenta: niente
+screenshot automatici). Per tornare alla release: `idf.py -p COM10 app-flash` dalla build normale.
+
+### Portare Bilancio su un firmware (fatto per AMOLED 1.75C, gli altri a mano)
+
+La registrazione (passo 6) è già in `watch-os-common`: `components/apps/CMakeLists.txt` (blocco
+`BILANCIO` dentro `CONFIG_APPKIT_HOSTED`), `apps.c` (`&bilancio_app` e
+`appkit_hosted_register("Bilancio", "bilancio")`), `apps_internal.h`. Le schermate sono in
+`bilancio/main/ui.c` (Home con arco, Questo mese, Spesa veloce, Menu/Dashboard). Per ogni firmware
+(AMOLED 1.8, 1.75, Knob, Watcher):
+
+```powershell
+. C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1
+$env:WATCH_OS_COMMON_DIR = "C:\Users\matte\Documents\ESP-IDF\watch-os-common"   # la copia con Bilancio
+cd C:\Users\matte\Documents\ESP-IDF\<cartella del firmware>
+idf.py -B build-bilancio build            # cartella separata: la build di release resta intatta
+idf.py -B build-bilancio -p COMxx app-flash
+```
+
+Poi sull'orologio: Bilancio nell'elenco app → Menu → Dashboard → inquadra il QR. Dalla
+dashboard: saldo, stipendio, fissi. Controlla la Home su schermo tondo e rettangolare (testo non
+tagliato dal cerchio). Tutti e quattro hanno `CONFIG_APPKIT_HOSTED=y` (verificato il 17/10/2026).
+
+Per una release vera: commit e push in `watch-os-common`, aggiorna il submodule in ogni firmware e
+segui [pagina 9](09-release-firmware.md) (versione 1.9.0).
+
+### Come procedere
+
+1. **Passo 3**: `bilancio/main/ui.c` Home e Questo mese, nello stile della schermata LIVE di
+   Copertura (design nel documento, sezione "Sull'orologio"). Poi `app.c` e `main.c`.
+2. Passi 4–7 come da documento; il **passo 8** (nuovo) è il confronto delle tariffe luce/gas con
+   dati pubblici ARERA/GME, da verificare prima di scrivere codice.
+3. Prima di committare: `git status` in `watch-os-common`. I file nuovi sono `bilancio/` e le
+   modifiche a `docs/progetti/BILANCIO.md`, `docs/guida/STATO.md` e `docs/guida/07-test.md`.
 
 ## Cose note, non urgenti
 

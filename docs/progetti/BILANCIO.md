@@ -1,6 +1,11 @@
 # Progetto: app "Bilancio" (gestione del denaro)
 
-Stato: **progetto pronto, codice da scrivere**. Scritto il 17/10/2026.
+Stato (17/10/2026): **passi 1, 2 fatti; 3 essenziale** (`ui.c`: Home con arco, Questo mese, Spesa
+veloce, Menu/Dashboard) e **6 fatto in `watch-os-common`** (registrazione). Compilato e installato su
+AMOLED 1.75C, avvio pulito. Mancano: screenshot su tutte le forme, versione esterna (`main.c`, passo 7),
+icona, release 1.9.0. **Passo 2b da fare**: matematica dei debiti (capitale residuo, interessi, TAN
+ricavato) e bollette a consumo (stima stagionale): tipi già in `calc.h` (`bl_loan_t`, `bl_usage_t`,
+`bl_period_t`), funzioni, salvataggio e dashboard ancora da scrivere.
 
 Obiettivo: non un registro di spese, ma un'app che risponda ogni giorno a tre domande:
 
@@ -69,6 +74,45 @@ watch-os-common/bilancio/
   15/8, 1/11, 8/12, 25-26/12).
 - Ultime 24 mensilità di movimenti, il resto riassunto per mese (spazio limitato).
 
+### Com'è stato realizzato (passi 1–2)
+
+Il file reale ha in più: `"next_id"`, `"balance": {..., "after": 812}` (i movimenti con id più alto sono
+stati registrati dopo il saldo), `"rule": 13` nei movimenti collegati a una voce fissa, `"archive"`
+(mesi oltre i 24, solo entrate/uscite) e `"every"` che può valere `"month"`, `"bimonth"`, `"quarter"`,
+`"four"`, `"semester"`, `"year"` oppure un numero di mesi oltre l'anno (`24` revisione, `120` patente).
+
+Regole decise scrivendo il codice (commentate in `calc.h`):
+
+- **Saldo stimato oggi** = saldo inserito + movimenti registrati dopo (id più alto, data non precedente)
+  + entrate dopo quel giorno fino a oggi incluso − spese fisse dopo quel giorno e prima di oggi.
+  Il saldo inserito comprende già le voci del suo giorno (la dashboard lo ricorda quando lo inserisci).
+- **Pagamento collegato**: un movimento con `rule` paga la data di quella voce entro ±12 giorni, così
+  la bolletta vera sostituisce la stima e non conta due volte. Lo storico dei pagamenti collegati
+  mostra per ogni bolletta ultimo importo, media e scarto dalla stima.
+- **Movimenti previsti**: un movimento con data futura (rimborso 730, bollo, bonus) entra subito nel
+  budget del periodo e nel saldo quando arriva il giorno.
+- **Periodo**: da oggi al prossimo stipendio escluso (stipendio = la più grande entrata mensile; senza
+  entrate, fine mese). Budget giornaliero fissato all'inizio della giornata: "Oggi puoi spendere
+  ancora X" scende con le spese di oggi, il budget del giorno no.
+- **Ritmo**: spese variabili (non collegate a voci fisse) degli ultimi 30 giorni, con almeno 7 giorni
+  di divisore. **Tendenza per categoria**: dal 1° a oggi contro gli stessi giorni dei 3 mesi prima
+  (solo mesi già registrati).
+- **Oltre l'anno** (`every` > 12) il mese di `start` è la prossima scadenza e ancora il ciclo; la quota
+  da mettere da parte conta già da ora.
+- **Accantonamento**: somma delle quote mensili delle spese non mensili (condominio, assicurazione...).
+- Massimi: 64 voci fisse, 3000 movimenti, 16 categorie. Categorie predefinite: casa, bollette, rate,
+  auto, spesa, abbonamenti, salute, svago, tasse, altro.
+
+File: `calc.c/.h` (logica pura), `store.c` (libro in PSRAM, salvataggio 1,5 s dopo l'ultima modifica,
+scrittura atomica `.new` + rename, JSON scritto a mano per non creare 20.000 nodi cJSON), `web.c`
+(API in centesimi, date `YYYY-MM-DD`, elenco nell'intestazione del file), `bilancio_dashboard.html`.
+
+Verifiche fatte: `tests/run_tests.py` (passa nell'emulatore RISC-V; una prova con un valore sbagliato
+fallisce come deve); `calc.c`, `store.c`, `web.c` compilati con `-Werror` e i flag esatti della build
+AMOLED 1.75C (solo sintassi: il linking arriva con il passo 6); JavaScript della pagina con
+`node --check`; dashboard vista in Edge headless (1440 px e 375 px) con un server finto che imita
+l'API. **Non provato su hardware.**
+
 ## I calcoli (tutti in `calc.c`, tutti testati)
 
 | Funzione | Cosa calcola |
@@ -90,9 +134,21 @@ budget giornaliero con saldo negativo (deve dire 0 e segnalare il problema).
 
 ## Sull'orologio (schermi tondi e rettangolari)
 
-1. **Home**: grande "**18 €** oggi", sotto "Stipendio tra 10 giorni" e un anello
-   (`ui_border_progress`) che mostra quanto del mese è passato rispetto a quanto budget resta.
-   Colori: verde in linea, arancione sopra il ritmo, rosso se la previsione va sotto zero.
+Linguaggio visivo preso da **Copertura** (`copertura/main/ui.c`, schermata LIVE), che sui tondi rende
+benissimo: fondo quasi nero (`0x060B12`), **arco a 270°** (`lv_arc`, rotazione 135°) grande quanto lo
+schermo meno 20 px con spessore `size/16`, numero enorme al centro con l'unità piccola accanto, una
+parola colorata sotto, un mini-grafico **dentro** l'arco in basso e una fila di **bottoni rotondi**
+da 56 px in fondo. Sul rettangolare l'arco va in alto e il grafico sotto.
+
+1. **Home** (come LIVE di Copertura):
+   - arco esterno = quanto resta del budget di oggi (`today_left / daily`), colore di stato:
+     verde in linea, arancione sopra il ritmo, rosso se la previsione va sotto zero;
+   - al centro "**18**,40 €" (`ui_font_big`), sotto "oggi" e "Stipendio tra 10 giorni";
+   - dentro l'arco in basso la linea del saldo previsto fino allo stipendio (`lv_chart`, come il
+     segnale dell'ultimo minuto in Copertura), una tacca rossa se scende sotto zero;
+   - bottoni rotondi: **+** spesa veloce (verde), **lista** questo mese, **lampadina** consigli,
+     **ingranaggio** menu/dashboard. La rotella (Knob) scorre tra i bottoni.
+   - Stessi numeri della dashboard: `bl_summary()`.
 2. **Questo mese**: elenco delle scadenze (rata auto 5/10 ✓ pagata, Netflix 20/10...), totale fisso.
 3. **Aggiungi spesa veloce**: importi preimpostati (5/10/20/50 €) + categoria, con la rotella
    sulle schede che ce l'hanno. Il resto dalla dashboard.
@@ -126,10 +182,44 @@ budget giornaliero con saldo negativo (deve dire 0 e segnalare il problema).
   impaginato diverso. Da valutare come funzione della companion (che ha più risorse) o con
   pdf.js caricato da CDN quando c'è internet.
 
+## Bollette, auto e confronto delle tariffe
+
+**Già possibile (passo 2).** Voci predefinite da un tocco nella dashboard: mutuo, prestito,
+finanziamento auto, affitto, condominio, luce, gas, acqua, internet, telefono, TARI, assicurazione
+auto e casa, bollo, revisione (ogni 2 anni), tagliando, cambio gomme, rinnovo patente (ogni 10 anni),
+abbonamenti; entrate: stipendio, tredicesima, quattordicesima, pensione, affitto percepito; previsti:
+rimborso 730, 730 a debito/F24, bonus. Ogni bolletta pagata va collegata alla sua voce ("In arrivo" →
+tocca la scadenza → importo vero): la scheda mostra mini-grafico degli importi, media e scarto dalla
+stima.
+
+**Da fare (passo 8): confronto con il mercato, in background.**
+
+- Dati pubblici candidati, **da verificare** prima di scrivere codice (formato, licenza, frequenza):
+  - offerte luce e gas di tutti i venditori: Portale Offerte di ARERA / Acquirente Unico
+    (`ilportaleofferte.it`), nato per legge (124/2017) per pubblicarle **in open data**;
+  - prezzo all'ingrosso dell'elettricità (PUN Index): GME, `mercatoelettrico.org`, "Esiti dei mercati";
+  - gas (PSV): non c'è un valore ufficiale unico, servirà una fonte con metodo dichiarato.
+- Architettura proposta: **una GitHub Action** nel repo delle release (come il catalogo del Market)
+  scarica ogni giorno i dati grezzi (pesanti), li riduce a un `tariffe.json` di pochi KB (indici del
+  mese, le 10 offerte più convenienti per profilo di consumo, con nome, prezzo €/kWh o €/Smc, quota
+  fissa annua, scadenza) e lo pubblica. L'orologio e la dashboard lo scaricano quando c'è Wi-Fi,
+  senza bloccare nulla ("sezione asincrona"), e mostrano la data dei dati.
+- Cosa serve dall'utente: dalla bolletta consumo annuo (kWh, Smc), prezzo della materia prima e quota
+  fissa del contratto attuale. Nuovi campi facoltativi sulle voci "bollette".
+- Risultato: "Con la tua offerta paghi circa 1.140 €/anno di luce; la più conveniente oggi per il tuo
+  consumo ne costa 960 (−180 €)". Avvisi: offerta in scadenza, prezzo variabile che sale col PUN.
+- Limiti da dire: stima sui consumi dichiarati, oneri e imposte uguali per tutti, nessun cambio di
+  fornitore fatto dall'app.
+- Altre idee nella stessa direzione: stima stagionale del gas (inverno più caro, dallo storico delle
+  bollette), promemoria scadenza revisione/patente con 30 giorni di anticipo come notifica.
+
 ## Ordine di lavoro (ogni passo si può chiudere e rilasciare)
 
-1. `calc.c` + `test_calc.c` (logica e test). Nessun hardware.
-2. `store.c` + `web.c` + dashboard con Movimenti, Fissi, Entrate, Panoramica.
+1. ✓ `calc.c` + `test_calc.c` (logica e test). Nessun hardware.
+2. ✓ `store.c` + `web.c` + dashboard con Movimenti, Fissi, Entrate, Panoramica (più: previsione fino
+   allo stipendio, scadenze, fisso/entrate, accantonamento, mutuo e prestiti, categorie, consigli,
+   backup JSON/CSV, storico bollette). Restano per il passo 4: torta categorie, barre 12 mesi,
+   analisi estesa. `tools/create_icon.py` va fatto al passo 6.
 3. `ui.c` Home e Questo mese; screenshot su tondo 466/412/360 e rettangolare 368x448.
 4. Grafici e analisi nella dashboard.
 5. Import CSV.
@@ -137,7 +227,9 @@ budget giornaliero con saldo negativo (deve dire 0 e segnalare il problema).
    `apps.c` `s_apps[]`, `apps_internal.h`. Build di tutti i firmware, release `1.9.0`
    ([guida pagina 9](../guida/09-release-firmware.md)).
 7. Versione esterna (`external_apps/bilancio` nei firmware) e pacchetti Market
-   ([guida pagina 5](../guida/05-app-esterne.md)).
+   ([guida pagina 5](../guida/05-app-esterne.md)). `bl_start()` mette da sé i nodi cJSON in PSRAM
+   (come appkit), quindi l'ordine di avvio nell'app esterna non conta.
+8. Confronto delle tariffe luce/gas (sezione sopra).
 
 Stima: passi 1–3 una sessione di lavoro piena; 4–7 un'altra.
 

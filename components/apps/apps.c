@@ -52,6 +52,7 @@ static const app_t *const s_apps[] = {
     &giornata_app,
     &pieno_app,
     &copertura_app,
+    &bilancio_app,
     &sentinel_app,
     &ombra_app,
 #endif
@@ -308,6 +309,7 @@ void apps_init(void)
     appkit_hosted_register("Giornata", "giornata");
     appkit_hosted_register("Pieno", "pieno");
     appkit_hosted_register("Copertura", "copertura");
+    appkit_hosted_register("Bilancio", "bilancio");
     appkit_hosted_register("Sentinel", "sentinel");
 #endif
     for (size_t i = 0; i < sizeof(s_apps) / sizeof(s_apps[0]); i++)

@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bilancio</title>
+<link rel="stylesheet" href="/kit.css">
+<style>
+:root{--accent:#14b87a;--accent2:#7cf0c0;
+  --c0:#3987e5;--c1:#d95926;--c2:#199e70;--c3:#c98500;--c4:#d55181;--c5:#2fa84f;--c6:#9085e9;--c7:#e66767;--c8:#7d8596}
+@media (prefers-color-scheme:light){:root:not([data-theme=dark]){
+  --c0:#2a78d6;--c1:#eb6834;--c2:#1baf7a;--c3:#eda100;--c4:#e87ba4;--c5:#008300;--c6:#6250d6;--c7:#e34948;--c8:#8c94a5}}
+:root[data-theme=light]{--c0:#2a78d6;--c1:#eb6834;--c2:#1baf7a;--c3:#eda100;--c4:#e87ba4;--c5:#008300;--c6:#6250d6;--c7:#e34948;--c8:#8c94a5}
+.money{font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.cents{font-size:.48em;font-weight:650;color:var(--dim);margin-left:1px}
+.in{color:var(--good)}
+
+/* hero */
+.hero-grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px}
+@media(max-width:980px){.hero-grid{grid-template-columns:minmax(0,1fr)}}
+.row2{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);align-items:start}
+@media(max-width:980px){.row2{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:640px){.grid.g2,.grid.g3,.grid.g4{grid-template-columns:minmax(0,1fr)}}
+.hero-card{position:relative;overflow:hidden;padding:22px}
+.hero-card::before{content:"";position:absolute;inset:-40% -20% auto auto;width:520px;height:520px;border-radius:50%;
+  background:radial-gradient(closest-side,color-mix(in srgb,var(--state,var(--accent)) 22%,transparent),transparent);pointer-events:none}
+.hero-in{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);gap:26px;align-items:center}
+@media(max-width:640px){.hero-in{grid-template-columns:minmax(0,1fr);justify-items:center;text-align:center}
+  .hero-in>div:not(.ring){width:100%}.headline{font-size:19px}.facts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.ring{position:relative;width:236px;height:236px;flex:none}
+.ring svg{position:absolute;inset:0}
+.ring .mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding-top:6px}
+.ring .cap{font-size:11px;color:var(--dim);font-weight:650;text-transform:uppercase;letter-spacing:.06em;max-width:140px}
+.ring .val{font-size:50px;font-weight:800;line-height:1;margin:6px 0 4px}
+.ring .sub{font-size:13px;color:var(--dim);max-width:150px}
+.ring circle{fill:none;stroke-linecap:round;transition:stroke-dasharray .8s cubic-bezier(.2,.8,.2,1),stroke .4s}
+.statepill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;font-weight:700;font-size:13px;
+  background:color-mix(in srgb,var(--state) 16%,transparent);color:var(--ink)}
+.statepill i{width:9px;height:9px;border-radius:50%;background:var(--state);box-shadow:0 0 0 4px color-mix(in srgb,var(--state) 25%,transparent)}
+.headline{font-size:22px;font-weight:750;letter-spacing:-.02em;margin:12px 0 4px;line-height:1.25}
+.facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:18px}
+@media(max-width:640px){.facts{grid-template-columns:1fr 1fr}}
+.fact{background:color-mix(in srgb,var(--panel2) 85%,transparent);border:1px solid var(--line);border-radius:14px;padding:11px 13px;min-width:0}
+.fact span{display:block;font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fact b{display:block;font-size:20px;letter-spacing:-.02em;margin-top:2px;white-space:nowrap}
+.fact small{display:block;font-size:12px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* quick add */
+.qa{display:flex;flex-direction:column;gap:12px}
+.qa .amount{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:4px 14px}
+.qa .amount:focus-within{border-color:var(--accent)}
+.qa .amount input{border:0;background:none;font-size:30px;font-weight:750;width:100%;padding:8px 0;letter-spacing:-.02em}
+.qa .amount b{font-size:24px;color:var(--dim)}
+.sign{display:inline-flex;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:3px}
+.sign button{border:0;background:none;padding:6px 12px;border-radius:8px;cursor:pointer;color:var(--dim);font-weight:700}
+.sign button.on{background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}
+.presets{display:flex;gap:6px;flex-wrap:wrap}
+.chip .d,.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px;flex:none}
+
+/* timeline */
+.tl{display:flex;flex-direction:column;gap:2px}
+.tl-sep{font-size:12px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin:12px 0 6px;display:flex;gap:10px;align-items:center}
+.tl-sep::after{content:"";flex:1;height:1px;background:var(--line)}
+.tl-item{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 8px;border-radius:12px;cursor:pointer}
+.tl-item:hover{background:var(--panel2)}
+.tl-item.done{opacity:.55}
+.dbox{width:52px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);text-align:center;padding:5px 0 4px;line-height:1.05}
+.dbox b{display:block;font-size:19px}.dbox span{font-size:11px;color:var(--dim);text-transform:uppercase;font-weight:650}
+.tl-name{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-meta{font-size:12px;color:var(--dim)}
+.tl-amt{font-weight:750;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.tick{color:var(--good);font-weight:800}
+
+/* bars */
+.meter{position:relative;height:12px;border-radius:99px;background:var(--panel2);overflow:visible;margin:10px 0 6px}
+.meter i{position:absolute;left:0;top:0;bottom:0;border-radius:99px;transition:width .6s cubic-bezier(.2,.8,.2,1)}
+.meter .mark{position:absolute;top:-5px;bottom:-5px;width:2px;background:var(--ink);opacity:.55;border-radius:2px}
+.catrow{display:grid;grid-template-columns:minmax(90px,140px) minmax(0,1fr) 92px 64px;gap:12px;align-items:center;padding:7px 0}
+@media(max-width:640px){.catrow{grid-template-columns:90px minmax(0,1fr) 78px}.catrow .tag{display:none}}
+.catrow .track{position:relative;height:10px;border-radius:99px;background:var(--panel2)}
+.catrow .track i{position:absolute;left:0;top:0;bottom:0;border-radius:99px}
+.catrow .track .avg{position:absolute;top:-4px;bottom:-4px;width:2px;border-radius:2px;background:var(--ink);opacity:.6}
+.catrow .name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.catrow .v{text-align:right;font-variant-numeric:tabular-nums;font-weight:650}
+.loan{padding:12px 0;border-bottom:1px solid var(--line)}.loan:last-child{border-bottom:0}
+.loan .meter{height:8px;margin:8px 0 4px}
+.insight{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
+.insight:last-child{border-bottom:0}
+.insight .ic{width:30px;height:30px;border-radius:10px;display:grid;place-items:center;flex:none;font-size:15px;
+  background:color-mix(in srgb,var(--tone) 16%,transparent);color:var(--tone)}
+
+/* chart */
+.chartbox{position:relative}
+.chartbox svg{display:block;width:100%;overflow:visible}
+.chartbox .axis{fill:var(--faint);font-size:11px}
+.chartbox .gl{stroke:var(--line)}
+.tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 12px;
+  box-shadow:var(--shadow);font-size:13px;min-width:170px;opacity:0;transition:opacity .12s;z-index:5}
+.tip b{display:block;margin-bottom:4px}
+.tip .r{display:flex;justify-content:space-between;gap:14px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--dim);margin-bottom:8px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:18px;height:3px;border-radius:2px;display:inline-block}
+
+/* lists */
+.daygroup{margin-bottom:14px}
+.dayhead{display:flex;justify-content:space-between;font-size:13px;color:var(--dim);font-weight:650;padding:6px 10px;text-transform:capitalize}
+.txrow{display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 10px;border-radius:12px;cursor:pointer}
+.txrow:hover{background:var(--panel2)}
+.txicon{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-weight:800;font-size:14px;color:#fff}
+.txrow .t{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.txrow .m{font-size:12px;color:var(--dim)}
+.txrow .a{font-weight:750;font-variant-numeric:tabular-nums}
+.monthnav{display:flex;align-items:center;gap:8px}
+.monthnav b{min-width:150px;text-align:center;font-size:18px;text-transform:capitalize}
+.rulecard{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:14px;align-items:center;padding:12px;border-radius:14px;cursor:pointer;border:1px solid transparent}
+.rulecard:hover{background:var(--panel2);border-color:var(--line)}
+.rulecard .ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:#fff;font-weight:800}
+.rulecard .t{font-weight:700}.rulecard .m{font-size:13px;color:var(--dim)}
+.rulecard .a{text-align:right}.rulecard .a b{display:block;font-size:17px}.rulecard .a span{font-size:12px;color:var(--faint)}
+.badge{font-size:11px;font-weight:750;padding:2px 7px;border-radius:99px;background:color-mix(in srgb,var(--accent) 18%,transparent);margin-left:6px;vertical-align:2px}
+.tot{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+@media(max-width:980px){.tot{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* forms */
+.form{display:grid;gap:12px}
+.form .two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.form .three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.form input,.form select{width:100%}
+@media(max-width:520px){.form .two,.form .three{grid-template-columns:minmax(0,1fr)}}
+.bigamount{font-size:28px!important;font-weight:750}
+.preview{font-size:13px;color:var(--dim);background:var(--panel2);border-radius:10px;padding:9px 12px}
+.modal .card h2{display:flex;justify-content:space-between;align-items:center}
+.x{background:none;border:0;color:var(--dim);font-size:20px;cursor:pointer}
+.welcome{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 22%,var(--panel)),var(--panel) 60%)}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
+@media(max-width:780px){.steps{grid-template-columns:1fr}}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.step .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:#fff;font-weight:800;font-size:13px}
+.step.ok .n{background:var(--good)}
+.notice{padding:14px 16px;border-radius:14px;background:color-mix(in srgb,var(--warn) 14%,transparent);margin-bottom:16px}
+.skel{height:14px;border-radius:7px;background:linear-gradient(90deg,var(--panel2),var(--line),var(--panel2));background-size:200% 100%;animation:sk 1.2s infinite}
+@keyframes sk{to{background-position:-200% 0}}
+</style>
+</head>
+<body>
+<header class="kit-top">
+  <div class="kit-brand"><div class="kit-logo">€</div>Bilancio</div>
+  <nav class="kit-nav">
+    <button data-view="v-home">Panoramica</button>
+    <button data-view="v-tx">Movimenti</button>
+    <button data-view="v-fixed">Fissi e rate</button>
+    <button data-view="v-income">Entrate</button>
+    <button data-view="v-set">Impostazioni</button>
+  </nav>
+  <div class="kit-dev"></div>
+</header>
+<main>
+  <div id="notice"></div>
+
+  <!-- OVERVIEW -->
+  <section class="view" id="v-home">
+    <div id="welcome"></div>
+    <div class="hero-grid">
+      <div class="card hero-card" id="hero"><div class="skel" style="width:60%"></div></div>
+      <div class="card">
+        <h2>Aggiungi una spesa</h2>
+        <form class="qa" id="qa">
+          <div class="row">
+            <div class="sign" id="qa-sign"><button type="button" data-s="-1" class="on">Uscita</button><button type="button" data-s="1">Entrata</button></div>
+            <div class="grow"></div>
+            <span class="faint" id="qa-hint">Oggi</span>
+          </div>
+          <label class="amount"><input id="qa-amount" inputmode="decimal" placeholder="0,00" autocomplete="off" aria-label="Importo"><b>€</b></label>
+          <div class="presets" id="qa-presets"></div>
+          <div class="chips" id="qa-cats"></div>
+          <div class="row"><input id="qa-note" class="grow" placeholder="Nota (facoltativa): supermercato, pizza..." maxlength="46"><button class="btn primary">Aggiungi</button></div>
+        </form>
+      </div>
+    </div>
+
+    <div class="grid g2 row2" style="margin-top:16px">
+      <div class="card">
+        <h2>Fino allo stipendio</h2>
+        <div class="legend"><span><i style="background:var(--accent)"></i>Al tuo ritmo di spesa</span><span><i style="background:var(--dim);opacity:.7"></i>Solo spese fisse</span></div>
+        <div class="chartbox" id="forecast"></div>
+        <p class="faint" id="forecast-note" style="margin:8px 0 0;font-size:13px"></p>
+      </div>
+      <div class="card">
+        <h2>In arrivo</h2>
+        <div class="tl" id="timeline"></div>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card"><h2>Il fisso</h2><div id="fixed"></div></div>
+      <div class="card"><h2>Mutuo, prestiti e rate</h2><div id="loans"></div></div>
+      <div class="card"><h2>Cosa noto</h2><div id="insights"></div></div>
+    </div>
+
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card"><h2>Dove vanno i soldi questo mese</h2><div id="cats"></div></div>
+      <div class="card"><h2>Ultimi movimenti</h2><div id="recent"></div></div>
+    </div>
+  </section>
+
+  <!-- MOVEMENTS -->
+  <section class="view" id="v-tx">
+    <div class="row" style="margin-bottom:16px">
+      <div class="monthnav"><button class="btn sm" id="m-prev" aria-label="Mese precedente">‹</button><b id="m-label"></b><button class="btn sm" id="m-next" aria-label="Mese successivo">›</button></div>
+      <div class="grow"></div>
+      <input id="tx-q" placeholder="Cerca nelle note..." style="max-width:240px">
+      <button class="btn primary" id="tx-add">+ Movimento</button>
+    </div>
+    <div class="grid g3" id="tx-tot" style="margin-bottom:16px"></div>
+    <div class="card">
+      <div class="chips" id="tx-cats" style="margin-bottom:12px"></div>
+      <div id="tx-list"></div>
+    </div>
+  </section>
+
+  <!-- FIXED -->
+  <section class="view" id="v-fixed">
+    <div class="tot" id="fx-tot" style="margin-bottom:16px"></div>
+    <div class="card" style="margin-bottom:16px">
+      <h2>Aggiungi in un tocco</h2>
+      <div class="chips" id="fx-presets"></div>
+    </div>
+    <div class="card">
+      <div class="row" style="margin-bottom:6px"><h2 style="margin:0">Spese fisse, bollette e rate</h2><div class="grow"></div><button class="btn primary" id="fx-add">+ Voce fissa</button></div>
+      <div id="fx-list"></div>
+    </div>
+  </section>
+
+  <!-- INCOME -->
+  <section class="view" id="v-income">
+    <div class="grid g2">
+      <div class="card">
+        <div class="row" style="margin-bottom:6px"><h2 style="margin:0">Entrate che si ripetono</h2><div class="grow"></div><button class="btn primary" id="in-add">+ Entrata</button></div>
+        <div class="chips" id="in-presets" style="margin:8px 0 10px"></div>
+        <div id="in-list"></div>
+        <p class="faint" style="font-size:13px">La più grande entrata mensile è lo <b>stipendio</b>: il budget giornaliero conta i giorni fino al suo arrivo. Se cade di sabato o domenica, scegli se arriva il venerdì prima (il caso più comune) o il lunedì dopo.</p>
+      </div>
+      <div class="card">
+        <div class="row" style="margin-bottom:6px"><h2 style="margin:0">Previsti una volta</h2><div class="grow"></div><button class="btn" id="pl-add">+ Previsto</button></div>
+        <p class="dim" style="font-size:14px;margin-top:4px">Rimborso del 730 in busta paga, un bonus, il bollo, una visita: un movimento con la data nel futuro entra nel budget da subito e nel saldo quando arriva il giorno.</p>
+        <div id="pl-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="view" id="v-set">
+    <div class="grid g2">
+      <div class="card">
+        <h2>Saldo del conto</h2>
+        <div id="bal-now"></div>
+        <p class="dim" style="font-size:14px">Scrivi quello che dice la banca (app o bancomat). Da lì in poi Bilancio aggiunge i movimenti che registri, lo stipendio e le spese fisse nei loro giorni. Aggiornalo ogni tanto: i numeri sono buoni quanto il saldo.</p>
+        <button class="btn primary" id="bal-edit">Aggiorna il saldo</button>
+      </div>
+      <div class="card">
+        <h2>Categorie</h2>
+        <div class="form" id="cat-list"></div>
+        <div class="row" style="margin-top:12px"><input id="cat-new" placeholder="Nuova categoria" maxlength="19" class="grow"><button class="btn" id="cat-add">Aggiungi</button></div>
+      </div>
+      <div class="card">
+        <h2>Backup</h2>
+        <p class="dim" style="font-size:14px">Tutti i dati sono sull'orologio, in un solo file JSON. Scaricalo ogni tanto: se cambi scheda o formatti la memoria lo ricarichi da qui.</p>
+        <div class="row"><button class="btn" id="exp-json">⤓ Scarica il backup</button><button class="btn" id="exp-csv">⤓ Movimenti in CSV</button>
+          <label class="btn">⤒ Ripristina<input type="file" id="imp-json" accept=".json,application/json" hidden></label></div>
+        <p class="faint" id="counts" style="font-size:13px;margin-bottom:0"></p>
+      </div>
+      <div class="card">
+        <h2>Da sapere</h2>
+        <p class="dim" style="font-size:14px;margin-top:0">I consigli sono regole semplici, non consulenza finanziaria. I dati sono in chiaro nella memoria dell'orologio: li vede chi ha l'orologio o un browser abbinato. Nessun dato lascia il dispositivo.</p>
+        <p class="dim" style="font-size:14px;margin-bottom:0">Le bollette cambiano ogni volta: mettile tra i fissi con una stima, poi quando arriva la bolletta tocca la scadenza in "In arrivo" e scrivi l'importo vero.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="modal"><div class="card" id="modalcard"></div></div>
+
+<script src="/kit.js"></script>
+<script>
+'use strict';
+const {el, $, $$} = kit;
+const S = {st: null, rules: [], rev: -1, month: null, tx: [], txCat: -1, q: '', sign: -1, qaCat: null};
+const MONTHS = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+const EVERY = {1: 'ogni mese', 2: 'ogni 2 mesi', 3: 'ogni 3 mesi', 4: 'ogni 4 mesi', 6: 'ogni 6 mesi', 12: 'ogni anno',
+  24: 'ogni 2 anni', 36: 'ogni 3 anni', 48: 'ogni 4 anni', 60: 'ogni 5 anni', 120: 'ogni 10 anni'};
+const SHIFT = ['nel giorno esatto', 'il venerdì prima', 'il lunedì dopo'];
+const EXPENSE = 1, INCOME = 0;
+
+/* ---------------------------------------------------------- formatting */
+const cat = i => (S.st && S.st.categories[i]) || 'altro';
+const catColor = i => `var(--c${i < 8 ? i : 8})`;
+const catIndex = name => Math.max(0, S.st ? S.st.categories.indexOf(name) : 0);
+const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
+/* Italian grouping always ("2.222", the browser leaves 4 digits ungrouped). */
+function nf(v, d = 0) {
+  const [i, f] = Math.abs(v).toFixed(d).split('.');
+  return (v < 0 && +Math.abs(v).toFixed(d) ? '−' : '') + i.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + (f ? ',' + f : '');
+}
+const eur = (c, d = 2) => nf(c / 100, d) + ' €';
+function eurSmart(c) { return Math.abs(c) >= 100000 ? eur(Math.round(c / 100) * 100, 0) : eur(c); }
+function signed(c) { return (c > 0 ? '+' : c < 0 ? '−' : '') + eur(Math.abs(c)); }/* "18 €" with small cents: the number the eye goes to first. */
+function bigMoney(c) {
+  const neg = c < 0, a = Math.abs(c), whole = Math.floor(a / 100), cents = a % 100;
+  const node = el('span', {class: 'money'}, (neg ? '−' : '') + nf(whole));
+  if (whole < 1000) node.append(el('span', {class: 'cents'}, ',' + String(cents).padStart(2, '0')));
+  node.append(el('span', {class: 'cents'}, ' €'));
+  return node;
+}
+/* "12,50" "1.234,56" "12.5" -> cents; NaN if not a number. */
+function parseEuro(text) {
+  let s = String(text).trim().replace(/[€\s]/g, '');
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  if (!/^-?\d+(\.\d{0,2})?$/.test(s)) return NaN;
+  return Math.round(parseFloat(s) * 100);
+}
+const euroInput = c => c ? (c / 100).toFixed(2).replace('.', ',') : '';
+const day = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const addDays = (s, n) => { const d = day(s); d.setDate(d.getDate() + n); return iso(d); };
+const diff = (a, b) => Math.round((day(b) - day(a)) / 86400000);
+const fmt = (s, o) => day(s).toLocaleDateString('it-IT', o || {day: 'numeric', month: 'short'});
+const long = s => fmt(s, {weekday: 'long', day: 'numeric', month: 'long'});
+const monthLabel = m => { const [y, mm] = m.split('-').map(Number); return MONTHS[mm - 1] + ' ' + y; };
+function inDays(n) { return n === 0 ? 'oggi' : n === 1 ? 'domani' : n === -1 ? 'ieri' : n > 0 ? `tra ${n} giorni` : `${-n} giorni fa`; }
+const STATE = [{name: 'In linea', color: 'var(--good)'}, {name: 'Sopra il ritmo', color: 'var(--warn)'}, {name: 'Attenzione', color: 'var(--bad)'}];
+
+/* Next dates of a rule (preview in the form; the watch is the reference). */
+function occurrence(r, y, m) {
+  const mi = y * 12 + m - 1, mIdx = s => { if (!s) return 0; const [a, b] = s.split('-').map(Number); return a * 12 + b - 1; };
+  const first = mIdx(r.first), last = mIdx(r.last), ev = r.every || 1;
+  const anchor = ev > 12 && first ? first : (r.month || 1) - 1;   /* past a year the first date anchors the cycle */
+  if ((first && ev <= 12 && mi < first) || (last && mi > last) || ((mi - anchor) % ev + ev) % ev) return null;
+  const d = new Date(y, m - 1, Math.min(r.day, new Date(y, m, 0).getDate())), w = d.getDay();
+  if (r.shift === 1 && (w === 6 || w === 0)) d.setDate(d.getDate() - (w === 6 ? 1 : 2));
+  if (r.shift === 2 && (w === 6 || w === 0)) d.setDate(d.getDate() + (w === 6 ? 2 : 1));
+  return d;
+}
+function nextDates(r, from, n) {
+  const out = [], f = day(from);
+  for (let k = -1; k < (r.every || 1) * n + 3 && out.length < n; k++) {
+    const base = new Date(f.getFullYear(), f.getMonth() + k, 1);
+    const o = occurrence(r, base.getFullYear(), base.getMonth() + 1);
+    if (o && o >= f) out.push(o);
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------- loading */
+async function load(force) {
+  let st;
+  try { st = await kit.api('/api/state'); }
+  catch (e) {
+    $('#notice').replaceChildren(el('div', {class: 'notice'}, e.message));
+    return;
+  }
+  $('#notice').replaceChildren();
+  if (!force && st.revision === S.rev && S.st && S.st.today === st.today) return;
+  S.rev = st.revision;
+  S.st = st;
+  S.rules = await kit.api('/api/rules');
+  if (!S.month) S.month = st.today.slice(0, 7);
+  renderAll();
+  if ($('#v-tx').classList.contains('on')) loadTx();
+}
+async function loadTx() {
+  S.tx = await kit.api('/api/tx?month=' + S.month);
+  renderTx();
+}
+async function saved(promise, text) {
+  const r = await kit.try(() => promise, text);
+  if (r !== undefined) { closeModal(); await load(true); }
+  return r;
+}
+
+function renderAll() {
+  renderHero(); renderQuick(); renderForecast(); renderTimeline(); renderFixedCard(); renderLoans();
+  renderInsights(); renderCats(); renderRecent(); renderWelcome(); renderFixed(); renderIncome(); renderSettings();
+}
+
+/* ---------------------------------------------------------- hero */
+function ringSvg(fraction, period, color) {
+  const ns = 'http://www.w3.org/2000/svg', mk = (t, a) => { const e = document.createElementNS(ns, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const svg = mk('svg', {viewBox: '0 0 236 236', width: 236, height: 236});
+  const arc = (r, w, f, stroke, opacity) => {
+    const c = 2 * Math.PI * r, len = c * 0.75;
+    const e = mk('circle', {cx: 118, cy: 118, r, 'stroke-width': w, stroke, opacity: opacity || 1,
+      'stroke-dasharray': `${Math.max(0.001, len * f)} ${c}`, transform: 'rotate(135 118 118)'});
+    return e;
+  };
+  svg.append(arc(112, 4, 1, 'var(--panel2)'), arc(112, 4, Math.max(0, Math.min(1, period)), 'var(--dim)', 0.75));
+  svg.append(arc(96, 16, 1, 'var(--panel2)'), arc(96, 16, Math.max(0, Math.min(1, fraction)), color));
+  return svg;
+}
+function renderHero() {
+  const st = S.st, s = st.summary, host = $('#hero');
+  const state = STATE[s.state];
+  host.style.setProperty('--state', state.color);
+  const periodLen = Math.max(1, diff(s.period_start, s.payday)), elapsed = diff(s.period_start, st.today);
+  const fraction = s.daily > 0 ? s.today_left / s.daily : 0;
+  const ring = el('div', {class: 'ring', title: 'Anello esterno: budget di oggi rimasto. Interno: quanto del periodo fino allo stipendio è passato.'},
+    ringSvg(fraction, elapsed / periodLen, state.color),
+    el('div', {class: 'mid'}, el('span', {class: 'cap'}, 'Oggi puoi spendere'),
+      el('div', {class: 'val'}, bigMoney(Math.max(0, s.today_left))),
+      el('span', {class: 'sub'}, s.spent_today > 0 ? `spesi ${eur(s.spent_today)} su ${eur(s.daily)}` : `al giorno fino allo stipendio`)));
+  const payday = st.summary.main_income ? `Stipendio ${inDays(s.days)}` : 'Fine del mese ' + inDays(s.days);
+  let headline;
+  if (!st.balance.set) headline = 'Inserisci il saldo del conto per iniziare';
+  else if (s.free < 0) headline = `Mancano ${eur(-s.free)} per arrivare allo stipendio`;
+  else if (s.forecast < 0) headline = `Di questo passo vai in rosso di ${eur(-s.forecast)} prima dello stipendio`;
+  else if (s.state === 1) headline = `Stai spendendo ${eur(s.pace)} al giorno: il budget è ${eur(s.daily)}`;
+  else headline = `${payday}: arrivi con circa ${eurSmart(s.forecast)}`;
+  const eve = addDays(s.payday, -1);
+  const facts = el('div', {class: 'facts'},
+    fact('Saldo stimato', eurSmart(s.balance), st.balance.set ? 'banca del ' + fmt(st.balance.date) : 'non inserito'),
+    fact(st.summary.main_income ? 'Stipendio' : 'Fine periodo', inDays(s.days), fmt(s.payday, {weekday: 'short', day: 'numeric', month: 'short'})),
+    fact('Da pagare', eurSmart(s.due), s.income ? `entrano ${eurSmart(s.income)}` : 'prima del ' + fmt(s.payday)),
+    fact('Liberi', eurSmart(s.free), 'tolte le scadenze'),
+    fact('Ritmo di spesa', s.pace ? eur(s.pace) + '/g' : '–', s.pace ? 'ultimi 30 giorni' : 'ancora pochi dati'),
+    fact('Previsione', eurSmart(s.forecast), 'al ' + fmt(eve)));
+  host.replaceChildren(el('div', {class: 'hero-in'}, ring,
+    el('div', {}, el('span', {class: 'statepill'}, el('i'), state.name),
+      el('div', {class: 'headline'}, headline),
+      el('div', {class: 'dim'}, `Budget di ${eur(s.daily)} al giorno per ${s.days} ${s.days === 1 ? 'giorno' : 'giorni'}. Dall'ultimo stipendio hai speso ${eurSmart(s.period_spent)} extra.`),
+      facts)));
+}
+function fact(label, value, sub) {
+  return el('div', {class: 'fact'}, el('span', {}, label), el('b', {class: 'money'}, value), el('small', {}, sub));
+}
+
+/* ---------------------------------------------------------- quick add */
+function renderQuick() {
+  const cats = S.st.categories;
+  if (S.qaCat == null) S.qaCat = catIndex('spesa');
+  $('#qa-cats').replaceChildren(...cats.map((c, i) => el('button', {type: 'button', class: 'chip' + (i === S.qaCat ? ' on' : ''),
+    onclick: () => { S.qaCat = i; renderQuick(); }}, el('span', {class: 'd', style: {background: catColor(i)}}), c)));
+  $('#qa-presets').replaceChildren(...[5, 10, 20, 50].map(v => el('button', {type: 'button', class: 'chip',
+    onclick: () => { $('#qa-amount').value = v + ',00'; $('#qa-amount').focus(); }}, v + ' €')));
+}
+$('#qa-sign').onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  S.sign = +b.dataset.s; $$('#qa-sign button').forEach(x => x.classList.toggle('on', x === b));
+};
+$('#qa').onsubmit = async e => {
+  e.preventDefault();
+  const cents = parseEuro($('#qa-amount').value);
+  if (!(cents > 0)) { kit.toast('Scrivi un importo, es. 12,50', 'bad'); $('#qa-amount').focus(); return; }
+  const body = {date: S.st.today, amount: S.sign * cents, category: S.qaCat, note: $('#qa-note').value.trim(), rule: 0};
+  const r = await saved(kit.api('/api/tx', {body}), `${S.sign < 0 ? 'Spesa' : 'Entrata'} di ${eur(cents)} registrata`);
+  if (r) { $('#qa-amount').value = ''; $('#qa-note').value = ''; $('#qa-amount').focus(); }
+};
+
+/* ---------------------------------------------------------- forecast chart */
+function forecastSeries() {
+  const st = S.st, s = st.summary, events = {};
+  for (const it of st.timeline) {
+    if (!it.done && it.date >= st.today && it.date < s.payday && (it.amount < 0 || it.date > st.today)) {
+      (events[it.date] = events[it.date] || []).push({name: it.name, amount: it.amount});
+    }
+  }
+  for (const t of st.planned) {
+    if (t.date < s.payday) (events[t.date] = events[t.date] || []).push({name: t.note || cat(t.category), amount: t.amount});
+  }
+  const restToday = Math.max(0, s.pace - s.spent_today), points = [];
+  let fixed = s.balance;
+  for (let k = 0; k < s.days; k++) {
+    const d = addDays(st.today, k);
+    for (const e of events[d] || []) fixed += e.amount;
+    const paced = fixed - (s.pace > 0 ? restToday + s.pace * k : 0);
+    points.push({d, fixed, paced, events: events[d] || []});
+  }
+  return points;
+}
+function renderForecast() {
+  const host = $('#forecast'), s = S.st.summary;
+  host.replaceChildren();
+  if (!S.st.balance.set) { host.append(el('div', {class: 'empty'}, 'Inserisci il saldo per vedere dove arrivi.')); $('#forecast-note').textContent = ''; return; }
+  const pts = forecastSeries();
+  const W = Math.max(260, host.clientWidth || 640), H = W < 480 ? 220 : 300, P = {l: 60, r: 74, t: 14, b: 28};
+  const vals = pts.flatMap(p => [p.fixed, p.paced]);
+  let y0 = Math.min(...vals), y1 = Math.max(...vals);
+  if (y0 < y1 * 0.35) y0 = Math.min(0, y0);      /* zero in sight only when it is close */
+  if (y1 === y0) { y1 += 10000; y0 -= 10000; }
+  const pad = (y1 - y0) * 0.1; y0 -= pad; y1 += pad;
+  const n = Math.max(1, pts.length - 1);
+  const X = k => P.l + k / n * (W - P.l - P.r), Y = v => P.t + (y1 - v) / (y1 - y0) * (H - P.t - P.b);
+  const ns = 'http://www.w3.org/2000/svg', mk = (t, a) => { const e = document.createElementNS(ns, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const svg = mk('svg', {viewBox: `0 0 ${W} ${H}`, height: H, role: 'img', 'aria-label': 'Saldo previsto giorno per giorno fino allo stipendio'});
+  const defs = mk('defs', {}), grad = mk('linearGradient', {id: 'fg', x1: 0, x2: 0, y1: 0, y2: 1});
+  grad.append(mk('stop', {offset: '0%', 'stop-color': 'var(--accent)', 'stop-opacity': .28}), mk('stop', {offset: '100%', 'stop-color': 'var(--accent)', 'stop-opacity': 0}));
+  defs.append(grad); svg.append(defs);
+  for (let i = 0; i <= 4; i++) {
+    const v = y0 + (y1 - y0) * i / 4, y = Y(v);
+    svg.append(mk('line', {class: 'gl', x1: P.l, x2: W - P.r, y1: y, y2: y}));
+    const t = mk('text', {class: 'axis', x: P.l - 8, y: y + 4, 'text-anchor': 'end'}); t.textContent = nf(Math.round(v / 100)) + ' €'; svg.append(t);
+  }
+  if (y0 < 0) {
+    svg.append(mk('rect', {x: P.l, y: Y(0), width: W - P.l - P.r, height: Math.max(0, H - P.b - Y(0)), fill: 'var(--bad)', opacity: .07}));
+    svg.append(mk('line', {x1: P.l, x2: W - P.r, y1: Y(0), y2: Y(0), stroke: 'var(--bad)', 'stroke-width': 1.5, 'stroke-dasharray': '4 4'}));
+  }
+  const step = Math.max(1, Math.ceil(pts.length / Math.max(2, Math.floor((W - P.l - P.r) / 56))));
+  pts.forEach((p, k) => {
+    if (k % step && k !== pts.length - 1) return;
+    if (k !== pts.length - 1 && k > pts.length - 1 - step / 2 && k !== 0) return;   /* no clash with the last label */
+    const t = mk('text', {class: 'axis', x: X(k), y: H - 8, 'text-anchor': k === 0 ? 'start' : k === pts.length - 1 ? 'end' : 'middle'});
+    t.textContent = k === 0 ? 'oggi' : fmt(p.d); svg.append(t);
+  });
+  const path = key => pts.map((p, k) => (k ? 'L' : 'M') + X(k).toFixed(1) + ' ' + Y(p[key]).toFixed(1)).join(' ');
+  const stepPath = key => pts.map((p, k) => k ? `H${X(k).toFixed(1)} V${Y(p[key]).toFixed(1)}` : `M${X(0)} ${Y(p[key])}`).join(' ');
+  svg.append(mk('path', {d: path('paced') + ` L${X(pts.length - 1)} ${H - P.b} L${X(0)} ${H - P.b} Z`, fill: 'url(#fg)'}));
+  svg.append(mk('path', {d: stepPath('fixed'), fill: 'none', stroke: 'var(--dim)', 'stroke-width': 2, 'stroke-dasharray': '5 5', opacity: .7}));
+  svg.append(mk('path', {d: path('paced'), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2.5, 'stroke-linejoin': 'round'}));
+  pts.forEach((p, k) => {
+    if (!p.events.length) return;
+    const neg = p.events.reduce((a, e) => a + e.amount, 0) < 0;
+    svg.append(mk('circle', {cx: X(k), cy: Y(p.fixed), r: 4.5, fill: neg ? 'var(--warn)' : 'var(--good)', stroke: 'var(--panel)', 'stroke-width': 2}));
+  });
+  const last = pts[pts.length - 1];
+  const end = mk('text', {x: X(pts.length - 1) + 8, y: Y(last.paced) + 4, fill: last.paced < 0 ? 'var(--bad)' : 'var(--ink)', 'font-size': 13, 'font-weight': 700});
+  end.textContent = eurSmart(last.paced); svg.append(end);
+  /* hover: crosshair + tooltip */
+  const cross = mk('line', {y1: P.t, y2: H - P.b, stroke: 'var(--faint)', 'stroke-width': 1, opacity: 0});
+  const dot = mk('circle', {r: 5, fill: 'var(--accent)', stroke: 'var(--panel)', 'stroke-width': 2, opacity: 0});
+  svg.append(cross, dot);
+  const tip = el('div', {class: 'tip'});
+  const hit = mk('rect', {x: P.l, y: 0, width: W - P.l - P.r, height: H, fill: 'transparent'});
+  svg.append(hit);
+  const move = ev => {
+    const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) * W / r.width;
+    const k = Math.max(0, Math.min(pts.length - 1, Math.round((x - P.l) / (W - P.l - P.r) * n))), p = pts[k];
+    cross.setAttribute('x1', X(k)); cross.setAttribute('x2', X(k)); cross.setAttribute('opacity', 1);
+    dot.setAttribute('cx', X(k)); dot.setAttribute('cy', Y(p.paced)); dot.setAttribute('opacity', 1);
+    tip.replaceChildren(el('b', {}, cap(long(p.d))),
+      el('div', {class: 'r'}, el('span', {class: 'dim'}, 'Al tuo ritmo'), el('span', {class: 'money'}, eur(p.paced))),
+      el('div', {class: 'r'}, el('span', {class: 'dim'}, 'Solo fisse'), el('span', {class: 'money'}, eur(p.fixed))),
+      ...p.events.map(e => el('div', {class: 'r'}, el('span', {}, e.name), el('span', {class: 'money ' + (e.amount > 0 ? 'in' : '')}, signed(e.amount)))));
+    const px = X(k) * r.width / W;
+    tip.style.left = Math.min(r.width - 190, Math.max(0, px + 12)) + 'px';
+    tip.style.top = '8px'; tip.style.opacity = 1;
+  };
+  hit.addEventListener('pointermove', move);
+  hit.addEventListener('pointerleave', () => { tip.style.opacity = 0; cross.setAttribute('opacity', 0); dot.setAttribute('opacity', 0); });
+  host.append(svg, tip);
+  $('#forecast-note').textContent = s.pace
+    ? `Al ritmo degli ultimi 30 giorni (${eur(s.pace)} al giorno) il giorno prima dello stipendio avrai circa ${eur(last.paced)}.`
+    : 'Registra le spese per qualche giorno: la linea terrà conto del tuo ritmo.';
+}
+
+/* ---------------------------------------------------------- timeline */
+function dbox(d) { const x = day(d); return el('div', {class: 'dbox'}, el('b', {}, x.getDate()), el('span', {}, MONTHS[x.getMonth()].slice(0, 3))); }
+function renderTimeline() {
+  const st = S.st, s = st.summary, host = $('#timeline');
+  const passed = st.timeline.filter(it => it.date < st.today && it.date >= addDays(st.today, -5)).slice(-3);
+  const items = passed.concat(st.timeline.filter(it => it.date >= st.today))
+    .concat(st.planned.map(t => ({date: t.date, name: t.note || cat(t.category), amount: t.amount, category: t.category, planned: t.id, done: false})))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0).slice(0, passed.length + 6);
+  if (!items.length) { host.replaceChildren(el('div', {class: 'empty'}, 'Nessuna scadenza. Aggiungi stipendio e spese fisse.')); return; }
+  const out = [];
+  let section = '';
+  for (const it of items) {
+    const sec = it.date < st.today ? 'Appena passate' : it.date < s.payday ? 'Prima dello stipendio' : 'Dopo lo stipendio';
+    if (sec !== section) { out.push(el('div', {class: 'tl-sep'}, sec)); section = sec; }
+    const rule = S.rules.find(r => r.id === it.rule);
+    out.push(el('div', {class: 'tl-item' + (it.done ? ' done' : ''), onclick: () => it.planned ? editTx(st.planned.find(t => t.id === it.planned)) : payRule(rule, it)},
+      dbox(it.date),
+      el('div', {style: {minWidth: 0}}, el('div', {class: 'tl-name'}, it.name),
+        el('div', {class: 'tl-meta'}, it.done ? el('span', {class: 'tick'}, it.linked ? '✓ registrata' : '✓ passata') :
+          it.planned ? 'prevista · ' + inDays(diff(st.today, it.date)) : inDays(diff(st.today, it.date)) + (it.amount < 0 ? ' · tocca per segnarla' : ''))),
+      el('div', {class: 'tl-amt money' + (it.amount > 0 ? ' in' : '')}, signed(it.amount))));
+  }
+  host.replaceChildren(...out);
+}
+/* Record the real amount of a fixed cost (a bill): linked, it replaces the estimate. */
+function payRule(rule, it) {
+  if (!rule) return;
+  editTx({id: 0, date: it.date <= S.st.today ? it.date : S.st.today, amount: it.amount, category: rule.category, note: rule.name, rule: rule.id});
+}
+
+/* ---------------------------------------------------------- fixed costs card */
+function renderFixedCard() {
+  const m = S.st.month, host = $('#fixed');
+  if (!S.rules.length) { host.replaceChildren(el('div', {class: 'empty'}, 'Nessuna spesa fissa.')); return; }
+  const ratio = m.fixed_ratio, tone = ratio >= 60 ? 'var(--bad)' : ratio >= 50 ? 'var(--warn)' : 'var(--good)';
+  const up = S.st.upcoming.slice().sort((a, b) => a.date < b.date ? -1 : 1).slice(0, 4);
+  host.replaceChildren(
+    el('div', {class: 'row'}, el('div', {class: 'kpi'}, el('b', {class: 'money'}, eurSmart(m.fixed)), el('span', {}, 'fisso al mese')),
+      el('div', {class: 'grow'}), ratio >= 0 ? el('div', {class: 'kpi', style: {textAlign: 'right'}}, el('b', {style: {color: tone}}, ratio + '%'), el('span', {}, 'delle entrate')) : ''),
+    ratio >= 0 ? el('div', {class: 'meter', title: 'La tacca è il 50%: oltre, il fisso pesa troppo'},
+      el('i', {style: {width: Math.min(100, ratio) + '%', background: tone}}), el('div', {class: 'mark', style: {left: '50%'}})) : '',
+    el('p', {class: 'dim', style: {fontSize: '13px', margin: '4px 0 14px'}}, ratio < 0 ? 'Aggiungi lo stipendio per vedere quanto pesa.' :
+      ratio >= 50 ? 'Oltre metà delle entrate se ne va in spese fisse: poco margine per gli imprevisti.' : 'Il fisso lascia margine: sotto il 50% delle entrate.'),
+    m.set_aside ? el('div', {class: 'fact', style: {marginBottom: '10px'}}, el('span', {}, 'Da mettere da parte ogni mese'), el('b', {class: 'money'}, eur(m.set_aside)),
+      el('small', {}, 'per le spese che non sono mensili')) : '',
+    ...up.map(u => el('div', {class: 'row', style: {padding: '5px 0', fontSize: '14px'}},
+      el('span', {class: 'dot', style: {background: catColor(u.category)}}), el('span', {class: 'grow'}, u.name),
+      el('span', {class: 'faint'}, inDays(diff(S.st.today, u.date))), el('b', {class: 'money'}, eurSmart(u.amount)))));
+}
+
+/* ---------------------------------------------------------- loans */
+function renderLoans() {
+  const host = $('#loans'), loans = S.st.loans;
+  if (!loans.length) {
+    host.replaceChildren(el('div', {class: 'empty', style: {padding: '20px'}}, 'Mutuo o prestito? Aggiungilo tra i fissi con la data dell\'ultima rata: qui vedrai quanto manca.'),
+      el('div', {class: 'row', style: {justifyContent: 'center'}}, el('button', {class: 'btn sm', onclick: () => editRule(preset('Mutuo'))}, '+ Mutuo'),
+        el('button', {class: 'btn sm', onclick: () => editRule(preset('Prestito'))}, '+ Prestito')));
+    return;
+  }
+  const total = loans.reduce((a, l) => a + l.remaining, 0);
+  host.replaceChildren(el('div', {class: 'kpi', style: {marginBottom: '6px'}}, el('b', {class: 'money'}, eurSmart(total)), el('span', {}, 'ancora da pagare')),
+    ...loans.map(l => {
+      const all = l.done >= 0 ? l.done + l.left : 0, pct = all ? l.done / all * 100 : 0;
+      const [y, m] = l.last.split('-').map(Number);
+      return el('div', {class: 'loan'},
+        el('div', {class: 'row'}, el('b', {class: 'grow'}, l.name), el('span', {class: 'money'}, eurSmart(l.remaining))),
+        all ? el('div', {class: 'meter'}, el('i', {style: {width: pct + '%', background: catColor(l.category)}})) : '',
+        el('div', {class: 'dim', style: {fontSize: '13px'}}, all ? `rata ${l.done} di ${all} · ` : '', `${l.left} rate da ${eur(l.amount)} · finisce a ${MONTHS[m - 1]} ${y}`));
+    }));
+}
+
+/* ---------------------------------------------------------- insights */
+function renderInsights() {
+  const st = S.st, s = st.summary, m = st.month, out = [];
+  const add = (tone, icon, text) => out.push(el('div', {class: 'insight', style: {'--tone': tone}}, el('div', {class: 'ic'}, icon), el('div', {}, text)));
+  if (!st.balance.set) add('var(--accent)', '€', 'Inserisci il saldo del conto: è il punto di partenza di tutti i calcoli.');
+  if (s.free < 0) add('var(--bad)', '!', `Le scadenze prima dello stipendio superano il saldo di ${eur(-s.free)}. Sposta una spesa o prepara la differenza.`);
+  else if (s.forecast < 0) add('var(--bad)', '↘', `Al ritmo attuale finisci in rosso: rallenta a ${eur(s.daily)} al giorno.`);
+  else if (s.state === 1) add('var(--warn)', '↗', `Stai spendendo ${eur(s.pace)} al giorno, più dei ${eur(s.daily)} che puoi permetterti.`);
+  const worst = st.trend.filter(t => t.pct >= 25 && t.now >= 3000).sort((a, b) => b.now - b.average - (a.now - a.average))[0];
+  if (worst) add('var(--warn)', '%', `${cap(cat(worst.category))}: ${eur(worst.now)} questo mese, +${worst.pct}% rispetto alla tua media (${eur(worst.average)}) negli stessi giorni.`);
+  if (m.fixed_ratio >= 50) add('var(--warn)', '⌂', `Il fisso pesa il ${m.fixed_ratio}% delle entrate. Sotto il 50% resta più margine.`);
+  const subs = S.rules.filter(r => r.kind === EXPENSE && cat(r.category) === 'abbonamenti');
+  if (subs.length) {
+    const year = subs.reduce((a, r) => a + r.amount * 12 / (r.every || 1), 0);
+    add('var(--accent)', '↻', `${subs.map(r => r.name).slice(0, 3).join(' + ')}${subs.length > 3 ? '…' : ''} = ${eur(year, 0)} l'anno. Ne usi ancora ognuno?`);
+  }
+  if (m.set_aside) add('var(--good)', '◔', `Metti da parte ${eur(m.set_aside)} al mese e le spese annuali (assicurazione, condominio...) non saranno più una sorpresa.`);
+  if (!out.length) add('var(--good)', '✓', 'Tutto in linea. Continua a registrare le spese: più dati, consigli migliori.');
+  $('#insights').replaceChildren(...out.slice(0, 4));
+}
+
+/* ---------------------------------------------------------- categories */
+function renderCats() {
+  const st = S.st, host = $('#cats');
+  const rows = st.trend.slice().sort((a, b) => b.now - a.now);
+  if (!rows.length) { host.replaceChildren(el('div', {class: 'empty'}, 'Nessuna spesa registrata questo mese.')); return; }
+  const max = Math.max(...rows.map(r => Math.max(r.now, r.average)), 1);
+  host.replaceChildren(el('div', {class: 'legend', style: {marginBottom: '2px'}}, el('span', {}, 'Barra: questo mese'), el('span', {}, '│ tacca: la tua media negli stessi giorni')),
+    ...rows.map(r => {
+      const tag = r.pct < -100 ? el('span', {class: 'tag'}, 'nuovo') : r.pct >= 25 ? el('span', {class: 'tag warn'}, '+' + r.pct + '%') :
+        r.pct <= -15 ? el('span', {class: 'tag good'}, r.pct + '%') : el('span', {class: 'tag'}, (r.pct > 0 ? '+' : '') + r.pct + '%');
+      return el('div', {class: 'catrow', title: `Media ${eur(r.average)}`},
+        el('div', {class: 'name'}, el('span', {class: 'dot', style: {background: catColor(r.category)}}), cap(cat(r.category))),
+        el('div', {class: 'track'}, el('i', {style: {width: r.now / max * 100 + '%', background: catColor(r.category)}}),
+          r.average > 0 ? el('div', {class: 'avg', style: {left: `calc(${r.average / max * 100}% - 1px)`}}) : ''),
+        el('div', {class: 'v'}, eurSmart(r.now)), tag);
+    }));
+}
+
+/* ---------------------------------------------------------- recent */
+function txRow(t) {
+  const out = t.amount > 0, letter = out ? '+' : cat(t.category).slice(0, 1).toUpperCase();
+  const rule = t.rule ? S.rules.find(r => r.id === t.rule) : null;
+  return el('div', {class: 'txrow', onclick: () => editTx(t)},
+    el('div', {class: 'txicon', style: {background: out ? 'var(--good)' : catColor(t.category)}}, letter),
+    el('div', {style: {minWidth: 0}}, el('div', {class: 't'}, t.note || cap(cat(t.category))),
+      el('div', {class: 'm'}, [cap(cat(t.category)), rule ? '↻ ' + rule.name : '', fmt(t.date, {weekday: 'short', day: 'numeric', month: 'short'})].filter(Boolean).join(' · '))),
+    el('div', {class: 'a' + (out ? ' in' : '')}, signed(t.amount)));
+}
+function renderRecent() {
+  const r = S.st.recent;
+  $('#recent').replaceChildren(...(r.length ? r.map(txRow) : [el('div', {class: 'empty'}, 'Ancora nessun movimento: usa "Aggiungi una spesa".')]));
+}
+
+/* ---------------------------------------------------------- welcome */
+function renderWelcome() {
+  const st = S.st, host = $('#welcome');
+  const hasSalary = S.rules.some(r => r.kind === INCOME), hasFixed = S.rules.some(r => r.kind === EXPENSE);
+  if (st.balance.set && hasSalary && hasFixed) { host.replaceChildren(); return; }
+  const step = (n, done, title, text, button) => el('div', {class: 'step' + (done ? ' ok' : '')},
+    el('div', {class: 'row'}, el('div', {class: 'n'}, done ? '✓' : n), el('b', {}, title)), el('div', {class: 'dim', style: {fontSize: '14px'}}, text), done ? '' : button);
+  host.replaceChildren(el('div', {class: 'card welcome', style: {marginBottom: '16px'}},
+    el('div', {class: 'headline', style: {marginTop: 0}}, 'Tre passi e Bilancio ti dice ogni giorno quanto puoi spendere'),
+    el('div', {class: 'dim'}, 'Due minuti adesso, poi basta segnare le spese (anche dall\'orologio).'),
+    el('div', {class: 'steps'},
+      step(1, st.balance.set, 'Il saldo', 'Quanto c\'è oggi sul conto.', el('button', {class: 'btn primary', onclick: editBalance}, 'Inserisci il saldo')),
+      step(2, hasSalary, 'Lo stipendio', 'Quanto e che giorno arriva.', el('button', {class: 'btn primary', onclick: () => editRule(preset('Stipendio'))}, 'Aggiungi lo stipendio')),
+      step(3, hasFixed, 'Le spese fisse', 'Mutuo, prestito, condominio, bollette, assicurazione...', el('button', {class: 'btn primary', onclick: () => kit.show('v-fixed')}, 'Aggiungi i fissi')))));
+}
+
+/* ---------------------------------------------------------- movements view */
+function renderTx() {
+  $('#m-label').textContent = monthLabel(S.month);
+  const cats = S.st.categories;
+  $('#tx-cats').replaceChildren(el('button', {class: 'chip' + (S.txCat < 0 ? ' on' : ''), onclick: () => { S.txCat = -1; renderTx(); }}, 'Tutte'),
+    ...cats.map((c, i) => el('button', {class: 'chip' + (S.txCat === i ? ' on' : ''), onclick: () => { S.txCat = i; renderTx(); }},
+      el('span', {class: 'd', style: {background: catColor(i)}}), c)));
+  const q = S.q.toLowerCase();
+  const list = S.tx.filter(t => (S.txCat < 0 || t.category === S.txCat) && (!q || (t.note || '').toLowerCase().includes(q)));
+  const inSum = list.filter(t => t.amount > 0).reduce((a, t) => a + t.amount, 0), outSum = list.filter(t => t.amount < 0).reduce((a, t) => a - t.amount, 0);
+  $('#tx-tot').replaceChildren(
+    el('div', {class: 'card stat'}, el('span', {}, 'Entrate registrate'), el('b', {class: 'money in'}, eur(inSum))),
+    el('div', {class: 'card stat'}, el('span', {}, 'Uscite registrate'), el('b', {class: 'money'}, eur(outSum))),
+    el('div', {class: 'card stat'}, el('span', {}, `${list.length} movimenti · netto`), el('b', {class: 'money ' + (inSum - outSum >= 0 ? 'in' : 'bad')}, signed(inSum - outSum))));
+  if (!list.length) { $('#tx-list').replaceChildren(el('div', {class: 'empty'}, 'Nessun movimento in ' + monthLabel(S.month) + '.')); return; }
+  const groups = [];
+  for (const t of list) { const g = groups[groups.length - 1]; if (g && g.date === t.date) g.items.push(t); else groups.push({date: t.date, items: [t]}); }
+  $('#tx-list').replaceChildren(...groups.map(g => el('div', {class: 'daygroup'},
+    el('div', {class: 'dayhead'}, el('span', {}, long(g.date) + (g.date > S.st.today ? ' · previsto' : '')), el('span', {class: 'money'}, signed(g.items.reduce((a, t) => a + t.amount, 0)))),
+    ...g.items.map(txRow))));
+}
+function shiftMonth(k) {
+  const [y, m] = S.month.split('-').map(Number), d = new Date(y, m - 1 + k, 1);
+  S.month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  loadTx();
+}
+$('#m-prev').onclick = () => shiftMonth(-1);
+$('#m-next').onclick = () => shiftMonth(1);
+$('#tx-q').oninput = e => { S.q = e.target.value; renderTx(); };
+$('#tx-add').onclick = () => editTx(null);
+
+/* ---------------------------------------------------------- modal + forms */
+function openModal(title, ...body) {
+  $('#modalcard').replaceChildren(el('h2', {}, title, el('button', {class: 'x', onclick: closeModal, 'aria-label': 'Chiudi'}, '×')), ...body);
+  $('#modal').classList.add('on');
+  setTimeout(() => { const f = $('#modalcard [autofocus]'); if (f) f.focus(); }, 30);
+}
+function closeModal() { $('#modal').classList.remove('on'); }
+$('#modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+const field = (label, input) => el('label', {class: 'field'}, label, input);
+function catSelect(value) {
+  return el('select', {}, ...S.st.categories.map((c, i) => el('option', {value: i, selected: i === value}, cap(c))));
+}
+
+function editTx(t) {
+  t = t || {id: 0, date: S.st.today, amount: -0, category: S.qaCat == null ? catIndex('spesa') : S.qaCat, note: '', rule: 0};
+  let sign = t.sign || (t.amount > 0 ? 1 : -1);
+  const signBox = el('div', {class: 'sign'}, ...[[-1, 'Uscita'], [1, 'Entrata']].map(([v, l]) => el('button', {type: 'button', class: v === sign ? 'on' : '',
+    onclick: e => { sign = v; $$('button', signBox).forEach(b => b.classList.toggle('on', b === e.currentTarget)); }}, l)));
+  const amount = el('input', {class: 'bigamount', inputmode: 'decimal', value: euroInput(Math.abs(t.amount)), placeholder: '0,00', autofocus: true});
+  const date = el('input', {type: 'date', value: t.date});
+  const category = catSelect(t.category);
+  const note = el('input', {value: t.note || '', maxlength: 46, placeholder: 'es. Esselunga, pizza con amici'});
+  const rule = el('select', {}, el('option', {value: 0}, 'Nessuna (spesa variabile)'),
+    ...S.rules.map(r => el('option', {value: r.id, selected: r.id === t.rule}, (r.kind === INCOME ? 'Entrata: ' : '') + r.name)));
+  const form = el('form', {class: 'form'}, signBox, field('Importo (€)', amount),
+    el('div', {class: 'two'}, field('Data (nel futuro = previsto)', date), field('Categoria', category)), field('Nota', note),
+    field('È il pagamento di una voce fissa?', rule),
+    el('p', {class: 'faint', style: {fontSize: '13px', margin: 0}}, 'Collegando una bolletta o una rata alla sua voce fissa, l\'importo vero sostituisce la stima e non conta due volte.'),
+    el('div', {class: 'row end'}, t.id ? el('button', {type: 'button', class: 'btn danger', onclick: () => saved(kit.api('/api/tx/delete', {body: {id: t.id}}), 'Movimento eliminato')}, 'Elimina') : '',
+      el('div', {class: 'grow'}), el('button', {type: 'button', class: 'btn', onclick: closeModal}, 'Annulla'), el('button', {class: 'btn primary'}, 'Salva')));
+  form.onsubmit = e => {
+    e.preventDefault();
+    const cents = parseEuro(amount.value);
+    if (!(cents > 0)) { kit.toast('Importo non valido', 'bad'); return; }
+    saved(kit.api('/api/tx', {body: {id: t.id, date: date.value, amount: sign * cents, category: +category.value, note: note.value.trim(), rule: +rule.value}}), 'Salvato');
+  };
+  openModal(t.id ? 'Modifica movimento' : t.rule ? 'Registra il pagamento' : 'Nuovo movimento', form);
+}
+
+const PRESETS = [
+  {name: 'Stipendio', kind: INCOME, amount: 0, every: 1, day: 27, shift: 1},
+  {name: 'Tredicesima', kind: INCOME, amount: 0, every: 12, month: 12, day: 15, shift: 1},
+  {name: 'Quattordicesima', kind: INCOME, amount: 0, every: 12, month: 7, day: 15, shift: 1},
+  {name: 'Pensione', kind: INCOME, amount: 0, every: 1, day: 1, shift: 2},
+  {name: 'Affitto percepito', kind: INCOME, amount: 0, every: 1, day: 5, shift: 0},
+  {name: 'Mutuo', kind: EXPENSE, every: 1, day: 1, cat: 'rate', loan: true},
+  {name: 'Prestito', kind: EXPENSE, every: 1, day: 15, cat: 'rate', loan: true},
+  {name: 'Finanziamento auto', kind: EXPENSE, every: 1, day: 5, cat: 'auto', loan: true},
+  {name: 'Affitto', kind: EXPENSE, every: 1, day: 1, cat: 'casa'},
+  {name: 'Condominio', kind: EXPENSE, every: 3, month: 1, day: 10, cat: 'casa'},
+  {name: 'Luce', kind: EXPENSE, every: 2, month: 1, day: 20, cat: 'bollette'},
+  {name: 'Gas', kind: EXPENSE, every: 2, month: 2, day: 20, cat: 'bollette'},
+  {name: 'Acqua', kind: EXPENSE, every: 3, month: 2, day: 15, cat: 'bollette'},
+  {name: 'Internet casa', kind: EXPENSE, every: 1, day: 10, cat: 'bollette'},
+  {name: 'Telefono', kind: EXPENSE, every: 1, day: 12, cat: 'bollette'},
+  {name: 'TARI', kind: EXPENSE, every: 6, month: 5, day: 16, cat: 'tasse'},
+  {name: 'Assicurazione auto', kind: EXPENSE, every: 12, month: 3, day: 15, cat: 'auto'},
+  {name: 'Bollo auto', kind: EXPENSE, every: 12, month: 4, day: 30, cat: 'auto'},
+  {name: 'Revisione auto', kind: EXPENSE, every: 24, day: 15, cat: 'auto', amount: 7900, next: true},
+  {name: 'Tagliando', kind: EXPENSE, every: 12, month: 6, day: 15, cat: 'auto'},
+  {name: 'Cambio gomme', kind: EXPENSE, every: 6, month: 4, day: 15, cat: 'auto'},
+  {name: 'Rinnovo patente', kind: EXPENSE, every: 120, day: 1, cat: 'auto', next: true},
+  {name: 'Assicurazione casa', kind: EXPENSE, every: 12, month: 1, day: 31, cat: 'casa'},
+  {name: 'Netflix', kind: EXPENSE, every: 1, day: 20, cat: 'abbonamenti'},
+  {name: 'Spotify', kind: EXPENSE, every: 1, day: 8, cat: 'abbonamenti'},
+  {name: 'Palestra', kind: EXPENSE, every: 1, day: 1, cat: 'svago'},
+];
+function preset(name) {
+  const p = PRESETS.find(x => x.name === name);
+  return {id: 0, kind: p.kind, name: p.name, amount: p.amount || 0, every: p.every, month: p.month || 1, day: p.day,
+    shift: p.shift != null ? p.shift : 0, category: p.cat ? catIndex(p.cat) : 0, first: '', last: '', loan: p.loan, next: p.next};
+}
+function editRule(r) {
+  const income = r.kind === INCOME;
+  const name = el('input', {value: r.name, maxlength: 31, autofocus: !r.name});
+  const amount = el('input', {class: 'bigamount', inputmode: 'decimal', value: euroInput(r.amount), placeholder: '0,00', autofocus: !!r.name});
+  const every = el('select', {}, ...Object.entries(EVERY).map(([v, l]) => el('option', {value: v, selected: +v === (r.every || 1)}, cap(l))));
+  const month = el('select', {}, ...MONTHS.map((m, i) => el('option', {value: i + 1, selected: i + 1 === r.month}, cap(m))));
+  const dayIn = el('input', {type: 'number', min: 1, max: 31, value: r.day});
+  const shift = el('select', {}, ...SHIFT.map((l, i) => el('option', {value: i, selected: i === r.shift}, cap(l))));
+  const category = catSelect(r.category);
+  const first = el('input', {type: 'month', value: r.first || ''});
+  const last = el('input', {type: 'month', value: r.last || ''});
+  const monthField = field('Uno dei mesi in cui cade', month);
+  const firstLabel = el('span', {});
+  const preview = el('div', {class: 'preview'});
+  const read = () => ({id: r.id, kind: r.kind, name: name.value.trim(), amount: parseEuro(amount.value), every: +every.value, month: +month.value,
+    day: +dayIn.value, shift: +shift.value, category: income ? 0 : +category.value, first: first.value, last: last.value});
+  const update = () => {
+    const x = read();
+    monthField.style.display = x.every > 1 && x.every <= 12 ? '' : 'none';
+    firstLabel.textContent = x.every > 12 ? 'Mese della prossima scadenza' : r.loan ? 'Prima rata (facoltativa)' : 'Dal mese (facoltativo)';
+    if (!(x.day >= 1 && x.day <= 31)) { preview.textContent = 'Giorno tra 1 e 31'; return; }
+    if (x.every > 12 && !x.first) { preview.textContent = 'Indica il mese della prossima scadenza: revisione sul libretto, patente sul retro della tessera.'; return; }
+    const dates = nextDates(x, S.st.today, 4);
+    let text = dates.length ? 'Prossime date: ' + dates.map(d => d.toLocaleDateString('it-IT', {weekday: 'short', day: 'numeric', month: 'short', year: d.getFullYear() !== day(S.st.today).getFullYear() ? 'numeric' : undefined})).join(' · ') : 'Nessuna data futura (è finita).';
+    if (x.amount > 0 && x.every > 1) text += ` — ${eur(Math.floor(x.amount / x.every))} al mese da mettere da parte`;
+    if (x.last && x.amount > 0) {
+      const [ly, lm] = x.last.split('-').map(Number), t = day(S.st.today);
+      let n = 0;
+      for (let y = t.getFullYear(), m = t.getMonth() + 1; y * 12 + m <= ly * 12 + lm; m++) { if (m > 12) { m = 1; y++; } const o = occurrence(x, y, m); if (o && o > t) n++; }
+      text += ` — mancano ${n} rate, ${eur(n * x.amount)}`;
+    }
+    preview.textContent = text;
+  };
+  [name, amount, every, month, dayIn, shift, first, last].forEach(i => i.addEventListener('input', update));
+  const form = el('form', {class: 'form'},
+    el('div', {class: 'two'}, field('Nome', name), field(income ? 'Importo netto (€)' : 'Importo (€)' + (r.loan ? ' della rata' : ''), amount)),
+    el('div', {class: 'three'}, field('Quando', every), monthField, field('Giorno del mese', dayIn)),
+    el('div', {class: 'two'}, field('Se cade di sabato o domenica', shift), income ? el('div') : field('Categoria', category)),
+    el('div', {class: 'two'}, field(firstLabel, first),
+      field(r.loan ? 'Ultima rata' : 'Fino al mese (facoltativo)', last)),
+    preview,
+    el('div', {class: 'row end'}, r.id ? el('button', {type: 'button', class: 'btn danger', onclick: () => {
+      if (confirm(`Eliminare "${r.name}"?`)) saved(kit.api('/api/rule/delete', {body: {id: r.id}}), 'Eliminata');
+    }}, 'Elimina') : '', el('div', {class: 'grow'}), el('button', {type: 'button', class: 'btn', onclick: closeModal}, 'Annulla'), el('button', {class: 'btn primary'}, 'Salva')));
+  form.onsubmit = e => {
+    e.preventDefault();
+    const x = read();
+    if (!x.name) { kit.toast('Serve un nome', 'bad'); return; }
+    if (!(x.amount > 0)) { kit.toast('Scrivi l\'importo, es. 289,00', 'bad'); amount.focus(); return; }
+    if (r.loan && !x.last) { kit.toast('Indica il mese dell\'ultima rata', 'bad'); last.focus(); return; }
+    if (x.every > 12 && !x.first) { kit.toast('Indica il mese della prossima scadenza (la trovi sul libretto o sulla patente)', 'bad'); first.focus(); return; }
+    saved(kit.api('/api/rule', {body: x}), 'Salvata: i calcoli sono già aggiornati');
+  };
+  update();
+  openModal(r.id ? 'Modifica ' + r.name : income ? 'Nuova entrata' : 'Nuova voce fissa', form);
+}
+
+/* ---------------------------------------------------------- fixed view */
+/* The real amounts paid for a rule (bills), oldest to newest, as small bars with the estimate as a line. */
+function paidSpark(r) {
+  const paid = (r.paid || []).slice(0, 8).reverse();
+  if (paid.length < 2) return '';
+  const W = 92, H = 26, max = Math.max(r.amount, ...paid.map(p => p.amount)), bw = W / paid.length;
+  const ns = 'http://www.w3.org/2000/svg', mk = (t, a) => { const e = document.createElementNS(ns, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const svg = mk('svg', {width: W, height: H, viewBox: `0 0 ${W} ${H}`, 'aria-hidden': 'true'});
+  paid.forEach((p, i) => {
+    const h = Math.max(2, p.amount / max * (H - 2));
+    const t = mk('rect', {x: i * bw + 1, y: H - h, width: Math.max(2, bw - 2), height: h, rx: 2, fill: p.amount > r.amount * 1.05 ? 'var(--warn)' : 'var(--dim)', opacity: p.amount > r.amount * 1.05 ? .9 : .45});
+    t.append(mk('title', {})); t.firstChild.textContent = `${fmt(p.date, {month: 'short', year: '2-digit'})}: ${eur(p.amount)}`;
+    svg.append(t);
+  });
+  const y = H - r.amount / max * (H - 2);
+  svg.append(mk('line', {x1: 0, x2: W, y1: y, y2: y, stroke: 'var(--ink)', 'stroke-width': 1, 'stroke-dasharray': '2 2', opacity: .6}));
+  return svg;
+}
+function ruleLine(r) {
+  const next = nextDates(r, S.st.today, 1)[0];
+  const when = (r.every > 1 && r.every <= 12 ? `${EVERY[r.every]} (${MONTHS[(r.month || 1) - 1].slice(0, 3)}…)` : EVERY[r.every || 1]) + ` il ${r.day}`;
+  const loan = S.st.loans.find(l => l.rule === r.id);
+  const income = r.kind === INCOME, main = S.st.summary.main_income === r.id;
+  const paid = r.paid || [];
+  let history = '';
+  if (paid.length) {
+    const avg = Math.round(paid.reduce((a, p) => a + p.amount, 0) / paid.length), delta = Math.round((avg - r.amount) * 100 / r.amount);
+    history = `ultimo ${eur(paid[0].amount)}` + (paid.length > 1 ? ` · media ${eur(avg)}` : '') +
+      (Math.abs(delta) >= 5 && !income ? ` (${delta > 0 ? '+' : ''}${delta}% sulla stima)` : '');
+  }
+  return el('div', {class: 'rulecard', onclick: () => editRule(Object.assign({}, r, {loan: !!r.last && r.every <= 12}))},
+    el('div', {class: 'ic', style: {background: income ? 'var(--good)' : catColor(r.category)}}, income ? '+' : r.name.slice(0, 1).toUpperCase()),
+    el('div', {style: {minWidth: 0}}, el('div', {class: 't'}, r.name, main ? el('span', {class: 'badge'}, 'stipendio') : ''),
+      el('div', {class: 'm'}, [income ? '' : cap(cat(r.category)), when, next ? 'prossima ' + fmt(iso(next), {day: 'numeric', month: 'short', year: r.every > 12 ? 'numeric' : undefined}) : 'conclusa',
+        loan ? `${loan.left} rate rimaste` : ''].filter(Boolean).join(' · ')),
+      history ? el('div', {class: 'm', style: {color: history.includes('+') ? 'var(--warn)' : ''}}, history) : ''),
+    el('div', {class: 'a row', style: {flexWrap: 'nowrap', gap: '14px'}}, paidSpark(r),
+      el('div', {}, el('b', {class: 'money' + (income ? ' in' : '')}, eur(r.amount)),
+        el('span', {}, r.every > 1 ? `${eur(Math.floor(r.amount / r.every))}/mese` : (paid.length ? 'stima' : '')))));
+}
+function renderFixed() {
+  const m = S.st.month, ex = S.rules.filter(r => r.kind === EXPENSE);
+  const subs = ex.filter(r => cat(r.category) === 'abbonamenti').reduce((a, r) => a + r.amount * 12 / r.every, 0);
+  $('#fx-tot').replaceChildren(
+    el('div', {class: 'card stat'}, el('span', {}, 'Fisso al mese'), el('b', {class: 'money'}, eur(m.fixed))),
+    el('div', {class: 'card stat'}, el('span', {}, 'In un anno'), el('b', {class: 'money'}, eur(m.yearly_fixed, 0))),
+    el('div', {class: 'card stat'}, el('span', {}, 'Da accantonare al mese'), el('b', {class: 'money'}, eur(m.set_aside))),
+    el('div', {class: 'card stat'}, el('span', {}, 'Abbonamenti in un anno'), el('b', {class: 'money'}, eur(subs, 0))));
+  $('#fx-presets').replaceChildren(...PRESETS.filter(p => p.kind === EXPENSE).map(p => el('button', {class: 'chip', onclick: () => editRule(preset(p.name))},
+    el('span', {class: 'd', style: {background: catColor(catIndex(p.cat))}}), p.name)));
+  if (!ex.length) { $('#fx-list').replaceChildren(el('div', {class: 'empty'}, 'Nessuna voce fissa. Tocca un suggerimento qui sopra.')); return; }
+  const groups = {};
+  ex.forEach(r => (groups[r.category] = groups[r.category] || []).push(r));
+  $('#fx-list').replaceChildren(...Object.keys(groups).sort((a, b) => a - b).map(c => el('div', {style: {marginTop: '10px'}},
+    el('div', {class: 'tl-sep'}, cap(cat(+c)) + ' · ' + eur(groups[c].reduce((a, r) => a + Math.floor(r.amount / r.every), 0)) + '/mese'),
+    ...groups[c].sort((a, b) => b.amount / b.every - a.amount / a.every).map(ruleLine))));
+}
+$('#fx-add').onclick = () => editRule({id: 0, kind: EXPENSE, name: '', amount: 0, every: 1, month: 1, day: 1, shift: 0, category: catIndex('casa'), first: '', last: ''});
+
+/* ---------------------------------------------------------- income view */
+function renderIncome() {
+  const inc = S.rules.filter(r => r.kind === INCOME);
+  $('#in-presets').replaceChildren(...PRESETS.filter(p => p.kind === INCOME).map(p => el('button', {class: 'chip', onclick: () => editRule(preset(p.name))}, '+ ' + p.name)));
+  $('#in-list').replaceChildren(...(inc.length ? inc.map(ruleLine) : [el('div', {class: 'empty'}, 'Aggiungi lo stipendio: è la data che chiude ogni periodo.')]));
+  const pl = S.st.planned;
+  $('#pl-list').replaceChildren(...(pl.length ? pl.map(txRow) : [el('div', {class: 'empty'}, 'Niente in programma.')]),
+    el('div', {class: 'row', style: {marginTop: '8px'}}, el('button', {class: 'btn sm', onclick: () => planned('Rimborso 730', 1, 7, 27, 'tasse')}, '+ Rimborso 730'),
+      el('button', {class: 'btn sm', onclick: () => planned('Saldo 730 / F24', -1, 6, 30, 'tasse')}, '+ 730 a debito'),
+      el('button', {class: 'btn sm', onclick: () => planned('Bonus', 1, 0, 0, 'altro')}, '+ Bonus')));
+}
+/* A one-off in the future, on the next given month/day (0 = in a month). */
+function planned(note, sign, month, d, category) {
+  const t = day(S.st.today);
+  let when = new Date(t.getFullYear(), month ? month - 1 : t.getMonth() + 1, d || t.getDate());
+  if (when <= t) when.setFullYear(when.getFullYear() + 1);
+  editTx({id: 0, date: iso(when), amount: 0, sign, category: catIndex(category), note, rule: 0});
+}
+$('#in-add').onclick = () => editRule({id: 0, kind: INCOME, name: '', amount: 0, every: 1, month: 1, day: 27, shift: 1, category: 0, first: '', last: ''});
+$('#pl-add').onclick = () => planned('', -1, 0, 0, 'altro');
+
+/* ---------------------------------------------------------- settings */
+function renderSettings() {
+  const st = S.st;
+  $('#bal-now').replaceChildren(st.balance.set
+    ? el('div', {class: 'row', style: {marginBottom: '6px'}}, el('div', {class: 'kpi'}, el('b', {class: 'money'}, eur(st.balance.amount)), el('span', {}, 'inserito il ' + fmt(st.balance.date, {day: 'numeric', month: 'long'}))),
+      el('div', {class: 'grow'}), el('div', {class: 'kpi', style: {textAlign: 'right'}}, el('b', {class: 'money'}, eur(st.summary.balance)), el('span', {}, 'stimato oggi')))
+    : el('div', {class: 'notice'}, 'Saldo non ancora inserito.'));
+  $('#cat-list').replaceChildren(...st.categories.map((c, i) => {
+    const input = el('input', {value: c, maxlength: 19, class: 'grow'});
+    input.onchange = () => saved(kit.api('/api/category', {body: {index: i, name: input.value.trim()}}), 'Categoria rinominata');
+    return el('div', {class: 'row'}, el('span', {class: 'dot', style: {background: catColor(i), width: '12px', height: '12px'}}), input);
+  }));
+  $('#counts').textContent = `${st.counts.tx} movimenti su ${st.counts.tx_max} · ${st.counts.rules} voci fisse su ${st.counts.rules_max}. Oltre i 24 mesi i movimenti vengono riassunti per mese.`;
+}
+function editBalance() {
+  const st = S.st;
+  const amount = el('input', {class: 'bigamount', inputmode: 'decimal', placeholder: '0,00', autofocus: true});
+  const date = el('input', {type: 'date', value: st.today, max: st.today});
+  const today = st.timeline.filter(it => it.date === st.today);
+  const form = el('form', {class: 'form'}, field('Saldo del conto (€, negativo con il meno)', amount), field('Del giorno', date),
+    today.length ? el('div', {class: 'preview'}, 'Il saldo che scrivi deve già comprendere le voci di quel giorno: ', today.map(it => `${it.name} (${signed(it.amount)})`).join(', '), '. Se la banca non le mostra ancora, usa la data di ieri.') : '',
+    el('div', {class: 'row end'}, el('button', {type: 'button', class: 'btn', onclick: closeModal}, 'Annulla'), el('button', {class: 'btn primary'}, 'Salva')));
+  form.onsubmit = e => {
+    e.preventDefault();
+    const raw = amount.value.trim(), neg = raw.startsWith('-') || raw.startsWith('−');
+    const cents = parseEuro(raw.replace(/^[-−]/, ''));
+    if (isNaN(cents)) { kit.toast('Saldo non valido', 'bad'); return; }
+    saved(kit.api('/api/balance', {body: {amount: neg ? -cents : cents, date: date.value}}), 'Saldo aggiornato');
+  };
+  openModal('Saldo del conto', form);
+}
+$('#bal-edit').onclick = editBalance;
+$('#cat-add').onclick = async () => {
+  const name = $('#cat-new').value.trim();
+  if (!name) return;
+  if (await saved(kit.api('/api/category', {body: {index: -1, name}}), 'Categoria aggiunta')) $('#cat-new').value = '';
+};
+$('#exp-json').onclick = async () => {
+  const r = await kit.try(() => kit.api('/api/export', {raw: true}));
+  if (r) kit.download(`bilancio-${S.st.today}.json`, await r.text(), 'application/json');
+};
+$('#exp-csv').onclick = async () => {
+  const r = await kit.try(() => kit.api('/api/export', {raw: true}));
+  if (!r) return;
+  const data = JSON.parse(await r.text()), q = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
+  const rows = [['data', 'importo', 'categoria', 'nota'].join(';')].concat((data.transactions || []).map(t =>
+    [t.date, String(t.amount).replace('.', ','), q(t.category), q(t.note)].join(';')));
+  kit.download(`bilancio-movimenti-${S.st.today}.csv`, '﻿' + rows.join('\r\n'), 'text/csv');
+};
+$('#imp-json').onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !confirm('Il ripristino sostituisce TUTTI i dati sull\'orologio con quelli del file. Continuare?')) return;
+  await saved(kit.api('/api/import', {body: await file.text()}), 'Backup ripristinato');
+};
+
+/* ---------------------------------------------------------- start */
+let resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => S.st && renderForecast(), 150); });
+kit.views(id => {
+  if (!S.st) return;
+  if (id === 'v-tx') loadTx();
+  if (id === 'v-home') setTimeout(renderForecast, 20);
+});
+kit.start({onReady: () => kit.poll(() => load(false), 10000)});
+</script>
+</body>
+</html>
