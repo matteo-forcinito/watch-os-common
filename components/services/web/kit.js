@@ -58,8 +58,9 @@
         const response = await fetch('/api/recovery/session', {method: 'POST'});
         if (!response.ok) return false;
         const session = await response.json();
-        if (session.ephemeral !== true || typeof session.token !== 'string' || session.token.length !== 32) return false;
-        token = session.token; // RAM only: never replace the normal browser pairing in localStorage.
+        if (session.persistent !== true || typeof session.token !== 'string' || session.token.length !== 32) return false;
+        token = session.token;
+        try { localStorage.setItem(KEY + '-recovery', token); } catch (e) { /* private mode */ }
         return true;
       } catch (e) { return false; }
     })().finally(() => { recoverySession = null; });

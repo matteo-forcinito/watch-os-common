@@ -59,6 +59,7 @@ static int64_t s_pair_reset;
 static int s_pair_attempts;
 
 static httpd_handle_t s_server = NULL;
+static bool s_recovery_sta;
 static int s_users;                      /* web_server_start() calls not yet stopped */
 static SemaphoreHandle_t s_lock;
 
@@ -235,14 +236,25 @@ static void token_load(void)
     }
     snprintf(s_code, sizeof(s_code), "%06lu", (unsigned long)(esp_random() % 1000000));
     s_recovery_token[0] = '\0';
-    if (recovery_active())
+    if (recovery_active() && nvs_open("web", NVS_READWRITE, &nvs) == ESP_OK)
     {
-        uint8_t bytes[16];
-        esp_fill_random(bytes, sizeof(bytes));
-        for (int i = 0; i < 16; i++)
+        size = sizeof(s_recovery_token);
+        if (nvs_get_str(nvs, "recovery_token", s_recovery_token, &size) != ESP_OK ||
+            strlen(s_recovery_token) != 32)
         {
-            snprintf(s_recovery_token + i * 2, 3, "%02x", bytes[i]);
+            uint8_t bytes[16];
+            esp_fill_random(bytes, sizeof(bytes));
+            for (int i = 0; i < 16; i++)
+            {
+                snprintf(s_recovery_token + i * 2, 3, "%02x", bytes[i]);
+            }
+            if (nvs_set_str(nvs, "recovery_token", s_recovery_token) != ESP_OK || nvs_commit(nvs) != ESP_OK)
+            {
+                s_recovery_token[0] = '\0';
+                ESP_LOGE(TAG, "Cannot persist recovery access");
+            }
         }
+        nvs_close(nvs);
     }
 }
 
@@ -342,7 +354,7 @@ static esp_err_t handle_recovery_session(httpd_req_t *req)
     }
     cJSON *out = cJSON_CreateObject();
     cJSON_AddStringToObject(out, "token", s_recovery_token);
-    cJSON_AddBoolToObject(out, "ephemeral", true);
+    cJSON_AddBoolToObject(out, "persistent", true);
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return send_json(req, out);
 }
@@ -1034,6 +1046,33 @@ esp_err_t web_server_start_wifi_only(void)
     return start_counted(false);
 }
 
+/* Called only by the recovery worker. Keep the server and its credentials alive
+ * while adding a fallback AP; retry known networks without leaking references. */
+void web_server_recovery_poll(void)
+{
+    if (!recovery_active()) return;
+    lock_init();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_server != NULL && !wifi_is_connected())
+    {
+        if (!s_ap_mode)
+        {
+            if (wifi_start_access_point(s_ap_name, sizeof(s_ap_name)) == ESP_OK)
+            {
+                s_recovery_sta = true; /* Preserve the original station reference. */
+                s_ap_mode = true;
+                captive_dns_start(inet_addr("192.168.4.1"));
+                ESP_LOGW(TAG, "Recovery fallback: http://192.168.4.1/");
+            }
+        }
+        if (wifi_acquire(10000) == ESP_OK)
+        {
+            wifi_release(); /* The AP or original station still owns the radio. */
+        }
+    }
+    xSemaphoreGive(s_lock);
+}
+
 void web_server_stop(void)
 {
     lock_init();
@@ -1117,6 +1156,11 @@ static void shutdown_server(void)
         captive_dns_stop();
         wifi_stop_access_point();
         s_ap_mode = false;
+        if (s_recovery_sta)
+        {
+            s_recovery_sta = false;
+            wifi_release();
+        }
     }
     else
     {

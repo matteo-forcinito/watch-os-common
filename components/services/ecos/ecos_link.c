@@ -1,3 +1,4 @@
+#include "core/recovery.h"
 /* Famiglia: the paired devices talk to each other over ESP-NOW.
  *
  *   ecos_family_hold() / _touch()      the UI or the dashboard looks
@@ -181,7 +182,7 @@ static bool powered(void)
 /* Answer the others: on the cable, with nobody using the screen. */
 static bool auto_wanted(void)
 {
-    return powered() && state_get(STATE_SCREEN) >= POWER_SCREEN_AOD;
+    return recovery_active() || (powered() && state_get(STATE_SCREEN) >= POWER_SCREEN_AOD);
 }
 
 static bool wanted(void)
