@@ -196,6 +196,43 @@ Dettagli in `Orbit-Companion/docs/RELEASE.md`. In breve:
 Il branch deve chiamarsi esattamente come la versione di `pubspec.yaml`, altrimenti la
 Action si ferma. Le release pubblicate non si modificano.
 
+## Generare .exe e .apk a mano
+
+**Il modo consigliato: scaricare quelli della GitHub Action.** I job `windows` e `android`
+producono i pacchetti anche se la pubblicazione si ferma dopo, e l'APK è firmato con la
+chiave ufficiale (che esiste solo nei secret di GitHub):
+
+```powershell
+$gh = "C:\Users\matte\Documents\ESP-IDF\ESP32-S3-Knob-Touch-LCD-1.8\.companion-tools\gh\bin\gh.exe"
+& $gh run list -R matteo-forcinito/Orbit-Companion --limit 3          # trova l'id della run
+& $gh run download <id> -R matteo-forcinito/Orbit-Companion -n orbit-android -n orbit-windows -D C:\Users\matte\Downloads\orbit
+```
+
+(gli artifact restano disponibili per qualche giorno).
+
+**Compilare in locale:**
+
+```powershell
+$env:PATH = "C:\Users\matte\Documents\flutter\bin;$env:PATH"
+cd C:\Users\matte\Documents\ESP-IDF\Orbit-Companion
+
+# Windows: risultato in build\windows\x64\runner\Release\ (orbit .exe + dll + data\)
+flutter build windows --release
+powershell -ExecutionPolicy Bypass -File tools\package_windows.ps1 -Version 0.4.2-dev.4   # zip completo con runtime C++
+
+# Android di prova (firma "debug", sempre possibile)
+flutter build apk --debug          # build\app\outputs\flutter-apk\app-debug.apk
+```
+
+L'**APK release** in locale richiede la chiave di firma (`android/key.properties` oppure le
+variabili `ORBIT_KEYSTORE_PATH`, `ORBIT_KEYSTORE_PASSWORD`...). Senza chiave la build si
+ferma di proposito. Un APK debug ha una firma diversa: per installarlo bisogna prima
+disinstallare la versione ufficiale (si perdono i dispositivi salvati nell'app), e
+viceversa.
+
+Su Windows l'`.exe` non funziona da solo: va tenuto insieme alle `.dll` e alla cartella
+`data\` (è quello che fa lo zip).
+
 ## Stato al 16/10/2026
 
 - Branch `fix/connection-stability` (commit `a9cf8be`): schermo remoto ORF2 e "Altra rete..."
