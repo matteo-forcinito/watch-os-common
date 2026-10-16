@@ -19,6 +19,7 @@
 
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <string.h>
 
 static const char *TAG = "lv_port";
 
@@ -155,9 +156,248 @@ lv_draw_buf_t *lv_port_capture_frame(void)
     return frame;
 }
 
+/* ------------------------------------------------------ remote mirror */
+
+/*
+ * While a remote client watches, frames go only to a PSRAM shadow (RGB565
+ * little endian) and the panel sleeps: no QSPI transfer, no forced full
+ * redraw per request. Only the area that changed is handed out. The shadow,
+ * the dirty area and the lease timer are owned by the lvgl task; the atomics
+ * are read by any task.
+ */
+#define MIRROR_LEASE_MS    4000    /* no client request this long: the panel comes back */
+#define MIRROR_TAKEOVER_MS 10000   /* used on the device itself: refuse a new session this long */
+
+static uint16_t *s_mirror;
+static lv_area_t s_mirror_dirty;
+static bool s_mirror_has_dirty;
+static _Atomic bool s_mirror_on;
+static _Atomic uint32_t s_mirror_seq;
+static _Atomic int64_t s_mirror_lease_us;
+static _Atomic int64_t s_mirror_takeover_us;
+static lv_timer_t *s_mirror_timer;
+static void (*s_mirror_stop_cb)(void);
+
+/* lv_area intersect/join are private in LVGL 9: small local versions. */
+static bool area_clip(lv_area_t *out, const lv_area_t *a, const lv_area_t *b)
+{
+    out->x1 = LV_MAX(a->x1, b->x1);
+    out->y1 = LV_MAX(a->y1, b->y1);
+    out->x2 = LV_MIN(a->x2, b->x2);
+    out->y2 = LV_MIN(a->y2, b->y2);
+    return out->x1 <= out->x2 && out->y1 <= out->y2;
+}
+
+static void area_grow(lv_area_t *acc, const lv_area_t *a)
+{
+    acc->x1 = LV_MIN(acc->x1, a->x1);
+    acc->y1 = LV_MIN(acc->y1, a->y1);
+    acc->x2 = LV_MAX(acc->x2, a->x2);
+    acc->y2 = LV_MAX(acc->y2, a->y2);
+}
+
+static void mirror_flush(lv_display_t *disp, const lv_area_t *area, const uint8_t *pixels)
+{
+    int w = lv_display_get_horizontal_resolution(disp);
+    int h = lv_display_get_vertical_resolution(disp);
+    lv_area_t clip = {0, 0, w - 1, h - 1};
+    lv_area_t part;
+
+    if (area_clip(&part, area, &clip))
+    {
+        int stride = (int)lv_draw_buf_width_to_stride(lv_area_get_width(area), LV_COLOR_FORMAT_RGB565_SWAPPED);
+
+        for (int y = part.y1; y <= part.y2; y++)
+        {
+            const uint8_t *src = pixels + (size_t)(y - area->y1) * stride + (size_t)(part.x1 - area->x1) * 2;
+            uint16_t *dst = s_mirror + (size_t)y * w;
+
+            for (int x = part.x1; x <= part.x2; x++, src += 2)
+            {
+                dst[x] = (uint16_t)((uint16_t)src[0] << 8 | src[1]);
+            }
+        }
+
+        if (s_mirror_has_dirty)
+        {
+            area_grow(&s_mirror_dirty, &part);
+        }
+        else
+        {
+            s_mirror_dirty = part;
+            s_mirror_has_dirty = true;
+        }
+    }
+
+    if (lv_display_flush_is_last(disp))
+    {
+        atomic_fetch_add(&s_mirror_seq, 1);
+    }
+}
+
+static void mirror_stop(bool takeover)
+{
+    if (!atomic_load(&s_mirror_on))
+    {
+        return;
+    }
+
+    atomic_store(&s_mirror_on, false);
+
+    if (s_mirror_timer != NULL)
+    {
+        lv_timer_delete(s_mirror_timer);
+        s_mirror_timer = NULL;
+    }
+
+    heap_caps_free(s_mirror);
+    s_mirror = NULL;
+    s_mirror_has_dirty = false;
+
+    if (takeover)
+    {
+        atomic_store(&s_mirror_takeover_us, esp_timer_get_time());
+    }
+
+    lv_obj_invalidate(lv_screen_active());
+    lv_obj_invalidate(lv_layer_top());
+    power_remote_mirror(false);
+
+    if (s_mirror_stop_cb != NULL)
+    {
+        s_mirror_stop_cb();
+    }
+
+    ESP_LOGI(TAG, "Remote mirror off%s", takeover ? " (used on the device)" : "");
+}
+
+static void mirror_lease_cb(lv_timer_t *timer)
+{
+    (void)timer;
+
+    if (esp_timer_get_time() - atomic_load(&s_mirror_lease_us) > (int64_t)MIRROR_LEASE_MS * 1000)
+    {
+        mirror_stop(false);
+    }
+}
+
+bool lv_port_mirror_active(void)
+{
+    return atomic_load(&s_mirror_on);
+}
+
+void lv_port_mirror_set_stop_cb(void (*cb)(void))
+{
+    s_mirror_stop_cb = cb;
+}
+
+void lv_port_mirror_lease(void)
+{
+    atomic_store(&s_mirror_lease_us, esp_timer_get_time());
+}
+
+uint32_t lv_port_mirror_seq(void)
+{
+    return atomic_load(&s_mirror_seq);
+}
+
+esp_err_t lv_port_mirror_start(void)
+{
+    lv_port_mirror_lease();
+
+    if (atomic_load(&s_mirror_on))
+    {
+        return ESP_OK;
+    }
+
+    int64_t takeover = atomic_load(&s_mirror_takeover_us);
+
+    if (takeover != 0 && esp_timer_get_time() - takeover < (int64_t)MIRROR_TAKEOVER_MS * 1000)
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    int w = lv_display_get_horizontal_resolution(s_disp);
+    int h = lv_display_get_vertical_resolution(s_disp);
+
+    s_mirror = heap_caps_calloc((size_t)w * h, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    s_mirror_timer = s_mirror != NULL ? lv_timer_create(mirror_lease_cb, 500, NULL) : NULL;
+
+    if (s_mirror_timer == NULL)
+    {
+        heap_caps_free(s_mirror);
+        s_mirror = NULL;
+        ESP_LOGW(TAG, "Remote mirror allocation failed: %dx%d", w, h);
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_mirror_has_dirty = false;
+    atomic_store(&s_mirror_on, true);
+    power_remote_mirror(true);
+
+    /* Fill the whole shadow once; afterwards only changes are drawn. */
+    lv_obj_invalidate(lv_screen_active());
+    lv_obj_invalidate(lv_layer_top());
+    ESP_LOGI(TAG, "Remote mirror on: panel off, %dx%d shadow", w, h);
+
+    return ESP_OK;
+}
+
+void lv_port_mirror_stop(bool takeover)
+{
+    mirror_stop(takeover);
+}
+
+lv_draw_buf_t *lv_port_mirror_take(bool full, lv_area_t *area)
+{
+    if (!atomic_load(&s_mirror_on) || s_mirror == NULL)
+    {
+        return NULL;
+    }
+
+    int w = lv_display_get_horizontal_resolution(s_disp);
+    int h = lv_display_get_vertical_resolution(s_disp);
+    lv_area_t part = {0, 0, w - 1, h - 1};
+
+    if (!full)
+    {
+        if (!s_mirror_has_dirty)
+        {
+            return NULL;
+        }
+
+        part = s_mirror_dirty;
+    }
+
+    int pw = lv_area_get_width(&part);
+    int ph = lv_area_get_height(&part);
+    lv_draw_buf_t *out = lv_draw_buf_create(pw, ph, LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
+
+    if (out == NULL)
+    {
+        return NULL;
+    }
+
+    for (int y = 0; y < ph; y++)
+    {
+        memcpy(out->data + (size_t)y * out->header.stride, s_mirror + (size_t)(part.y1 + y) * w + part.x1, (size_t)pw * 2);
+    }
+
+    s_mirror_has_dirty = false;
+    *area = part;
+
+    return out;
+}
+
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *pixels)
 {
     capture_flush(area, pixels);
+    if (s_mirror != NULL)
+    {
+        mirror_flush(disp, area, pixels);
+        lv_display_flush_ready(disp);   /* the panel sleeps: nothing to wait for */
+        return;
+    }
     if (s_headless)
     {
         lv_display_flush_ready(disp);
@@ -244,6 +484,13 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     else
     {
         pressed = !s_headless && touch_read(&x, &y);
+
+        if (pressed && s_mirror != NULL)
+        {
+            /* Someone uses the device itself: give the panel back, swallow this touch. */
+            mirror_stop(true);
+            s_swallow_until_release = true;
+        }
     }
 
     if (!pressed)
@@ -583,6 +830,12 @@ static void handle_knob(void)
 
     if (delta == 0)
     {
+        return;
+    }
+
+    if (s_mirror != NULL)
+    {
+        mirror_stop(true);   /* used on the device: the panel comes back */
         return;
     }
 

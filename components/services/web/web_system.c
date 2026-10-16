@@ -720,7 +720,23 @@ typedef struct
     lv_draw_buf_t *screen;
     lv_draw_buf_t *top;
     int action;
+    bool full;          /* mirror take: whole screen, not only the changed area */
+    lv_area_t area;     /* mirror take: where `screen` goes */
+    uint32_t seq;       /* mirror: render pass of the shadow */
+    esp_err_t err;      /* mirror start */
 } remote_call_t;
+
+enum
+{
+    REMOTE_CAPTURE = 0,
+    REMOTE_FREE = 1,
+    REMOTE_BACK = 2,
+    REMOTE_HOME = 3,
+    REMOTE_CLOSE_APPS = 4,
+    REMOTE_MIRROR_START = 5,
+    REMOTE_MIRROR_TAKE = 6,
+    REMOTE_MIRROR_STOP = 7,
+};
 
 /* A delayed UI callback must never keep the HTTP task or a caller stack alive.
  * The UI and HTTP each own a reference; at most one pending UI job is retained. */
@@ -769,9 +785,22 @@ static void remote_ui(void *arg)
             if (call->top != NULL) lv_draw_buf_destroy(call->top);
             call->screen = call->top = NULL;
         }
-        else if (call->action == 2) app_back_user();
-        else if (call->action == 3) app_home();
-        else if (call->action == 4) app_close_others("web");
+        else if (call->action == REMOTE_BACK) app_back_user();
+        else if (call->action == REMOTE_HOME) app_home();
+        else if (call->action == REMOTE_CLOSE_APPS) app_close_others("web");
+#if CONFIG_WATCH_REMOTE_UI
+        else if (call->action == REMOTE_MIRROR_START)
+        {
+            call->err = lv_port_mirror_start();
+            call->seq = lv_port_mirror_seq();
+        }
+        else if (call->action == REMOTE_MIRROR_TAKE)
+        {
+            call->screen = lv_port_mirror_take(call->full, &call->area);
+            call->seq = lv_port_mirror_seq();
+        }
+        else if (call->action == REMOTE_MIRROR_STOP) lv_port_mirror_stop(false);
+#endif
     }
     xSemaphoreGive(call->done);
     remote_release(shared, true);
@@ -853,17 +882,156 @@ static esp_err_t remote_compact(httpd_req_t *req, const lv_draw_buf_t *frame)
     return err;
 }
 
+/*
+ * Mirror session (ORF2): the panel sleeps and only the changed area is sent.
+ * Wi-Fi modem sleep would add 100-300 ms to every request: it stays off for
+ * the whole session. The session also holds the web server, so Home or Back
+ * pressed remotely (which may close the Web app) does not cut it off. Both are
+ * released when the session ends (lvgl hook -> sys worker).
+ */
+#define REMOTE_WAIT_MAX_MS 250     /* the server is single-threaded: inputs wait behind a frame */
+#define REMOTE_CHUNK       16384   /* fewer, larger TCP writes for whole screens */
+
+static atomic_bool s_mirror_held;     /* Wi-Fi fast mode taken for the session */
+static atomic_bool s_mirror_server;   /* web server reference taken for the session */
+static uint32_t s_mirror_served;      /* render pass of the last frame handed out (HTTP task) */
+
+static void mirror_hold(void)
+{
+    if (atomic_exchange(&s_mirror_held, true)) return;
+    wifi_set_fast(true);
+    atomic_store(&s_mirror_server, web_server_retain());
+}
+static void mirror_release(void *arg)
+{
+    (void)arg;
+    if (lv_port_mirror_active()) return;   /* a new session started meanwhile: it keeps the hold */
+    if (!atomic_exchange(&s_mirror_held, false)) return;
+    wifi_set_fast(false);
+    if (atomic_exchange(&s_mirror_server, false)) web_server_stop();
+}
+static void mirror_stopped(void)
+{
+    if (atomic_load(&s_mirror_held) && !sys_post(mirror_release, NULL)) ESP_LOGW("web_remote", "Mirror session release not queued");
+}
+
+/* ORF2: 28-byte LE header {magic, screen w/h, x/y/w/h of the area, seq, flags, payload}
+ * then RGB565 raw or (uint16 count, uint16 color) runs, row by row inside the area.
+ * flags: bit 0 runs, bit 1 full screen (client resets). w = h = 0: nothing changed. */
+static esp_err_t remote_orf2(httpd_req_t *req, const remote_call_t *call)
+{
+    const lv_draw_buf_t *frame = call->screen;
+    uint32_t w = frame != NULL ? frame->header.w : 0, h = frame != NULL ? frame->header.h : 0, runs = 0;
+    for (uint32_t y = 0; y < h; y++) {
+        const uint16_t *row = (const uint16_t *)(frame->data + y * frame->header.stride);
+        for (uint32_t x = 0; x < w; x++) if (x == 0 || row[x] != row[x - 1]) runs++;
+    }
+    bool rle = frame != NULL && runs * 4 < w * h * 2;
+    uint32_t payload = frame == NULL ? 0 : rle ? runs * 4 : w * h * 2;
+    uint32_t flags = (rle ? 1 : 0) | (call->full ? 2 : 0);
+    uint8_t header[28] = {'O', 'R', 'F', '2'};
+    uint16_t fields[6] = {(uint16_t)board_info()->width, (uint16_t)board_info()->height,
+                          (uint16_t)(frame != NULL ? call->area.x1 : 0), (uint16_t)(frame != NULL ? call->area.y1 : 0),
+                          (uint16_t)w, (uint16_t)h};
+    for (int i = 0; i < 6; i++) { header[4 + i * 2] = (uint8_t)fields[i]; header[5 + i * 2] = (uint8_t)(fields[i] >> 8); }
+    remote_u32(header + 16, call->seq);
+    remote_u32(header + 20, flags);
+    remote_u32(header + 24, payload);
+    httpd_resp_set_type(req, "application/vnd.orbit.frame");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    if (frame == NULL) return httpd_resp_send(req, (const char *)header, sizeof(header));
+    uint8_t *chunk = heap_caps_malloc(REMOTE_CHUNK, MALLOC_CAP_SPIRAM);
+    if (chunk == NULL) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memoria insufficiente");
+    esp_err_t err = httpd_resp_send_chunk(req, (char *)header, sizeof(header));
+    size_t used = 0;
+    for (uint32_t y = 0; y < h && err == ESP_OK; y++) {
+        const uint16_t *row = (const uint16_t *)(frame->data + y * frame->header.stride);
+        for (uint32_t x = 0; x < w && err == ESP_OK;) {
+            uint16_t color = row[x];
+            uint16_t count = 1;
+            if (rle) while (x + count < w && row[x + count] == color && count < UINT16_MAX) count++;
+            if (rle) { chunk[used++] = (uint8_t)count; chunk[used++] = (uint8_t)(count >> 8); }
+            chunk[used++] = (uint8_t)color; chunk[used++] = (uint8_t)(color >> 8);
+            x += count;
+            if (used == REMOTE_CHUNK) { err = httpd_resp_send_chunk(req, (char *)chunk, used); used = 0; }
+        }
+    }
+    if (err == ESP_OK && used != 0) err = httpd_resp_send_chunk(req, (char *)chunk, used);
+    if (err == ESP_OK) err = httpd_resp_send_chunk(req, NULL, 0);
+    free(chunk);
+    return err;
+}
+
+/* GET /api/remote/frame?format=orf2&seq=N&wait=ms: starts (or keeps) the mirror
+ * session, waits a little for a new render pass, sends what changed since seq. */
+static esp_err_t remote_mirror_frame(httpd_req_t *req, const char *query)
+{
+    char value[16];
+    bool known = httpd_query_key_value(query, "seq", value, sizeof(value)) == ESP_OK;
+    uint32_t client_seq = known ? (uint32_t)strtoul(value, NULL, 10) : 0;
+    int wait_ms = httpd_query_key_value(query, "wait", value, sizeof(value)) == ESP_OK ? atoi(value) : REMOTE_WAIT_MAX_MS;
+    if (wait_ms < 0) wait_ms = 0;
+    if (wait_ms > REMOTE_WAIT_MAX_MS) wait_ms = REMOTE_WAIT_MAX_MS;
+
+    lv_port_mirror_lease();
+    bool full = !known || client_seq != s_mirror_served;
+    if (!lv_port_mirror_active())
+    {
+        remote_call_t start = {.action = REMOTE_MIRROR_START, .err = ESP_FAIL};
+        if (!remote_run(&start)) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Interfaccia occupata");
+        if (start.err == ESP_ERR_INVALID_STATE)
+        {
+            httpd_resp_set_status(req, "409 Conflict");
+            return httpd_resp_sendstr(req, "Dispositivo in uso: riprova tra qualche secondo");
+        }
+        if (start.err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memoria insufficiente");
+        mirror_hold();
+        /* The first full pass fills the shadow. */
+        for (int waited = 0; lv_port_mirror_seq() == start.seq && waited < 1000; waited += 10) vTaskDelay(pdMS_TO_TICKS(10));
+        full = true;
+    }
+    else mirror_hold();
+
+    /* Nothing new yet: wait for the next render pass (bounded). */
+    for (int waited = 0; !full && lv_port_mirror_seq() == client_seq && waited < wait_ms; waited += 10)
+        vTaskDelay(pdMS_TO_TICKS(10));
+    lv_port_mirror_lease();
+
+    remote_call_t call = {.action = REMOTE_MIRROR_TAKE, .full = full};
+    if (!remote_run(&call)) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Schermo non disponibile");
+    if (full && call.screen == NULL)
+    {
+        /* Session ended between start and take (device used locally). */
+        httpd_resp_set_status(req, "409 Conflict");
+        return httpd_resp_sendstr(req, "Dispositivo in uso: riprova tra qualche secondo");
+    }
+    s_mirror_served = call.seq;
+    esp_err_t err = remote_orf2(req, &call);
+    if (call.screen != NULL)
+    {
+        call.action = REMOTE_FREE;
+        remote_run(&call);
+    }
+    return err;
+}
+
 static esp_err_t remote_frame(httpd_req_t *req)
 {
     if (!settings_get()->remote_ui_enabled) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Schermo remoto disattivato");
     remote_call_t call = {.done = xSemaphoreCreateBinary()};
     if (call.done == NULL) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memoria insufficiente");
+    char query[64] = "", format[16] = "";
+    bool has_format = httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+        httpd_query_key_value(query, "format", format, sizeof(format)) == ESP_OK;
+    if (has_format && strcmp(format, "orf2") == 0)
+    {
+        vSemaphoreDelete(call.done);
+        return remote_mirror_frame(req, query);
+    }
+    bool compact = has_format && strcmp(format, "orf1") == 0;
     power_wake(POWER_WAKE_OTHER);
     bool ready = remote_run(&call) && call.screen != NULL;
     esp_err_t err = ESP_FAIL;
-    char query[48] = "", format[16] = "";
-    bool compact = httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
-        httpd_query_key_value(query, "format", format, sizeof(format)) == ESP_OK && strcmp(format, "orf1") == 0;
     wifi_set_fast(true);
     if (ready && compact) err = remote_compact(req, call.screen);
     else if (ready)
@@ -961,12 +1129,13 @@ static void remote_gesture_start(void *arg)
 static esp_err_t remote_input(httpd_req_t *req)
 {
     if (!settings_get()->remote_ui_enabled) return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Schermo remoto disattivato");
+    lv_port_mirror_lease();
     cJSON *json = body(req);
     const cJSON *kind = cJSON_GetObjectItemCaseSensitive(json, "action");
     bool ok = false;
     if (cJSON_IsString(kind) && (strcmp(kind->valuestring, "back") == 0 || strcmp(kind->valuestring, "home") == 0))
     {
-        remote_call_t call = {.done = xSemaphoreCreateBinary(), .action = strcmp(kind->valuestring, "back") == 0 ? 2 : 3};
+        remote_call_t call = {.done = xSemaphoreCreateBinary(), .action = strcmp(kind->valuestring, "back") == 0 ? REMOTE_BACK : REMOTE_HOME};
         if (call.done != NULL)
         {
             power_wake(POWER_WAKE_OTHER);
@@ -1011,6 +1180,21 @@ static esp_err_t remote_input(httpd_req_t *req)
     return reply(req, ok, ok ? "Comando eseguito" : "Comando non valido");
 }
 
+/* POST /api/remote/session {"active": false}: the client closed, the panel comes back now. */
+static esp_err_t remote_session_post(httpd_req_t *req)
+{
+    cJSON *json = body(req);
+    const cJSON *active = cJSON_GetObjectItemCaseSensitive(json, "active");
+    bool ok = cJSON_IsFalse(active);
+    if (ok && lv_port_mirror_active())
+    {
+        remote_call_t call = {.action = REMOTE_MIRROR_STOP};
+        ok = remote_run(&call);
+    }
+    cJSON_Delete(json);
+    return reply(req, ok, ok ? "Schermo restituito al dispositivo" : "Richiesta non valida");
+}
+
 #endif
 
 /* Device services are independent of LVGL snapshots. */
@@ -1025,6 +1209,8 @@ static esp_err_t remote_config_get(httpd_req_t *req)
     cJSON_AddBoolToObject(out, "enabled", settings_get()->remote_ui_enabled);
     cJSON_AddStringToObject(out, "capture_backend", "display_flush");
     cJSON_AddBoolToObject(out, "compact_frames", true);
+    cJSON_AddBoolToObject(out, "mirror_frames", true);   /* ORF2: panel off, changed areas only */
+    cJSON_AddBoolToObject(out, "mirror_active", lv_port_mirror_active());
     cJSON_AddNumberToObject(out, "retained_frame_bytes", remote_ui_pending() ? -1 : 0);
     cJSON_AddBoolToObject(out, "ui_pending", remote_ui_pending());
     return send_out(req, out);
@@ -1297,6 +1483,7 @@ void web_system_register(httpd_handle_t server)
 #if CONFIG_WATCH_REMOTE_UI
         {.uri = "/api/remote/frame", .method = HTTP_GET, .handler = remote_frame},
         {.uri = "/api/remote/input", .method = HTTP_POST, .handler = remote_input},
+        {.uri = "/api/remote/session", .method = HTTP_POST, .handler = remote_session_post},
 #endif
         {.uri = "/api/ecos", .method = HTTP_GET, .handler = ecos_get},
 #if CONFIG_WATCH_ECOS_PAIRING
@@ -1325,4 +1512,7 @@ void web_system_register(httpd_handle_t server)
     {
         web_route(server, &routes[i]);
     }
+#if CONFIG_WATCH_REMOTE_UI
+    lv_port_mirror_set_stop_cb(mirror_stopped);
+#endif
 }

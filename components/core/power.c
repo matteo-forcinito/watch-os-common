@@ -44,6 +44,7 @@ typedef enum
     MSG_WAKE,
     MSG_SLEEP,
     MSG_SETTINGS,
+    MSG_MIRROR,
 } msg_type_t;
 
 typedef struct
@@ -64,8 +65,15 @@ static esp_pm_lock_handle_t s_usb_lock = NULL;   /* no light sleep while the cab
 static bool s_usb_power = false;
 static bool s_inputs_started;
 static _Atomic int s_cpu_boost = 0;
+static bool s_mirror = false;   /* remote mirror: the panel sleeps, the UI keeps running (power task) */
 
 /* ------------------------------------------------------------ helpers */
+
+/* The physical panel and touch are in use (not headless, not mirrored). */
+static bool panel_used(void)
+{
+    return !lv_port_headless() && !s_mirror;
+}
 
 static void post(msg_type_t type, int a, int b)
 {
@@ -86,7 +94,7 @@ static void set_brightness(uint8_t target, bool fade)
 {
     if (!fade)
     {
-        if (!lv_port_headless()) display_set_brightness(target);
+        if (panel_used()) display_set_brightness(target);
         s_brightness_now = target;
         return;
     }
@@ -96,7 +104,7 @@ static void set_brightness(uint8_t target, bool fade)
     for (int i = 1; i <= FADE_STEPS; i++)
     {
         int level = from + ((int)target - from) * i / FADE_STEPS;
-        if (!lv_port_headless()) display_set_brightness((uint8_t)level);
+        if (panel_used()) display_set_brightness((uint8_t)level);
         vTaskDelay(pdMS_TO_TICKS(FADE_STEP_MS));
     }
 
@@ -122,10 +130,10 @@ static void go_on(void)
 
     if (from == POWER_SCREEN_OFF)
     {
-        if (!lv_port_headless()) display_sleep(false);
+        if (panel_used()) display_sleep(false);
     }
 
-    if (!lv_port_headless()) touch_set_low_power(false);
+    if (panel_used()) touch_set_low_power(false);
     set_screen(POWER_SCREEN_ON);   /* the app manager puts the normal screen back */
     lv_port_set_running(true);
 
@@ -157,7 +165,7 @@ static void go_aod(void)
     set_screen(POWER_SCREEN_AOD);  /* the app manager shows the always-on face */
     vTaskDelay(pdMS_TO_TICKS(20));
     lv_port_refresh_now();
-    if (!lv_port_headless()) touch_set_low_power(true);
+    if (panel_used()) touch_set_low_power(true);
 
     ESP_LOGI(TAG, "Always-on display");
 }
@@ -172,8 +180,8 @@ static void go_off(void)
     set_brightness(0, s_screen == POWER_SCREEN_ON || s_screen == POWER_SCREEN_DIM);
     set_screen(POWER_SCREEN_OFF);
     lv_port_set_running(false);
-    if (!lv_port_headless()) display_sleep(true);
-    if (!lv_port_headless()) touch_set_low_power(true);
+    if (panel_used()) display_sleep(true);
+    if (panel_used()) touch_set_low_power(true);
 
     ESP_LOGI(TAG, "Screen off");
 }
@@ -188,6 +196,67 @@ static void go_idle(void)
     {
         go_off();
     }
+}
+
+/*
+ * Remote mirror on: the UI stays "on" (rendering, no timeout) for the remote
+ * client while the panel is dark and asleep. Off: the panel shows the current
+ * screen again and the normal timeout restarts.
+ */
+static void set_mirror(bool on)
+{
+    if (on == s_mirror)
+    {
+        return;
+    }
+
+    if (on)
+    {
+        bool lit = s_screen != POWER_SCREEN_OFF;
+
+        s_mirror = true;   /* first: go_on() must not light the panel */
+        go_on();           /* logical screen on: apps show their normal screen */
+
+        if (!lv_port_headless())
+        {
+            if (lit)
+            {
+                display_set_brightness(0);
+                display_sleep(true);
+            }
+
+            touch_set_low_power(false);   /* a touch on the device takes it back */
+        }
+
+        ESP_LOGI(TAG, "Panel off: screen mirrored remotely");
+        return;
+    }
+
+    s_mirror = false;
+    atomic_store(&s_last_activity_us, now_us());
+
+    if (s_screen == POWER_SCREEN_OFF)
+    {
+        return;   /* went to sleep meanwhile: the panel is already asleep */
+    }
+
+    if (!lv_port_headless())
+    {
+        display_sleep(false);
+        touch_set_low_power(s_screen == POWER_SCREEN_AOD);
+    }
+
+    lv_port_refresh_now();
+    s_brightness_now = 0;
+    set_brightness(s_screen == POWER_SCREEN_AOD ? AOD_BRIGHTNESS : settings_get()->brightness, true);
+    ESP_LOGI(TAG, "Panel back on");
+}
+
+/* lvgl task: a button pressed on the device ends the remote mirror. */
+static void stop_mirror_ui(void *arg)
+{
+    (void)arg;
+    lv_port_mirror_stop(true);
 }
 
 /* ------------------------------------------------------------ inputs */
@@ -218,6 +287,12 @@ static void handle_button(button_id_t button, button_event_t event)
     bool screen_was_on = s_screen == POWER_SCREEN_ON || s_screen == POWER_SCREEN_DIM;
 
     atomic_store(&s_last_activity_us, now_us());
+
+    if (s_mirror)
+    {
+        ui_async(stop_mirror_ui, NULL);   /* the device is used locally again: nothing more */
+        return;
+    }
 
     if (!screen_was_on)
     {
@@ -330,7 +405,7 @@ static void power_task(void *arg)
         int64_t now = now_us();
 
         /* Screen timeouts. */
-        if ((s_screen == POWER_SCREEN_ON || s_screen == POWER_SCREEN_DIM) && atomic_load(&s_keep_on) == 0)
+        if ((s_screen == POWER_SCREEN_ON || s_screen == POWER_SCREEN_DIM) && atomic_load(&s_keep_on) == 0 && !s_mirror)
         {
             int64_t idle_ms = (now - atomic_load(&s_last_activity_us)) / 1000;
             int64_t timeout_ms = (int64_t)settings_get()->screen_timeout_s * 1000;
@@ -405,8 +480,12 @@ static void power_task(void *arg)
                 go_idle();
                 break;
 
+            case MSG_MIRROR:
+                set_mirror(msg.a != 0);
+                break;
+
             case MSG_SETTINGS:
-                if (s_screen == POWER_SCREEN_ON)
+                if (s_screen == POWER_SCREEN_ON && !s_mirror)
                 {
                     set_brightness(settings_get()->brightness, false);
                 }
@@ -504,6 +583,11 @@ void power_keep_screen_on(bool keep)
 power_screen_t power_screen(void)
 {
     return s_screen;
+}
+
+void power_remote_mirror(bool on)
+{
+    post(MSG_MIRROR, on, 0);
 }
 
 void power_settings_changed(void)

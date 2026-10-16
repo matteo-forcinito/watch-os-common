@@ -201,9 +201,12 @@ typedef struct {
     uint16_t conn;
     char request[33];
     char network[33];
+    char password[65];
+    bool provision_network;
     bool network_choice;
     cJSON *reply;
 } control_job_t;
+static void control_erase(void *data, size_t size) { volatile unsigned char *p = data; while (size--) *p++ = 0; }
 static bool control_current(control_job_t *job) { return s_running && job->epoch == s_control_epoch; }
 static bool control_trusted(control_job_t *job)
 {
@@ -231,21 +234,25 @@ static void control_worker(void *arg)
         portEXIT_CRITICAL(&s_lock);
         if (job->network_choice && job->network[0] == '\0') err = wifi_select_automatic();
         else if (job->network[0] != '\0') {
-            char previous[33] = "";
+            char previous[33] = "", preferred[33] = "";
             wifi_current_ssid(previous, sizeof(previous));
+            wifi_preferred_ssid(preferred, sizeof(preferred));
             fw_update_phase_t phase = fw_update_phase();
             bool busy = storage_files_busy() || phase == FW_UPDATE_CHECKING ||
                 phase == FW_UPDATE_WRITING || phase == FW_UPDATE_RESTARTING;
-            err = busy ? ESP_ERR_INVALID_STATE : wifi_connect_saved(job->network, 12000);
+            err = busy ? ESP_ERR_INVALID_STATE : job->provision_network ?
+                wifi_connect_new(job->network, job->password, 12000) : wifi_connect_saved(job->network, 12000);
             if (err == ESP_OK) wifi_release(); /* Web owns the lasting reference. */
             else if (!busy && previous[0] != '\0' && !wifi_is_connected()) {
                 /* A failed explicit choice must not strand the previous session. */
                 if (wifi_connect_saved(previous, 12000) == ESP_OK) wifi_release();
+                wifi_set_preferred(preferred);
             }
         } else err = ESP_OK;
         if (err == ESP_OK) err = held ? ESP_OK : web_server_start();
         acquired = !held && err == ESP_OK;
     }
+    control_erase(job->password, sizeof(job->password));
     portENTER_CRITICAL(&s_lock);
     bool current = job->epoch == s_control_epoch && job->conn == s_conn;
     if (current && acquired) s_control_lease = true;
@@ -270,6 +277,7 @@ static void control_worker(void *arg)
         cJSON_AddStringToObject(job->reply, "preferred_network", ssid);
         cJSON_AddBoolToObject(job->reply, "wifi_connected", wifi_is_connected());
         cJSON_AddBoolToObject(job->reply, "network_control", true);
+        cJSON_AddBoolToObject(job->reply, "network_provisioning", true);
         wifi_known_t *known = calloc(WIFI_KNOWN_MAX, sizeof(*known));
         cJSON *networks = cJSON_AddArrayToObject(job->reply, "networks");
         if (known != NULL) {
@@ -312,13 +320,23 @@ static void control_request(const cJSON *msg)
     if (network != NULL && (!cJSON_IsString(network) || strlen(network->valuestring) > 32)) {
         atomic_store(&s_control_busy, false); return;
     }
+    const cJSON *password = cJSON_GetObjectItemCaseSensitive(msg, "password");
+    if (password != NULL && (!cJSON_IsString(password) || network == NULL ||
+        network->valuestring[0] == '\0' || strlen(password->valuestring) > 64 ||
+        (strlen(password->valuestring) > 0 && strlen(password->valuestring) < 8) ||
+        (strlen(password->valuestring) == 64 && strspn(password->valuestring, "0123456789abcdefABCDEF") != 64))) {
+        atomic_store(&s_control_busy, false); return;
+    }
     control_job_t *job = calloc(1, sizeof(*job));
     if (job == NULL) { atomic_store(&s_control_busy, false); return; }
     job->epoch = s_control_epoch; job->conn = s_conn;
     memcpy(job->request, request, sizeof(job->request));
     job->network_choice = network != NULL;
+    job->provision_network = password != NULL;
+    if (password != NULL) snprintf(job->password, sizeof(job->password), "%s", password->valuestring);
     if (network != NULL) snprintf(job->network, sizeof(job->network), "%s", network->valuestring);
     if (!sys_task_create(control_worker, "ble_control", 4096, job, 2, SYS_CORE_ANY)) {
+        control_erase(job->password, sizeof(job->password));
         free(job); atomic_store(&s_control_busy, false);
     }
 }
@@ -432,6 +450,8 @@ static void handle_line(char *line)
             if (msg != NULL)
             {
                 handle_gb(msg);
+                cJSON *secret = cJSON_GetObjectItemCaseSensitive(msg, "password");
+                if (cJSON_IsString(secret)) control_erase(secret->valuestring, strlen(secret->valuestring));
                 cJSON_Delete(msg);
             }
         }
@@ -448,6 +468,7 @@ static void receive(const uint8_t *data, size_t length)
         {
             s_line[s_line_len] = '\0';
             handle_line(s_line);
+            control_erase(s_line, s_line_len);
             s_line_len = 0;
         }
         else if (s_line_len < BLE_LINE_MAX - 1)

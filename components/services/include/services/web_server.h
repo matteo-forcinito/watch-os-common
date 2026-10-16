@@ -29,6 +29,11 @@ esp_err_t web_server_start_wifi_only(void);
 /* Recovery worker only: fallback hotspot and bounded network retry. */
 void web_server_recovery_poll(void);
 void web_server_stop(void);
+
+/* One more user of the server that is already running (release it with
+ * web_server_stop()). Never waits, so request handlers may call it; false when
+ * the server is not running or is being started/stopped. */
+bool web_server_retain(void);
 bool web_server_running(void);
 
 /* Why the last start failed (for the screen). */

@@ -44,6 +44,8 @@ def main():
     project = a.project.resolve()
     notes = project / 'release/notes' / (a.version + '.md')
     if not notes.is_file(): p.error('Release notes are missing')
+    # First line of the notes: the short text the watch shows in "All versions".
+    summary = next((l.strip() for l in notes.read_text(encoding='utf-8').splitlines() if l.strip()), '')[:79]
     a.output.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix=a.product+'-'+a.version+'-', dir=a.output.resolve()))
     def gh(*args, optional=False):
@@ -142,7 +144,7 @@ def main():
         subprocess.run([sys.executable,str(catalog_tool),str(catalog),'--version',a.version,
           '--url','https://github.com/'+public+'/releases/download/'+tag+'/firmware.bin',
           '--size',str(len(data)),'--sha256',hashlib.sha256(data).hexdigest(),
-          '--notes','Gestione diretta, mirroring opzionale ed Ecosystem.'],check=True)
+          '--notes',summary],check=True)
         body={'message':a.product+' '+a.version,'content':base64.b64encode(catalog.read_bytes()).decode('ascii')}
         if current: body['sha']=current['sha']
         result=put(catalog_path,body)

@@ -134,4 +134,27 @@ void lv_port_set_focus_color(lv_color_t color);
  * normal flush, including overlays. Caller owns the returned draw buffer. */
 lv_draw_buf_t *lv_port_capture_frame(void);
 
+/*
+ * Remote mirror: the screen is shown only to a remote client (web, companion).
+ * While active the panel sleeps, the physical touch is not passed to the UI
+ * (a touch or a button ends the session and gives the device back), and each
+ * rendered frame lands in a PSRAM shadow. The session ends by itself when no
+ * lv_port_mirror_lease() arrives for 4 s.
+ *
+ * start / stop / take: lvgl task only. active / lease / seq: any task.
+ * start: ESP_ERR_INVALID_STATE for 10 s after the device was used locally.
+ * stop(takeover): takeover = the device was used locally (blocks new starts).
+ * take: copy of the area changed since the last take (everything when `full`),
+ * NULL when nothing changed. The caller owns it (destroy it in the lvgl task).
+ * seq: increases after each completed render pass.
+ */
+esp_err_t lv_port_mirror_start(void);
+void lv_port_mirror_stop(bool takeover);
+lv_draw_buf_t *lv_port_mirror_take(bool full, lv_area_t *area);
+bool lv_port_mirror_active(void);
+void lv_port_mirror_lease(void);
+uint32_t lv_port_mirror_seq(void);
+/* Called in the lvgl task whenever a mirror session ends (never block in it). */
+void lv_port_mirror_set_stop_cb(void (*cb)(void));
+
 #endif

@@ -66,6 +66,12 @@ void power_keep_screen_on(bool keep);
 
 power_screen_t power_screen(void);
 
+/*
+ * Remote mirror (lv_port_mirror_*) on/off: the panel sleeps while the UI keeps
+ * running for a remote client, without screen timeout. Any task.
+ */
+void power_remote_mirror(bool on);
+
 /* Settings changed (brightness, timeout...): apply now. */
 void power_settings_changed(void);
 

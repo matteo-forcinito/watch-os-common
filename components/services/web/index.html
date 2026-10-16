@@ -72,12 +72,12 @@ details.card>summary{cursor:pointer;font-weight:700;padding:8px 0}details.card[o
 <section class="view" id="v-weather"><div class="card"><h2>Meteo</h2><p id="weather-status" role="status"></p><div id="weather-details"></div><button class="btn" onclick="loadTelemetry('weather').catch(e => kit.toast(e.message, 'bad'))">Aggiorna</button></div></section>
 <section class="view" id="v-remote">
   <div class="card"><h2>Schermo remoto</h2>
-    <p class="faint">Opzione di emergenza: preferisci le pagine dedicate delle app. Disattivato non vengono allocate catture. Usa le app con tocchi e scorrimenti. In recovery lo schermo e virtuale: il pannello fisico resta spento.</p>
+    <p class="faint">Durante la trasmissione lo schermo del dispositivo resta spento e l'interfaccia appare solo qui: tocca e scorri sull'immagine. Toccando il dispositivo o premendo un tasto lo schermo torna sul dispositivo. Disattivato non vengono allocate catture.</p>
     <div class="row"><button class="btn" onclick="remoteAction('back')">Indietro</button>
       <button class="btn" onclick="remoteAction('home')">Home</button>
-      <button class="btn" onclick="remoteFrame()">Aggiorna</button>
+      <button class="btn" onclick="remoteFrame()">Trasmetti</button>
       <label><input type="checkbox" id="remote-enable" onchange="remoteEnable(this.checked)"> Abilita schermo remoto</label>
-      <label><input type="checkbox" id="remote-live"> Aggiornamento automatico</label></div>
+      <label><input type="checkbox" id="remote-live"> Trasmissione continua</label></div>
     <div class="row"><button class="btn" onclick="kit.try(() => kit.api('/api/display', {body:{on:true}}))">Accendi schermo</button><button class="btn" onclick="kit.try(() => kit.api('/api/display', {body:{on:false}}))">Spegni schermo</button></div>
     <p id="remote-status" class="faint" role="status"></p>
     <canvas id="remote-screen" style="display:block;max-width:100%;width:360px;touch-action:none;background:#000;border-radius:16px" aria-label="Schermo interattivo del dispositivo"></canvas>
@@ -626,71 +626,82 @@ async function ecosAction(action) {
   }
 }
 
-let remoteBusy = false, remoteStart = null;
+let remoteStart = null, remoteSeq = null, remoteRunning = false, remoteInputBusy = false;
 async function loadRemote() {
   const state = await kit.api('/api/remote');
   $('#remote-enable').checked = state.enabled;
-  $('#remote-status').textContent = state.enabled ? 'Attivo, cattura su richiesta' : 'Disattivato';
+  $('#remote-status').textContent = !state.enabled ? 'Disattivato' :
+    state.mirror_frames ? 'Pronto: con "Trasmetti" lo schermo del dispositivo si spegne e appare qui' : 'Attivo, cattura su richiesta';
+  remoteKick();
 }
 async function remoteEnable(enabled) {
   await kit.try(async () => {
     await kit.api('/api/remote', {body:{enabled}});
-    if (!enabled) { const c = $('#remote-screen'); c.width = c.height = 0; remoteStart = null; }
+    if (!enabled) { const c = $('#remote-screen'); c.width = c.height = 0; remoteStart = null; remoteSeq = null; }
     await loadRemote();
   });
 }
-function decodeOrbitFrame(buffer) {
+/* ORF2: 28-byte header, then RGB565 (raw or count/color runs) for the changed area only. */
+function decodeOrf2(buffer) {
   const bytes = new Uint8Array(buffer);
-  if (bytes.length > 4*1024*1024) throw new Error('Frame troppo grande');
-  if (bytes.length < 4 || bytes[0]!==79 || bytes[1]!==82 || bytes[2]!==70 || bytes[3]!==49) return null;
-  if (bytes.length < 16) throw new Error('Frame incompleto');
-  const view = new DataView(buffer), width=view.getUint16(4,true), height=view.getUint16(6,true);
-  const flags=view.getUint32(8,true), length=view.getUint32(12,true), count=width*height;
-  if (!width || !height || width>2048 || height>2048 || count>1024*1024 || flags>1 || length!==bytes.length-16 ||
-      (flags===0 ? length!==count*2 : length%4!==0)) throw new Error('Frame non valido');
-  const pixels = new Uint8ClampedArray(count*4); let written=0, out=0;
-  for (let pos=16;pos<bytes.length;) {
-    const run=flags===1?view.getUint16(pos,true):1; if(flags===1)pos+=2;
-    const color=view.getUint16(pos,true);pos+=2;
-    if(!run || written+run>count)throw new Error('Run non valido');
-    const red=Math.floor(((color>>11)&31)*255/31),green=Math.floor(((color>>5)&63)*255/63),blue=Math.floor((color&31)*255/31);
-    for(let n=0;n<run;n++){pixels[out++]=red;pixels[out++]=green;pixels[out++]=blue;pixels[out++]=255;}
-    written+=run;
+  if (bytes.length < 28 || bytes[0]!==79 || bytes[1]!==82 || bytes[2]!==70 || bytes[3]!==50) throw new Error('Frame non valido');
+  const v = new DataView(buffer), f = {sw:v.getUint16(4,true), sh:v.getUint16(6,true), x:v.getUint16(8,true), y:v.getUint16(10,true),
+    w:v.getUint16(12,true), h:v.getUint16(14,true), seq:v.getUint32(16,true), flags:v.getUint32(20,true)};
+  const length = v.getUint32(24,true), count = f.w*f.h;
+  if (!f.sw || !f.sh || f.sw>2048 || f.sh>2048 || f.x+f.w>f.sw || f.y+f.h>f.sh || length!==bytes.length-28 ||
+      (count && ((f.flags&1) ? length%4!==0 : length!==count*2))) throw new Error('Frame non valido');
+  if (!count) return f;
+  const pixels = new Uint8ClampedArray(count*4), rle = (f.flags&1)!==0; let written=0, out=0;
+  for (let pos=28; pos<bytes.length;) {
+    const run = rle ? v.getUint16(pos,true) : 1; if (rle) pos += 2;
+    const c = v.getUint16(pos,true); pos += 2;
+    if (!run || written+run>count) throw new Error('Run non valido');
+    const r=((c>>11)&31)*255/31|0, g=((c>>5)&63)*255/63|0, b=(c&31)*255/31|0;
+    for (let n=0;n<run;n++) { pixels[out++]=r; pixels[out++]=g; pixels[out++]=b; pixels[out++]=255; }
+    written += run;
   }
-  if(written!==count)throw new Error('Pixel mancanti');
-  return {width,height,pixels};
+  if (written!==count) throw new Error('Pixel mancanti');
+  f.pixels = pixels;
+  return f;
 }
-let remoteInputBusy=false;
-async function remoteFrame() {
-  if (remoteBusy || remoteInputBusy || document.hidden || !$('#remote-enable').checked) return;
-  remoteBusy = true;
-  const abort = new AbortController(), deadline=setTimeout(()=>abort.abort(),8000);
+function remoteWanted() {
+  return S.ready && current === 'v-remote' && !document.hidden && $('#remote-enable').checked && $('#remote-live').checked;
+}
+/* One request at a time: the watch answers as soon as the screen changes (at most 250 ms later). */
+async function remoteLoop() {
+  if (remoteRunning) return;
+  remoteRunning = true;
+  const canvas = $('#remote-screen'), ctx = canvas.getContext('2d');
   try {
-    const response = await kit.api('/api/remote/frame?format=orf1', {raw:true,signal:abort.signal});
-    const data=await response.arrayBuffer(), decoded=decodeOrbitFrame(data), canvas=$('#remote-screen');
-    if(decoded) {
-      canvas.width=decoded.width;canvas.height=decoded.height;
-      canvas.getContext('2d').putImageData(new ImageData(decoded.pixels,decoded.width,decoded.height),0,0);
-    } else {
-      const bitmap=await createImageBitmap(new Blob([data],{type:'image/bmp'}));
-      canvas.width=bitmap.width;canvas.height=bitmap.height;
-      canvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
+    while (remoteWanted()) {
+      if (remoteInputBusy) { await new Promise(r => setTimeout(r, 15)); continue; }
+      const abort = new AbortController(), deadline = setTimeout(() => abort.abort(), 6000);
+      try {
+        const q = remoteSeq === null ? '' : '&seq=' + remoteSeq;
+        const r = await kit.api('/api/remote/frame?format=orf2&wait=250' + q, {raw:true, signal:abort.signal});
+        const f = decodeOrf2(await r.arrayBuffer());
+        if (canvas.width !== f.sw || canvas.height !== f.sh) { canvas.width = f.sw; canvas.height = f.sh; }
+        if (f.pixels) ctx.putImageData(new ImageData(f.pixels, f.w, f.h), f.x, f.y);
+        remoteSeq = f.seq;
+        $('#remote-status').textContent = 'In trasmissione: lo schermo del dispositivo è spento';
+      } catch (e) {
+        remoteSeq = null;
+        $('#remote-status').textContent = e.message;
+        await new Promise(r => setTimeout(r, 1500));
+      } finally { clearTimeout(deadline); }
     }
-    $('#remote-status').textContent = 'Connesso';
-  } catch (e) { $('#remote-status').textContent = e.message; }
-  finally { clearTimeout(deadline); remoteBusy = false; }
+  } finally { remoteRunning = false; }
+  remoteSeq = null;
+  if ($('#remote-enable').checked) kit.api('/api/remote/session', {body:{active:false}}).catch(() => {});
 }
+function remoteKick() { if (remoteWanted()) remoteLoop(); }
+function remoteFrame() { $('#remote-live').checked = true; remoteKick(); }
 async function remoteAction(action, points = {}) {
-  if(remoteInputBusy || !$('#remote-enable').checked) return;
-  remoteInputBusy=true;
-  try {
-    while(remoteBusy)await new Promise(resolve=>setTimeout(resolve,20));
-    await kit.try(async()=>{
-      await kit.api('/api/remote/input',{body:{action,...points}});
-      if(action==='swipe'||action==='tap')await new Promise(resolve=>setTimeout(resolve,action==='swipe'?400:120));
-    });
-  } finally { remoteInputBusy=false; }
-  await remoteFrame();
+  if (remoteInputBusy || !$('#remote-enable').checked) return;
+  remoteInputBusy = true;
+  try { await kit.try(() => kit.api('/api/remote/input', {body:{action, ...points}})); }
+  finally { remoteInputBusy = false; }
+  remoteKick();
 }
 function remotePoint(event) {
   const canvas = $('#remote-screen'), rect = canvas.getBoundingClientRect();
@@ -707,9 +718,9 @@ $('#remote-screen').addEventListener('pointerup', e => {
   remoteAction(swipe?'swipe':'tap', {...start,end_x:end.x,end_y:end.y});
 });
 $('#remote-screen').addEventListener('pointercancel', () => { remoteStart = null; });
-setInterval(() => {
-  if (S.ready && current === 'v-remote' && $('#remote-live').checked) remoteFrame();
-}, 1500);
+$('#remote-live').addEventListener('change', remoteKick);
+document.addEventListener('visibilitychange', remoteKick);
+setInterval(remoteKick, 1000);
 
 async function loadStorage() {
   const d = await kit.api('/api/storage');

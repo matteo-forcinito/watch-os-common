@@ -1145,6 +1145,22 @@ void web_server_recovery_poll(void)
     xSemaphoreGive(s_lock);
 }
 
+bool web_server_retain(void)
+{
+    lock_init();
+    if (xSemaphoreTake(s_lock, 0) != pdTRUE)
+    {
+        return false;   /* a start or stop is running: it may be waiting for this very request */
+    }
+    bool ok = s_server != NULL;
+    if (ok)
+    {
+        s_users++;
+    }
+    xSemaphoreGive(s_lock);
+    return ok;
+}
+
 void web_server_stop(void)
 {
     lock_init();

@@ -968,6 +968,30 @@ int wifi_scan_detail(wifi_ap_detail_t *out, int max)
     return count;
 }
 
+static esp_err_t save_preferred_locked(const char *ssid)
+{
+    if (strcmp(s_preferred, ssid) == 0) return ESP_OK;
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = ssid[0] != '\0' ? nvs_set_str(nvs, "preferred", ssid) : nvs_erase_key(nvs, "preferred");
+        if (err == ESP_ERR_NVS_NOT_FOUND && ssid[0] == '\0') err = ESP_OK;
+        if (err == ESP_OK) err = nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    if (err == ESP_OK) snprintf(s_preferred, sizeof(s_preferred), "%s", ssid);
+    return err;
+}
+
+esp_err_t wifi_set_preferred(const char *ssid)
+{
+    if (ssid == NULL || strlen(ssid) > 32) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    esp_err_t err = ssid[0] != '\0' && known_find(ssid) < 0 ? ESP_ERR_NOT_FOUND : save_preferred_locked(ssid);
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
 esp_err_t wifi_connect_new(const char *ssid, const char *password, uint32_t timeout_ms)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -981,6 +1005,8 @@ esp_err_t wifi_connect_new(const char *ssid, const char *password, uint32_t time
     {
         known_put(ssid, password);
         err = known_save();
+        if (err == ESP_OK && save_preferred_locked(ssid) != ESP_OK)
+            ESP_LOGW(TAG, "Connected; preferred network could not be persisted");
     }
     if (err != ESP_OK && --s_refs == 0)
     {
@@ -1001,18 +1027,7 @@ void wifi_preferred_ssid(char *out, size_t size)
 
 esp_err_t wifi_select_automatic(void)
 {
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    nvs_handle_t nvs;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
-    if (err == ESP_OK) {
-        err = nvs_erase_key(nvs, "preferred");
-        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
-        if (err == ESP_OK) err = nvs_commit(nvs);
-        nvs_close(nvs);
-    }
-    if (err == ESP_OK) s_preferred[0] = '\0';
-    xSemaphoreGive(s_mutex);
-    return err;
+    return wifi_set_preferred("");
 }
 
 /* Select a saved profile without exposing or rewriting its credentials. */
@@ -1025,17 +1040,8 @@ esp_err_t wifi_connect_saved(const char *ssid, uint32_t timeout_ms)
     s_refs++;
     esp_timer_stop(s_off_timer);
     esp_err_t err = join(s_known[index].ssid, s_known[index].password, timeout_ms);
-    if (err == ESP_OK && strcmp(s_preferred, ssid) != 0) {
-        nvs_handle_t nvs;
-        esp_err_t saved = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
-        if (saved == ESP_OK) {
-            saved = nvs_set_str(nvs, "preferred", ssid);
-            if (saved == ESP_OK) saved = nvs_commit(nvs);
-            nvs_close(nvs);
-        }
-        if (saved == ESP_OK) snprintf(s_preferred, sizeof(s_preferred), "%s", ssid);
-        else ESP_LOGW(TAG, "Connected; preferred network could not be persisted: %s", esp_err_to_name(saved));
-    }
+    if (err == ESP_OK && save_preferred_locked(ssid) != ESP_OK)
+        ESP_LOGW(TAG, "Connected; preferred network could not be persisted");
     if (err != ESP_OK && --s_refs == 0) esp_timer_start_once(s_off_timer, 1000);
     xSemaphoreGive(s_mutex);
     return err;

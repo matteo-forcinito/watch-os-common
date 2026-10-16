@@ -109,6 +109,8 @@ esp_err_t wifi_connect_saved(const char *ssid, uint32_t timeout_ms);
 void wifi_preferred_ssid(char *out, size_t size);
 /* Return to strongest-known selection on the next reconnect, retaining the current link. */
 esp_err_t wifi_select_automatic(void);
+/* Persist a known SSID (or empty for automatic) without changing the live link. */
+esp_err_t wifi_set_preferred(const char *ssid);
 
 /* Known networks. */
 int wifi_known_list(wifi_known_t *out, int max);
