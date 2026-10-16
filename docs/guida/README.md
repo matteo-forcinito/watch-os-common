@@ -4,6 +4,8 @@ Questa guida spiega come è fatto il progetto e come lavorarci, anche senza
 conoscere bene il C, ESP-IDF o Flutter. Ogni pagina è autonoma: parti da quella
 che ti serve. Se è la prima volta, leggi la 1 e poi la 13.
 
+**Da dove ripartire oggi:** [STATO.md](STATO.md) (cosa è rilasciato, cosa resta aperto).
+
 | # | Pagina | Quando leggerla |
 |---|---|---|
 | 1 | [Mappa del progetto](01-mappa-del-progetto.md) | Prima di tutto: quali cartelle esistono e come si collegano |
