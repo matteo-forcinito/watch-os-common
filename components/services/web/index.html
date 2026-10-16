@@ -31,6 +31,7 @@
   <nav class="kit-nav">
     <button data-view="v-home">Panoramica</button>
     <button data-view="v-apps">App</button>
+    <button data-view="v-remote">Schermo remoto</button>
     <button data-view="v-market">Market<span class="badge" id="mk-badge" hidden></span></button>
     <button data-view="v-alarms">Sveglie</button>
     <button data-view="v-wifi">Wi-Fi</button>
@@ -61,12 +62,30 @@
   </div>
 </section>
 
+<section class="view" id="v-remote">
+  <div class="card"><h2>Schermo remoto</h2>
+    <p class="faint">Usa le app con tocchi e scorrimenti. In recovery lo schermo e virtuale: il pannello fisico resta spento.</p>
+    <div class="row"><button class="btn" onclick="remoteAction('back')">Indietro</button>
+      <button class="btn" onclick="remoteAction('home')">Home</button>
+      <button class="btn" onclick="remoteFrame()">Aggiorna</button>
+      <label><input type="checkbox" id="remote-live" checked> Aggiornamento automatico</label></div>
+    <p id="remote-status" class="faint" role="status"></p>
+    <canvas id="remote-screen" style="display:block;max-width:100%;width:360px;touch-action:none;background:#000;border-radius:16px" aria-label="Schermo interattivo del dispositivo"></canvas>
+  </div>
+</section>
+
 <section class="view" id="v-ecos">
+  <div class="grid g3" style="margin-bottom:16px">
+    <div class="card"><h2>Dashboard</h2><p>Impostazioni, file, aggiornamenti e app da questo browser.</p>
+      <button class="btn" onclick="kit.show('v-remote')">Usa lo schermo remoto</button></div>
+    <div class="card"><h2>Companion</h2><p>Bluetooth per stato e notifiche; Wi-Fi per lo schermo remoto da Android e Windows.</p></div>
+    <div class="card"><h2>Famiglia</h2><p>Dispositivi fidati via radio cifrata: stato, messaggi e ricerca sonora. La dashboard del membro apre il suo controllo completo via rete locale.</p></div>
+  </div>
   <div class="card"><div class="row"><h2 class="grow" style="margin:0">Ecosistema · Famiglia</h2>
     <button class="btn" id="fam-search" onclick="familyAction('refresh')">↻ Cerca</button></div>
     <p id="fam-status" class="dim" role="status" aria-live="polite"></p>
     <div id="fam-list" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))"></div>
-    <p class="faint">Rispondono i dispositivi in carica a schermo spento (Watcher, Knob, un orologio sul caricatore)
+    <p class="faint">In recovery i membri restano disponibili anche a batteria. Fuori recovery rispondono i dispositivi in carica a schermo spento (Watcher, Knob, un orologio sul caricatore)
       o con Ecosistema aperto. Radio diretta e cifrata tra dispositivi abbinati, senza router: mentre guardi questa
       pagina la radio di questo dispositivo resta accesa.</p></div>
   <div class="card" style="margin-top:16px"><h2>Ecosistema · Abbinamento</h2>
@@ -85,7 +104,7 @@
       <button class="btn primary" id="ecos-confirm" onclick="ecosAction('confirm')" disabled>I codici coincidono</button>
       <button class="btn danger" id="ecos-cancel" onclick="ecosAction('cancel')" disabled>Annulla</button>
     </div>
-    <p class="faint">La finestra dura al massimo 3 minuti. Annulla per terminarla subito.
+    <p class="faint">Puoi confrontare e confermare i codici anche da questa pagina, senza display fisico. La finestra dura al massimo 3 minuti. Annulla per terminarla subito.
       Chiudere il browser non la interrompe. Questo primo passo salva la fiducia tra dispositivi;
       Remote e le sue autorizzazioni restano separati.</p>
   </div>
@@ -501,7 +520,7 @@ async function loadFamily() {
   for (const m of f.members || []) {
     const battery = m.known && m.battery >= 0 ? `${m.battery}%${m.charging ? ' in carica' : m.usb ? ' al cavo' : ''}` : m.known ? 'alimentato' : '–';
     const lines = m.known ? [
-      `${m.product} · versione ${m.version}`,
+      `${m.product} · versione ${m.version}${m.recovery ? " · Recovery" : ""}`,
       `Batteria: ${battery}`,
       `Rete: ${m.ssid ? m.ssid + ' · ' + m.ip : 'non collegato'}`,
       `Segnale ${m.rssi} dBm · canale ${m.channel} · RAM libera ${m.ram_kb} KB · acceso da ${Math.floor(m.uptime_min / 60)} h`,
@@ -546,8 +565,47 @@ async function ecosAction(action) {
   }
 }
 
+let remoteBusy = false, remoteStart = null;
+async function remoteFrame() {
+  if (remoteBusy || document.hidden) return;
+  remoteBusy = true;
+  try {
+    const response = await kit.api('/api/remote/frame', {raw:true});
+    const bitmap = await createImageBitmap(await response.blob());
+    const canvas = $('#remote-screen');
+    canvas.width = bitmap.width; canvas.height = bitmap.height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0); bitmap.close();
+    $('#remote-status').textContent = 'Connesso';
+  } catch (e) { $('#remote-status').textContent = e.message; }
+  finally { remoteBusy = false; }
+}
+async function remoteAction(action, points = {}) {
+  await kit.try(async () => {
+    await kit.api('/api/remote/input', {body:{action, ...points}});
+    await remoteFrame();
+  });
+}
+function remotePoint(event) {
+  const canvas = $('#remote-screen'), rect = canvas.getBoundingClientRect();
+  return {x:Math.max(0,Math.min(canvas.width-1,Math.floor((event.clientX-rect.left)*canvas.width/rect.width))),
+    y:Math.max(0,Math.min(canvas.height-1,Math.floor((event.clientY-rect.top)*canvas.height/rect.height)))};
+}
+$('#remote-screen').addEventListener('pointerdown', e => {
+  remoteStart = remotePoint(e); e.currentTarget.setPointerCapture(e.pointerId);
+});
+$('#remote-screen').addEventListener('pointerup', e => {
+  if (!remoteStart) return;
+  const start = remoteStart, end = remotePoint(e); remoteStart = null;
+  const swipe = Math.hypot(end.x-start.x,end.y-start.y)>12;
+  remoteAction(swipe?'swipe':'tap', {...start,end_x:end.x,end_y:end.y});
+});
+$('#remote-screen').addEventListener('pointercancel', () => { remoteStart = null; });
+setInterval(() => {
+  if (S.ready && current === 'v-remote' && $('#remote-live').checked) remoteFrame();
+}, 1500);
+
 /* ------------------------------------------------------------ start */
-const loaders = {'v-home': loadSystem, 'v-apps': loadApps, 'v-market': loadMarket, 'v-alarms': loadAlarms, 'v-wifi': loadWifi,
+const loaders = {'v-remote': remoteFrame, 'v-home': loadSystem, 'v-apps': loadApps, 'v-market': loadMarket, 'v-alarms': loadAlarms, 'v-wifi': loadWifi,
   'v-ecos': loadEcos,
   'v-settings': loadSettings, 'v-files': () => fsLoad(cwd), 'v-system': () => Promise.all([loadUpdate(), loadSystem()])};
 let current = 'v-home';

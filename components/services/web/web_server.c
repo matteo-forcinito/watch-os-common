@@ -60,6 +60,7 @@ static int s_pair_attempts;
 
 static httpd_handle_t s_server = NULL;
 static bool s_recovery_sta;
+static int64_t s_recovery_next_join;
 static int s_users;                      /* web_server_start() calls not yet stopped */
 static SemaphoreHandle_t s_lock;
 
@@ -886,7 +887,6 @@ static esp_err_t handle_not_found(httpd_req_t *req, httpd_err_code_t error)
 
     char location[40];
     char ip[16] = "192.168.4.1";
-    wifi_get_ip(ip, sizeof(ip));
     snprintf(location, sizeof(location), "http://%s/", ip);
 
     httpd_resp_set_status(req, "302 Found");
@@ -974,7 +974,13 @@ static esp_err_t start_locked(bool allow_ap)
 
     if (s_ap_mode)
     {
-        wifi_start_access_point(s_ap_name, sizeof(s_ap_name));
+        esp_err_t ap_err = wifi_start_access_point(s_ap_name, sizeof(s_ap_name));
+        if (ap_err != ESP_OK)
+        {
+            s_ap_mode = false;
+            snprintf(s_error, sizeof(s_error), "Hotspot non avviato: %s", esp_err_to_name(ap_err));
+            return ap_err;
+        }
 
         char ip[16] = "192.168.4.1";
         wifi_get_ip(ip, sizeof(ip));
@@ -1065,9 +1071,14 @@ void web_server_recovery_poll(void)
                 ESP_LOGW(TAG, "Recovery fallback: http://192.168.4.1/");
             }
         }
-        if (wifi_acquire(10000) == ESP_OK)
+        int64_t now = esp_timer_get_time();
+        if (now >= s_recovery_next_join)
         {
-            wifi_release(); /* The AP or original station still owns the radio. */
+            s_recovery_next_join = now + 30LL * 1000000;
+            if (wifi_acquire(10000) == ESP_OK)
+            {
+                wifi_release(); /* The AP or original station still owns the radio. */
+            }
         }
     }
     xSemaphoreGive(s_lock);

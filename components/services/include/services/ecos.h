@@ -66,6 +66,7 @@ typedef struct
     char version[16];
     int battery;           /* -1 unknown */
     bool charging, usb, listening, wifi, ringing;
+    bool recovery;
     char ssid[33];
     char ip[16];
     uint32_t uptime_min;

@@ -5,7 +5,7 @@
   const KEY = 'appkit-token-' + location.host;
   const kit = window.kit = {};
   let token = '';
-  try { token = localStorage.getItem(KEY) || ''; } catch (e) { /* private mode */ }
+  try { token = localStorage.getItem(KEY) || localStorage.getItem(KEY + '-recovery') || ''; } catch (e) { /* private mode */ }
 
   /* ---------------------------------------------------------------- dom */
   kit.$ = (s, r) => (r || document).querySelector(s);

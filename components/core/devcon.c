@@ -33,6 +33,9 @@
 
 static const char *TAG = "devcon";
 
+/* Optional diagnostic hook: core does not depend on network services. */
+extern void wifi_diagnostic_drop(void) __attribute__((weak));
+
 #if CONFIG_WATCH_DEV_CONSOLE
 
 #include "driver/gpio.h"
@@ -392,7 +395,16 @@ static void handle(char *line)
     char *a3 = strtok(NULL, " ");
     char *a4 = strtok(NULL, " ");
 
-    if (strcmp(cmd, "recovery") == 0)
+    if (strcmp(cmd, "wifi-drop") == 0)
+    {
+        if (wifi_diagnostic_drop != NULL)
+        {
+            wifi_diagnostic_drop();
+            printf("@WIFI station disconnected for recovery QA\n");
+        }
+        else printf("@ERR Wi-Fi diagnostics unavailable\n");
+    }
+    else if (strcmp(cmd, "recovery") == 0)
     {
         bool enabled = a1 != NULL && strcmp(a1, "on") == 0;
         if (a1 != NULL && (enabled || strcmp(a1, "off") == 0))

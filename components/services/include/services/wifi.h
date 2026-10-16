@@ -25,6 +25,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "sdkconfig.h"
 
 #define WIFI_KNOWN_MAX  8
 #define WIFI_SCAN_MAX   20
@@ -71,6 +72,10 @@ uint8_t wifi_home_channel(void);
 void wifi_set_fast(bool fast);
 
 bool wifi_is_connected(void);
+#if CONFIG_WATCH_DEV_CONSOLE
+/* Local QA only: drop STA without changing saved networks or owners. */
+void wifi_diagnostic_drop(void);
+#endif
 
 /* Name of the network we are on ("" if none). */
 void wifi_current_ssid(char *out, size_t size);

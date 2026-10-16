@@ -39,6 +39,8 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "core/power.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -114,6 +116,15 @@ static esp_err_t system_get(httpd_req_t *req)
     cJSON_AddStringToObject(out, "hostname", host);
     cJSON_AddBoolToObject(out, "recovery", recovery_active());
     cJSON_AddBoolToObject(out, "recovery_supported", recovery_supported());
+    cJSON *control = cJSON_AddObjectToObject(out, "control");
+    #if CONFIG_WATCH_REMOTE_UI
+    cJSON_AddBoolToObject(control, "remote_screen", true);
+#else
+    cJSON_AddBoolToObject(control, "remote_screen", false);
+#endif
+    cJSON_AddBoolToObject(control, "physical_display", !lv_port_headless());
+    cJSON_AddBoolToObject(control, "persistent_recovery_access", recovery_active());
+    cJSON_AddBoolToObject(control, "recovery_network_watchdog", recovery_active());
     cJSON_AddBoolToObject(out, "round", b->round);
     cJSON_AddNumberToObject(out, "width", b->width);
     cJSON_AddNumberToObject(out, "height", b->height);
@@ -556,6 +567,7 @@ static esp_err_t family_get(httpd_req_t *req)
             cJSON_AddStringToObject(j, "product", m->product);
             cJSON_AddStringToObject(j, "version", m->version);
             cJSON_AddNumberToObject(j, "battery", m->battery);
+            cJSON_AddBoolToObject(j, "recovery", m->recovery);
             cJSON_AddBoolToObject(j, "charging", m->charging);
             cJSON_AddBoolToObject(j, "usb", m->usb);
             cJSON_AddBoolToObject(j, "listening", m->listening);
@@ -611,6 +623,203 @@ static esp_err_t ecos_get(httpd_req_t *req)
 }
 #endif
 
+
+#if CONFIG_WATCH_REMOTE_UI
+/* Remote UI: snapshots and navigation run in the LVGL task, never HTTP. */
+typedef struct
+{
+    SemaphoreHandle_t done;
+    lv_draw_buf_t *screen;
+    lv_draw_buf_t *top;
+    int action;
+} remote_call_t;
+
+static void remote_ui(void *arg)
+{
+    remote_call_t *call = arg;
+    if (call->action == 0)
+    {
+        call->screen = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
+        if (lv_obj_get_child_count(lv_layer_top()) > 0)
+        {
+            call->top = lv_snapshot_take(lv_layer_top(), LV_COLOR_FORMAT_ARGB8888);
+        }
+    }
+    else if (call->action == 1)
+    {
+        if (call->screen != NULL) lv_draw_buf_destroy(call->screen);
+        if (call->top != NULL) lv_draw_buf_destroy(call->top);
+    }
+    else if (call->action == 2) app_back_user();
+    else if (call->action == 3) app_home();
+    xSemaphoreGive(call->done);
+}
+
+static bool remote_run(remote_call_t *call)
+{
+    if (!ui_async(remote_ui, call)) return false;
+    /* Stack ownership remains valid until the UI callback completes. */
+    xSemaphoreTake(call->done, portMAX_DELAY);
+    return true;
+}
+
+static void remote_u32(uint8_t *p, uint32_t value)
+{
+    for (int i = 0; i < 4; i++) p[i] = (uint8_t)(value >> (i * 8));
+}
+
+static esp_err_t remote_frame(httpd_req_t *req)
+{
+    remote_call_t call = {.done = xSemaphoreCreateBinary()};
+    if (call.done == NULL) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memoria insufficiente");
+    power_wake(POWER_WAKE_OTHER);
+    bool ready = remote_run(&call) && call.screen != NULL;
+    esp_err_t err = ESP_FAIL;
+    if (ready)
+    {
+        unsigned w = call.screen->header.w, h = call.screen->header.h;
+        unsigned stride = (w * 3 + 3) & ~3U;
+        uint8_t *row = heap_caps_calloc(1, stride, MALLOC_CAP_SPIRAM);
+        if (row != NULL)
+        {
+            uint8_t header[54] = {'B', 'M'};
+            remote_u32(header + 2, 54 + stride * h);
+            remote_u32(header + 10, 54);
+            remote_u32(header + 14, 40);
+            remote_u32(header + 18, w);
+            remote_u32(header + 22, (uint32_t)-(int32_t)h);
+            header[26] = 1;
+            header[28] = 24;
+            httpd_resp_set_type(req, "image/bmp");
+            httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+            err = httpd_resp_send_chunk(req, (char *)header, sizeof(header));
+            for (unsigned y = 0; y < h && err == ESP_OK; y++)
+            {
+                const uint16_t *src = (const uint16_t *)(call.screen->data + y * call.screen->header.stride);
+                const uint8_t *top = call.top != NULL && y < call.top->header.h ?
+                                     call.top->data + y * call.top->header.stride : NULL;
+                for (unsigned x = 0; x < w; x++)
+                {
+                    unsigned b = (src[x] & 31) * 255 / 31;
+                    unsigned g = ((src[x] >> 5) & 63) * 255 / 63;
+                    unsigned r = ((src[x] >> 11) & 31) * 255 / 31;
+                    if (top != NULL && x < call.top->header.w)
+                    {
+                        unsigned a = top[x * 4 + 3];
+                        b = (top[x * 4] * a + b * (255 - a)) / 255;
+                        g = (top[x * 4 + 1] * a + g * (255 - a)) / 255;
+                        r = (top[x * 4 + 2] * a + r * (255 - a)) / 255;
+                    }
+                    row[x * 3] = b; row[x * 3 + 1] = g; row[x * 3 + 2] = r;
+                }
+                err = httpd_resp_send_chunk(req, (char *)row, stride);
+            }
+            free(row);
+            if (err == ESP_OK) err = httpd_resp_send_chunk(req, NULL, 0);
+        }
+        else err = httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memoria insufficiente");
+    }
+    else err = httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Schermo non disponibile");
+    call.action = 1;
+    remote_run(&call);
+    vSemaphoreDelete(call.done);
+    return err;
+}
+
+typedef struct
+{
+    int x, y, end_x, end_y;
+    int step, steps;
+} remote_gesture_t;
+
+static atomic_bool s_remote_gesture;
+
+/* Timed input belongs to the UI task; the HTTP server must never wait through
+ * a gesture, which would delay every other dashboard and recovery request. */
+static void remote_gesture_tick(lv_timer_t *timer)
+{
+    remote_gesture_t *gesture = lv_timer_get_user_data(timer);
+    if (gesture->step >= gesture->steps)
+    {
+        lv_port_fake_touch(false, gesture->end_x, gesture->end_y);
+        lv_timer_delete(timer);
+        free(gesture);
+        atomic_store(&s_remote_gesture, false);
+        return;
+    }
+    gesture->step++;
+    int x = gesture->x + (gesture->end_x - gesture->x) * gesture->step / gesture->steps;
+    int y = gesture->y + (gesture->end_y - gesture->y) * gesture->step / gesture->steps;
+    lv_port_fake_touch(true, x, y);
+}
+
+static void remote_gesture_start(void *arg)
+{
+    remote_gesture_t *gesture = arg;
+    lv_timer_t *timer = lv_timer_create(remote_gesture_tick, 30, gesture);
+    if (timer == NULL)
+    {
+        free(gesture);
+        atomic_store(&s_remote_gesture, false);
+        return;
+    }
+    lv_port_fake_touch(true, gesture->x, gesture->y);
+}
+
+static esp_err_t remote_input(httpd_req_t *req)
+{
+    cJSON *json = body(req);
+    const cJSON *kind = cJSON_GetObjectItemCaseSensitive(json, "action");
+    bool ok = false;
+    if (cJSON_IsString(kind) && (strcmp(kind->valuestring, "back") == 0 || strcmp(kind->valuestring, "home") == 0))
+    {
+        remote_call_t call = {.done = xSemaphoreCreateBinary(), .action = strcmp(kind->valuestring, "back") == 0 ? 2 : 3};
+        if (call.done != NULL)
+        {
+            power_wake(POWER_WAKE_OTHER);
+            ok = remote_run(&call);
+            vSemaphoreDelete(call.done);
+        }
+    }
+    else if (cJSON_IsString(kind) && (strcmp(kind->valuestring, "tap") == 0 || strcmp(kind->valuestring, "swipe") == 0))
+    {
+        const cJSON *x = cJSON_GetObjectItemCaseSensitive(json, "x"), *y = cJSON_GetObjectItemCaseSensitive(json, "y");
+        const cJSON *ex = cJSON_GetObjectItemCaseSensitive(json, "end_x"), *ey = cJSON_GetObjectItemCaseSensitive(json, "end_y");
+        bool swipe = strcmp(kind->valuestring, "swipe") == 0;
+        int w = board_info()->width, h = board_info()->height;
+        ok = cJSON_IsNumber(x) && cJSON_IsNumber(y) && x->valuedouble >= 0 && x->valuedouble < w &&
+             y->valuedouble >= 0 && y->valuedouble < h;
+        if (swipe) ok = ok && cJSON_IsNumber(ex) && cJSON_IsNumber(ey) && ex->valuedouble >= 0 &&
+                        ex->valuedouble < w && ey->valuedouble >= 0 && ey->valuedouble < h;
+        if (ok)
+        {
+            bool expected = false;
+            ok = atomic_compare_exchange_strong(&s_remote_gesture, &expected, true);
+            if (ok)
+            {
+                remote_gesture_t *gesture = calloc(1, sizeof(*gesture));
+                if (gesture != NULL)
+                {
+                    gesture->x = x->valueint;
+                    gesture->y = y->valueint;
+                    gesture->end_x = swipe ? ex->valueint : x->valueint;
+                    gesture->end_y = swipe ? ey->valueint : y->valueint;
+                    gesture->steps = swipe ? 10 : 2;
+                    power_wake(POWER_WAKE_OTHER);
+                    ok = ui_async(remote_gesture_start, gesture);
+                    if (!ok) free(gesture);
+                }
+                else ok = false;
+                if (!ok) atomic_store(&s_remote_gesture, false);
+            }
+        }
+    }
+    cJSON_Delete(json);
+    return reply(req, ok, ok ? "Comando eseguito" : "Comando non valido");
+}
+
+#endif
+
 static esp_err_t recovery_post(httpd_req_t *req)
 {
     cJSON *json = body(req);
@@ -623,6 +832,10 @@ static esp_err_t recovery_post(httpd_req_t *req)
 void web_system_register(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
+#if CONFIG_WATCH_REMOTE_UI
+        {.uri = "/api/remote/frame", .method = HTTP_GET, .handler = remote_frame},
+        {.uri = "/api/remote/input", .method = HTTP_POST, .handler = remote_input},
+#endif
         {.uri = "/api/ecos", .method = HTTP_GET, .handler = ecos_get},
 #if CONFIG_WATCH_ECOS_PAIRING
         {.uri = "/api/ecos", .method = HTTP_POST, .handler = ecos_post},

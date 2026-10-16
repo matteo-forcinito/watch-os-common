@@ -412,7 +412,8 @@ static void my_status(ecos_link_status_t *out)
     ringing = s_ringing_here;
     portEXIT_CRITICAL(&s_lock);
     out->flags = (state_get(STATE_CHARGING) ? ECOS_LINK_F_CHARGING : 0) | (powered() ? ECOS_LINK_F_USB : 0) |
-                 (auto_wanted() ? ECOS_LINK_F_LISTENING : 0) | (ringing ? ECOS_LINK_F_RINGING : 0);
+                 (auto_wanted() ? ECOS_LINK_F_LISTENING : 0) | (ringing ? ECOS_LINK_F_RINGING : 0) |
+                 (recovery_active() ? ECOS_LINK_F_RECOVERY : 0);
     if (wifi_is_connected())
     {
         char ip[16];
@@ -879,8 +880,8 @@ static void link_task(void *arg)
             idle_since = 0;
         }
         /* Reduced power without a network (no saturation side by side); a
-         * joined network keeps full power for its own sake. */
-        bool joined = wifi_is_connected();
+         * joined network or recovery hotspot keeps full power. */
+        bool joined = wifi_is_connected() || recovery_active();
         if (!joined && !lowered && tx_power > LINK_TX_POWER)
         {
             lowered = esp_wifi_set_max_tx_power(LINK_TX_POWER) == ESP_OK;
@@ -1115,6 +1116,7 @@ void ecos_family(ecos_family_t *out)
                 snprintf(m->product, sizeof(m->product), "%s", st->product);
                 snprintf(m->version, sizeof(m->version), "%s", st->version);
                 m->battery = st->battery;
+                m->recovery = (st->flags & ECOS_LINK_F_RECOVERY) != 0;
                 m->charging = (st->flags & ECOS_LINK_F_CHARGING) != 0;
                 m->usb = (st->flags & ECOS_LINK_F_USB) != 0;
                 m->listening = (st->flags & ECOS_LINK_F_LISTENING) != 0;

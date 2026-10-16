@@ -1,5 +1,10 @@
 menu "Watch OS"
 
+    config WATCH_REMOTE_UI
+        bool "Remote screen through the authenticated web API"
+        default y
+        select LV_USE_SNAPSHOT
+
     config WATCH_MONKEY_TEST
         bool "Monkey test (random swipes, apps, screen on/off)"
         default n

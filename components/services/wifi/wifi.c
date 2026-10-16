@@ -46,6 +46,7 @@ static bool s_sta_wanted = false;
 static bool s_ap_on = false;
 static int s_retries = 0;
 static int s_refs = 0;
+static unsigned s_scans;       /* STA must stay enabled through concurrent radio owners. */
 static int s_last_reason = 0;   /* wifi_err_reason_t of the last disconnection */
 static uint8_t s_home_channel = 0;   /* channel of the last network joined */
 static esp_pm_lock_handle_t s_ap_lock = NULL;   /* no light sleep while our access point runs */
@@ -350,7 +351,7 @@ static wifi_mode_t wanted_mode(bool need_sta)
         return WIFI_MODE_STA;
     }
 
-    return (need_sta || s_sta_wanted || wifi_is_connected()) ? WIFI_MODE_APSTA : WIFI_MODE_AP;
+    return (need_sta || s_sta_wanted || s_scans > 0 || wifi_is_connected()) ? WIFI_MODE_APSTA : WIFI_MODE_AP;
 }
 
 /*
@@ -425,15 +426,16 @@ static bool radio_on(wifi_mode_t mode)
         return false;
     }
 
-    if (!s_started)
+    esp_err_t err = esp_wifi_set_mode(mode);
+    if (err == ESP_OK && !s_started)
     {
-        esp_wifi_set_mode(mode);
-        esp_wifi_start();
-        s_started = true;
+        err = esp_wifi_start();
+        if (err == ESP_OK) s_started = true;
     }
-    else
+    if (err != ESP_OK)
     {
-        esp_wifi_set_mode(mode);
+        ESP_LOGE(TAG, "Radio mode/start failed: %s", esp_err_to_name(err));
+        return false;
     }
 
     apply_power_save();
@@ -754,6 +756,16 @@ void wifi_set_fast(bool fast)
     xSemaphoreGive(s_mutex);
 }
 
+#if CONFIG_WATCH_DEV_CONSOLE
+void wifi_diagnostic_drop(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_sta_wanted = false;
+    esp_wifi_disconnect();
+    xSemaphoreGive(s_mutex);
+}
+#endif
+
 bool wifi_is_connected(void)
 {
     return s_events != NULL && (xEventGroupGetBits(s_events) & CONNECTED_BIT) != 0;
@@ -805,6 +817,7 @@ static wifi_ap_record_t *scan_run(bool hidden, uint16_t *found)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     bool was_started = s_started;
+    s_scans++;
     radio_on(wanted_mode(true));
     xSemaphoreGive(s_mutex);
 
@@ -838,6 +851,7 @@ static wifi_ap_record_t *scan_run(bool hidden, uint16_t *found)
 
     /* Switched on just for the scan and nobody else needs it: off again soon. */
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_scans--;
     if (s_ap_on)
     {
         radio_on(wanted_mode(false));   /* back to a pure access point */
@@ -996,7 +1010,7 @@ esp_err_t wifi_start_access_point(char *ssid_out, size_t size)
     }
 
     config.ap.ssid_len = (uint8_t)length;
-    config.ap.channel = 6;
+    config.ap.channel = s_home_channel != 0 ? s_home_channel : 6;
     config.ap.max_connection = 3;
     config.ap.authmode = WIFI_AUTH_OPEN;
     config.ap.pmf_cfg.required = false;
@@ -1004,9 +1018,17 @@ esp_err_t wifi_start_access_point(char *ssid_out, size_t size)
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_refs++;
     esp_timer_stop(s_off_timer);
+    bool was_ap = s_ap_on;
     ap_set(true);
-    radio_on(wanted_mode(false));
-    esp_wifi_set_config(WIFI_IF_AP, &config);
+    esp_err_t err = radio_on(wanted_mode(false)) ? esp_wifi_set_config(WIFI_IF_AP, &config) : ESP_FAIL;
+    if (err != ESP_OK)
+    {
+        if (!was_ap) ap_set(false);
+        if (--s_refs == 0) esp_timer_start_once(s_off_timer, 1000);
+        xSemaphoreGive(s_mutex);
+        ESP_LOGE(TAG, "Access point failed: %s", esp_err_to_name(err));
+        return err;
+    }
     xSemaphoreGive(s_mutex);
 
     state_set(STATE_WIFI, STATE_WIFI_AP);

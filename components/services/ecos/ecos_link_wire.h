@@ -40,6 +40,7 @@
 #define ECOS_LINK_F_LISTENING (1 << 2)
 #define ECOS_LINK_F_WIFI (1 << 3)
 #define ECOS_LINK_F_RINGING (1 << 4)
+#define ECOS_LINK_F_RECOVERY (1 << 5)
 
 typedef struct
 {
