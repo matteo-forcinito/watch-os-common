@@ -348,7 +348,19 @@ static bl_book_t effective(const bl_book_t *book, bl_day_t today)
     }
     bl_day_t start = bl_month_start(bl_month_of(today));
     int main = bl_main_income(book->rules, book->rule_count);
-    bl_day_t payday = main >= 0 ? bl_previous(&book->rules[main], today) : BL_NONE;
+    bl_cents_t opening = 0;
+    bl_day_t payday = BL_NONE;
+    if (main >= 0)
+    {
+        /* The last salary already paid counts even before the rule's first month. */
+        bl_rule_t since_always = book->rules[main];
+        since_always.first = 0;
+        payday = bl_previous(&since_always, today);
+        if (payday != BL_NONE && bl_previous(&book->rules[main], today) != payday)
+        {
+            opening = book->rules[main].amount;
+        }
+    }
     if (payday != BL_NONE && payday < start)
     {
         start = payday;
@@ -360,7 +372,7 @@ static bl_book_t effective(const bl_book_t *book, bl_day_t today)
             start = book->tx[i].date;
         }
     }
-    e.balance = 0;
+    e.balance = opening;
     e.balance_after = 0;
     e.balance_date = start - 1;
     return e;
