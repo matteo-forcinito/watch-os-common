@@ -779,14 +779,10 @@ bool bl_import(const char *text, char *why, size_t size)
 
 bool bl_set_balance(bl_cents_t amount, bl_day_t date)
 {
-    if (date == BL_NONE)
-    {
-        return false;
-    }
     bl_lock();
-    s_book.balance = amount;
+    s_book.balance = date == BL_NONE ? 0 : amount;   /* BL_NONE: back to "from income and expenses" */
     s_book.balance_date = date;
-    s_book.balance_after = s_next_id - 1;     /* everything recorded so far is in it */
+    s_book.balance_after = date == BL_NONE ? 0 : s_next_id - 1;   /* everything recorded so far is in it */
     changed();
     bl_unlock();
     return true;

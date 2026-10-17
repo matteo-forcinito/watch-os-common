@@ -988,7 +988,12 @@ function editBalance() {
   const today = st.timeline.filter(it => it.date === st.today);
   const form = el('form', {class: 'form'}, field('Saldo del conto (€, negativo con il meno)', amount), field('Del giorno', date),
     today.length ? el('div', {class: 'preview'}, 'Il saldo che scrivi deve già comprendere le voci di quel giorno: ', today.map(it => `${it.name} (${signed(it.amount)})`).join(', '), '. Se la banca non le mostra ancora, usa la data di ieri.') : '',
-    el('div', {class: 'row end'}, el('button', {type: 'button', class: 'btn', onclick: closeModal}, 'Annulla'), el('button', {class: 'btn primary'}, 'Salva')));
+    el('div', {class: 'row end'},
+      st.balance.set ? el('button', {type: 'button', class: 'btn danger', style: {marginRight: 'auto'}, onclick: () => {
+        if (confirm('Togliere il saldo inserito? Il saldo tornerà a essere calcolato da entrate e uscite.'))
+          saved(kit.api('/api/balance', {body: {clear: true}}), 'Saldo tolto: ora è calcolato da entrate e uscite');
+      }}, 'Togli il saldo') : '',
+      el('button', {type: 'button', class: 'btn', onclick: closeModal}, 'Annulla'), el('button', {class: 'btn primary'}, 'Salva')));
   form.onsubmit = e => {
     e.preventDefault();
     const raw = amount.value.trim(), neg = raw.startsWith('-') || raw.startsWith('−');

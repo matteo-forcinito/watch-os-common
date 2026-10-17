@@ -334,9 +334,11 @@ static bool counted(const bl_book_t *book, const bl_tx_t *t)
 }
 
 /*
- * Without a balance entered, the book starts from zero on its first day: the
- * earliest of the first movement, the last payday and the first of the month.
- * The balance is then income minus expenses since then.
+ * Without a balance entered, the book starts on its first day: the earliest of
+ * the first movement, the last payday and the first of the month. The balance
+ * is then income minus expenses since then. The last payday counts even when
+ * the salary was entered starting this month (it has not come yet): the money
+ * of the previous one is there, and is what pays this month's expenses.
  */
 static bl_book_t effective(const bl_book_t *book, bl_day_t today)
 {
@@ -347,10 +349,20 @@ static bl_book_t effective(const bl_book_t *book, bl_day_t today)
     }
     bl_day_t start = bl_month_start(bl_month_of(today));
     int main = bl_main_income(book->rules, book->rule_count);
-    bl_day_t payday = main >= 0 ? bl_previous(&book->rules[main], today) : BL_NONE;
-    if (payday != BL_NONE && payday < start)
+    bl_cents_t opening = 0;
+    if (main >= 0)
     {
-        start = payday;
+        bl_rule_t since_always = book->rules[main];
+        since_always.first = 0;
+        bl_day_t payday = bl_previous(&since_always, today);
+        if (payday != BL_NONE && bl_previous(&book->rules[main], today) != payday)
+        {
+            opening = book->rules[main].amount;   /* before the rule's first month: not generated */
+        }
+        if (payday != BL_NONE && payday < start)
+        {
+            start = payday;
+        }
     }
     for (int i = 0; i < book->tx_count; i++)
     {
@@ -359,7 +371,7 @@ static bl_book_t effective(const bl_book_t *book, bl_day_t today)
             start = book->tx[i].date;
         }
     }
-    e.balance = 0;
+    e.balance = opening;
     e.balance_after = 0;
     e.balance_date = start - 1;
     return e;

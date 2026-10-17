@@ -6,6 +6,8 @@
  *           the amount in big digits, days to payday; round buttons.
  *   MONTH   this month's fixed costs and income, ✓ when passed or paid.
  *   ADD     quick expense: 5/10/20/50 € -> a category -> recorded today.
+ *   SUMMARY available now, free until payday, income and expenses per week,
+ *           month and year, monthly saving, year-end estimate.
  *   MENU / DASH (QR code and pairing of the dashboard).
  */
 #include "bilancio.h"
@@ -32,7 +34,7 @@
 #define C_DIM    0x8B9AB0
 #define C_ACCENT 0x14B87A
 
-enum { HOME, MONTH, ADD, ADD_CATEGORY, MENU, DASH };
+enum { HOME, MONTH, ADD, ADD_CATEGORY, MENU, DASH, SUMMARY };
 
 typedef struct
 {
@@ -341,9 +343,77 @@ static void add_category(bl_ui_t *ui)
 
 /* ------------------------------------------------------------ MENU, DASH */
 
+/* One "label ...... 1.234 €" row, red when negative if `sign`. */
+static void figure(lv_obj_t *page, const char *icon, uint32_t color, const char *text, bl_cents_t cents, bool sign)
+{
+    char amount[24], value[32];
+    money(amount, sizeof(amount), cents, true);
+    snprintf(value, sizeof(value), "%s €", amount);
+    lv_obj_t *row = ui_row(page, icon, sign && cents < 0 ? 0xFF6B6B : color, text, value, NULL, NULL);
+    if (sign && cents < 0)
+    {
+        lv_obj_set_style_text_color(ui_row_value(row), ui_color(0xFF6B6B), 0);
+    }
+}
+
+static void summary(bl_ui_t *ui)
+{
+    lv_obj_t *page = ui_page(ui->content, "Riepilogo");
+    bl_day_t today = bl_today();
+    if (today == BL_NONE)
+    {
+        ui_text(page, "Ora non impostata.", true);
+        return;
+    }
+    int mi = bl_month_of(today);
+    bl_summary_t s;
+    bl_lock();
+    const bl_book_t *book = bl_book();
+    bl_summary(book, today, &s);
+    bl_cents_t income = bl_monthly_share(book->rules, book->rule_count, BL_INCOME, mi);
+    bl_cents_t fixed = bl_monthly_share(book->rules, book->rule_count, BL_EXPENSE, mi);
+    bl_cents_t yearly = bl_yearly_cost(book->rules, book->rule_count, BL_ANY_CATEGORY, mi);
+    bool balance_set = book->balance_date != BL_NONE;
+    bl_unlock();
+    bl_cents_t variable = s.pace * 365 / 12, out = fixed + variable, net = income - out;
+    int year, month_number, day;
+    bl_civil(today, &year, &month_number, &day);
+
+    ui_section(page, "Adesso");
+    figure(page, LV_SYMBOL_HOME, 0x4DA3FF, "Disponibile", s.balance, true);
+    figure(page, LV_SYMBOL_OK, 0x2EE39A, "Liberi fino allo stipendio", s.free, true);
+    figure(page, LV_SYMBOL_BELL, 0xFFA34D, "Ancora da pagare", s.due, false);
+    figure(page, LV_SYMBOL_RIGHT, 0x2EE39A, "Al giorno", s.daily, false);
+    figure(page, LV_SYMBOL_EYE_OPEN, 0x8E7DFF, "Previsione allo stipendio", s.forecast, true);
+    char text[80];
+    snprintf(text, sizeof(text), "%s. Stipendio fra %d %s.", balance_set ? "Saldo dalla banca" : "Saldo calcolato da entrate e uscite",
+             s.days, s.days == 1 ? "giorno" : "giorni");
+    ui_text(page, text, true);
+
+    ui_section(page, "Al mese");
+    figure(page, LV_SYMBOL_DOWNLOAD, 0x2EE39A, "Entrate", income, false);
+    figure(page, LV_SYMBOL_UPLOAD, 0xFFA34D, "Uscite fisse", fixed, false);
+    figure(page, LV_SYMBOL_UPLOAD, 0xFF8A65, "Uscite variabili", variable, false);
+    figure(page, LV_SYMBOL_SAVE, 0x4DA3FF, "Risparmio", net, true);
+
+    ui_section(page, "Alla settimana");
+    figure(page, LV_SYMBOL_DOWNLOAD, 0x2EE39A, "Entrate", income * 12 / 52, false);
+    figure(page, LV_SYMBOL_UPLOAD, 0xFFA34D, "Uscite", out * 12 / 52, false);
+
+    ui_section(page, "All'anno");
+    figure(page, LV_SYMBOL_DOWNLOAD, 0x2EE39A, "Entrate", income * 12, false);
+    figure(page, LV_SYMBOL_UPLOAD, 0xFFA34D, "Uscite", out * 12, false);
+    figure(page, LV_SYMBOL_LIST, 0xFFA34D, "di cui fisse", yearly, false);
+    figure(page, LV_SYMBOL_SAVE, 0x4DA3FF, "Risparmio", net * 12, true);
+    figure(page, LV_SYMBOL_EYE_OPEN, 0x8E7DFF, "Stima a fine anno", s.balance + net * (12 - month_number), true);
+    ui_text(page, "Fissi in quota mensile, spese variabili al ritmo degli ultimi 30 giorni.", true);
+}
+
 static void menu(bl_ui_t *ui)
 {
     lv_obj_t *page = ui_page(ui->content, "Bilancio");
+    lv_port_set_focusable(ui_row(page, LV_SYMBOL_LIST, 0x4DA3FF, "Riepilogo", NULL, open_view, (void *)(intptr_t)SUMMARY));
+    lv_port_set_focusable(ui_row(page, LV_SYMBOL_BELL, 0xFFA34D, "Questo mese", NULL, open_view, (void *)(intptr_t)MONTH));
     lv_obj_t *b = ui_button(page, LV_SYMBOL_WIFI "  Dashboard", C_ACCENT, open_view, (void *)(intptr_t)DASH);
     lv_port_set_focusable(b);
     ui_text(page, "Saldo, stipendio, mutuo, bollette e movimenti si inseriscono dalla dashboard sul telefono "
@@ -378,6 +448,7 @@ static void render(bl_ui_t *ui)
     case ADD: add(ui); break;
     case ADD_CATEGORY: add_category(ui); break;
     case MENU: menu(ui); break;
+    case SUMMARY: summary(ui); break;
     default: dash(ui); break;
     }
 }

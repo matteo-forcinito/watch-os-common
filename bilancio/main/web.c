@@ -11,7 +11,7 @@
  *   POST /api/tx/delete    {id}
  *   POST /api/rule         {id?, kind, name, amount, every, month, day, shift, category, first, last}
  *   POST /api/rule/delete  {id}
- *   POST /api/balance      {amount, date}
+ *   POST /api/balance      {amount, date} or {clear: true}
  *   POST /api/category     {index (-1 new), name}
  *   POST /api/import       the JSON file (replaces everything)
  *
@@ -566,6 +566,12 @@ static esp_err_t balance_post(httpd_req_t *request)
 {
     GUARD();
     cJSON *root = body_json(request);
+    if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "clear")))
+    {
+        cJSON_Delete(root);
+        bl_set_balance(0, BL_NONE);
+        return ok_id(request, 0);
+    }
     bl_day_t date = bl_parse_date(text(root, "date"));
     const cJSON *amount = cJSON_GetObjectItemCaseSensitive(root, "amount");
     bool valid = cJSON_IsNumber(amount) && amount->valuedouble < MAX_CENTS && amount->valuedouble > -MAX_CENTS;

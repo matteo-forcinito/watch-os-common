@@ -51,7 +51,7 @@ const char (*bl_categories(int *count))[BL_CATEGORY_LEN];
 const bl_archive_t *bl_archive(int *count);
 const bl_rule_t *bl_rule_by_id(uint32_t id);
 
-/* Edits (take the lock themselves); saved a moment later. */
+/* Edits (take the lock themselves); saved a moment later. date BL_NONE removes the balance. */
 bool bl_set_balance(bl_cents_t amount, bl_day_t date);
 /* id 0: a new movement. Returns its id, 0 if full or not found. */
 uint32_t bl_tx_put(const bl_tx_t *tx);
