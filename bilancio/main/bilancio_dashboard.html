@@ -332,7 +332,7 @@ const day = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const addDays = (s, n) => { const d = day(s); d.setDate(d.getDate() + n); return iso(d); };
 const diff = (a, b) => Math.round((day(b) - day(a)) / 86400000);
-const fmt = (s, o) => day(s).toLocaleDateString('it-IT', o || {day: 'numeric', month: 'short'});
+const fmt = (s, o) => !s ? '–' : day(s).toLocaleDateString('it-IT', o || {day: 'numeric', month: 'short'});
 const long = s => fmt(s, {weekday: 'long', day: 'numeric', month: 'long'});
 const monthLabel = m => { const [y, mm] = m.split('-').map(Number); return MONTHS[mm - 1] + ' ' + y; };
 function inDays(n) { return n === 0 ? 'oggi' : n === 1 ? 'domani' : n === -1 ? 'ieri' : n > 0 ? `tra ${n} giorni` : `${-n} giorni fa`; }

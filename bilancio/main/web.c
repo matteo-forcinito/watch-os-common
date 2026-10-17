@@ -176,7 +176,7 @@ static esp_err_t state(httpd_req_t *request)
     cJSON_AddNumberToObject(out, "revision", bl_revision());
     cJSON_AddStringToObject(out, "currency", "EUR");
     cJSON *balance = cJSON_AddObjectToObject(out, "balance");
-    cJSON_AddBoolToObject(balance, "set", s.has_balance);
+    cJSON_AddBoolToObject(balance, "set", book->balance_date != BL_NONE);   /* a bank balance entered (date below) */
     add_money(balance, "amount", book->balance);
     add_date(balance, "date", book->balance_date);
 
