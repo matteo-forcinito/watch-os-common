@@ -99,7 +99,10 @@ foreach ($product in $firmwares.Keys) {
     [IO.File]::WriteAllText($cmake, $text, (New-Object Text.UTF8Encoding $false))
     Git $tree add watch-os-common "release/notes/$Version.md" CMakeLists.txt | Out-Null
     $msg = "Release ${Version}: $first`n`nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-    Git $tree commit -q -m $msg | Out-Null
+    # From a file: quotes in the notes would break the argument in Windows PowerShell.
+    $msgFile = Join-Path $work 'commit-message.txt'
+    [IO.File]::WriteAllText($msgFile, $msg, (New-Object Text.UTF8Encoding $false))
+    Git $tree commit -q -F $msgFile | Out-Null
     Git $tree push -q origin 'HEAD:refs/heads/dev' | Out-Null
     if ($Promote) { Git $tree push -q origin 'HEAD:refs/heads/main' | Out-Null }
     $trees[$product] = $tree
