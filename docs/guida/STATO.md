@@ -8,12 +8,14 @@ Regola: gli orologi restano su **1.8.x**. Le novità escono sul canale **Dev** (
 
 | Firmware | Stabile | Dev |
 |---|---|---|
-| AMOLED 1.8 | 1.8.4 | 1.8.6-dev.1 |
-| AMOLED 1.75 | 1.8.5 (uscita la notte del 17/10, con Bilancio) | 1.8.6-dev.1 |
-| AMOLED 1.75C | 1.8.4 | 1.8.6-dev.1 |
-| Knob 1.8 | 1.8.4 (la 1.8.5 è stata compilata ma mai pubblicata) | 1.8.6-dev.1 |
-| Watcher | 1.8.4 | 1.8.6-dev.1 |
+| AMOLED 1.8 | 1.8.4 | 1.8.6-dev.3 |
+| AMOLED 1.75 | 1.8.5 (uscita la notte del 17/10, con Bilancio) | 1.8.6-dev.3 |
+| AMOLED 1.75C | 1.8.4 | 1.8.6-dev.3 |
+| Knob 1.8 | 1.8.4 (la 1.8.5 è stata compilata ma mai pubblicata) | 1.8.6-dev.3 |
+| Watcher | 1.8.4 | 1.8.6-dev.3 |
 
+- `1.8.6-dev.3` (18/10): Bilancio, saldo rimovibile, stipendio precedente contato prima che la voce
+  dello stipendio inizi, Menu → Riepilogo sull'orologio. `dev.2`: Sentinel Lite rifatta.
 - `1.8.6-dev.1` (17/10): Bilancio su tutti, con saldo facoltativo e la card "Entrate e uscite"
   (disponibile ora, risparmio al mese, stima a fine anno, tabella settimana/mese/anno). Libreria `9dfa834`.
 - Su `main` dei firmware ci sono commit "Release 1.9.0" mai pubblicati: la 1.9.0 **non va usata**.
@@ -26,7 +28,8 @@ Regola: gli orologi restano su **1.8.x**. Le novità escono sul canale **Dev** (
 
 1. **Bilancio** (dev.1): Home, Questo mese, dashboard dal QR; senza saldo inserito il saldo deve
    venire da entrate e uscite; card "Entrate e uscite" in Panoramica. Tondo e rettangolare.
-2. **Sentinel Lite** (dev.2, quando esce): vedi sotto.
+2. **Bilancio dev.3**: "Togli il saldo" in Saldo del conto; Menu → Riepilogo.
+3. **Sentinel Lite** (dev.2): Trova, Cambia Wi-Fi, dashboard nuova; vedi sotto.
 
 Se va tutto bene: `release_dev.ps1 -Version 1.8.6 -Notes <note> -Promote`.
 
@@ -49,7 +52,7 @@ Se va tutto bene: `release_dev.ps1 -Version 1.8.6 -Notes <note> -Promote`.
 ## Companion
 
 - Fix del test Android (clic sul permesso notifiche perso durante l'animazione del dialog su API 35),
-  commit `ab7e067` su `main` e `release/0.4.2-dev.4`. Se la Action passa, la release esce da sola.
+  commit `ab7e067` su `main` e `release/0.4.2-dev.4`: Action passata, **0.4.2-dev.4 pubblicata** il 17/10.
 - Lo `stash` in `Orbit-Companion` (file plugin rigenerati da Flutter) si può scartare: `git stash drop`.
 
 ## Bilancio: cosa manca
