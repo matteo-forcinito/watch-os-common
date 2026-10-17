@@ -49,13 +49,13 @@ $branch = if ($Promote) { 'main' } else { 'dev' }
 # git writes progress to stderr even on success: in Windows PowerShell that must not stop the script.
 function Git([string]$dir) {
     $ErrorActionPreference = 'Continue'
-    $out = & git -C $dir @args 2>&1
+    $out = & git.exe -C $dir @args 2>&1
     if ($LASTEXITCODE -ne 0) { throw "git $($args -join ' ') in ${dir}: $out" }
     $out
 }
 function HasRef([string]$dir, [string]$ref) {
     $ErrorActionPreference = 'Continue'
-    & git -C $dir rev-parse -q --verify $ref *> $null
+    & git.exe -C $dir rev-parse -q --verify $ref *> $null
     $LASTEXITCODE -eq 0
 }
 
