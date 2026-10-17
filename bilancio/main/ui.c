@@ -1,9 +1,9 @@
 /*
  * Bilancio on the watch (the look of Copertura's LIVE screen).
  *
- *   HOME    a 270° arc = what is left of today's budget, in the state's colour
- *           (green in line, orange above the pace, red heading below zero);
- *           the amount in big digits, days to payday; round buttons.
+ *   HOME    outer arc = what is left of this period's money (red below zero),
+ *           inner arc = today's budget still free; the balance in big digits,
+ *           today, days to payday, forecast; round buttons.
  *   MONTH   this month's fixed costs and income, ✓ when passed or paid.
  *   ADD     quick expense: 5/10/20/50 € -> a category -> recorded today.
  *   SUMMARY available now, free until payday, income and expenses per week,
@@ -127,6 +127,26 @@ static lv_obj_t *round_button(lv_obj_t *parent, const char *symbol, uint32_t col
     return b;
 }
 
+/* A 270° arc, value 0..100, nothing clickable. */
+static lv_obj_t *gauge(lv_obj_t *parent, int size, int width, uint32_t color, int value)
+{
+    lv_obj_t *arc = lv_arc_create(parent);
+    lv_obj_remove_style_all(arc);
+    lv_obj_set_size(arc, size, size);
+    lv_arc_set_rotation(arc, 135);
+    lv_arc_set_bg_angles(arc, 0, 270);
+    lv_arc_set_range(arc, 0, 100);
+    lv_obj_set_style_arc_width(arc, width, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, ui_color(C_LINE), LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, width, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(arc, ui_color(color), LV_PART_INDICATOR);
+    lv_arc_set_value(arc, value < 0 ? 0 : value > 100 ? 100 : value);
+    lv_obj_set_clickable(arc, false);
+    return arc;
+}
+
 /* ------------------------------------------------------------------ HOME */
 
 static void home(bl_ui_t *ui)
@@ -145,62 +165,50 @@ static void home(bl_ui_t *ui)
     bl_unlock();
 
     int size = b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
-    lv_obj_t *arc = lv_arc_create(ui->content);
-    lv_obj_remove_style_all(arc);
-    lv_obj_set_size(arc, size, size);
+    /* Outer arc: what is left of the money of this period (balance / balance + spent since payday). */
+    bl_cents_t start_money = s.balance + s.period_spent;
+    int left_pct = s.balance > 0 && start_money > 0 ? (int)(s.balance * 100 / start_money) : 0;
+    uint32_t outer_color = s.balance < 0 ? 0xFF6B6B : STATE_COLOR[s.state];
+    lv_obj_t *arc = gauge(ui->content, size, size / 16, outer_color, s.balance < 0 ? 100 : left_pct);
     lv_obj_align(arc, b->round ? LV_ALIGN_CENTER : LV_ALIGN_TOP_MID, 0, b->round ? 0 : 6);
-    lv_arc_set_rotation(arc, 135);
-    lv_arc_set_bg_angles(arc, 0, 270);
-    lv_arc_set_range(arc, 0, 100);
-    int width = size / 16;
-    lv_obj_set_style_arc_width(arc, width, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(arc, ui_color(C_LINE), LV_PART_MAIN);
-    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, width, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(arc, ui_color(STATE_COLOR[s.state]), LV_PART_INDICATOR);
-    int percent = s.daily > 0 && s.today_left > 0 ? (int)(s.today_left * 100 / s.daily) : 0;
-    lv_arc_set_value(arc, percent > 100 ? 100 : percent);
-    lv_obj_set_clickable(arc, false);
+    /* Inner arc: today's budget still free. */
+    int inner = size * 76 / 100;
+    int today_pct = s.daily > 0 && s.today_left > 0 ? (int)(s.today_left * 100 / s.daily) : 0;
+    lv_obj_t *small = gauge(ui->content, inner, size / 30, s.today_left > 0 ? 0x4DA3FF : 0xFF6B6B, today_pct);
+    lv_obj_align_to(small, arc, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *col = box(ui->content);
-    lv_obj_set_size(col, size * 70 / 100, LV_SIZE_CONTENT);
-    lv_obj_align_to(col, arc, LV_ALIGN_CENTER, 0, -size / 12);
+    lv_obj_set_size(col, inner * 74 / 100, LV_SIZE_CONTENT);
+    lv_obj_align_to(col, arc, LV_ALIGN_CENTER, 0, -size / 16);
     lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(col, 2, 0);
+    lv_obj_set_style_pad_row(col, 1, 0);
     char text[48], amount[24];
-    if (!s.has_balance || (!any_rule && s.balance == 0))
+    if (!any_rule && !s.has_balance)
     {
-        lv_obj_t *t = label(col, UI_FONT_BODY, C_INK, "Aggiungi lo stipendio e i fissi");
+        lv_obj_t *t = label(col, UI_FONT_BODY, C_INK, "Aggiungi entrate e spese");
         lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_WRAP);
-        lv_obj_set_width(t, size * 64 / 100);
+        lv_obj_set_width(t, inner * 70 / 100);
         lv_obj_t *d = label(col, UI_FONT_SMALL, C_DIM, "dalla Dashboard (menu " LV_SYMBOL_SETTINGS ")");
         lv_obj_set_style_text_align(d, LV_TEXT_ALIGN_CENTER, 0);
     }
     else
     {
-        label(col, UI_FONT_SMALL, C_DIM, "oggi puoi spendere");
-        lv_obj_t *row = box(col);
-        lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-        bl_cents_t left = s.today_left > 0 ? s.today_left : 0;
-        money(amount, sizeof(amount), left, true);
-        label(row, ui_font_big, C_INK, amount);
-        snprintf(text, sizeof(text), ",%02d €", (int)(left % 100));
-        lv_obj_t *unit = label(row, UI_FONT_BODY, C_DIM, text);
-        lv_obj_set_style_pad_bottom(unit, 10, 0);
-        lv_obj_t *word = label(col, UI_FONT_BODY, STATE_COLOR[s.state], STATE_WORD[s.state]);
-        (void)word;
+        label(col, UI_FONT_SMALL, C_DIM, "disponibili");
+        money(amount, sizeof(amount), s.balance, true);
+        snprintf(text, sizeof(text), "%s €", amount);
+        label(col, ui_font_big, s.balance < 0 ? 0xFF6B6B : C_INK, text);
+        money(amount, sizeof(amount), s.today_left > 0 ? s.today_left : 0, true);
+        snprintf(text, sizeof(text), "oggi %s € · %s", amount, STATE_WORD[s.state]);
+        label(col, UI_FONT_SMALL, s.today_left > 0 ? 0x4DA3FF : 0xFF6B6B, text);
         if (s.main_income >= 0)
         {
-            snprintf(text, sizeof(text), s.days == 1 ? "Stipendio domani" : "Stipendio tra %d giorni", s.days);
+            snprintf(text, sizeof(text), s.days == 1 ? "stipendio domani" : "stipendio tra %d giorni", s.days);
         }
         else
         {
-            snprintf(text, sizeof(text), "Fine mese tra %d giorni", s.days);
+            snprintf(text, sizeof(text), "fine mese tra %d giorni", s.days);
         }
         label(col, UI_FONT_SMALL, C_DIM, text);
         money(amount, sizeof(amount), s.forecast, true);
