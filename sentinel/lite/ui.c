@@ -1,7 +1,9 @@
 /*
  * Sentinel Lite on the watch.
  *
- *   HOME     the network: name, devices online, new ones, last scan; actions
+ *   HOME     like Copertura's LIVE: an arc = devices online (the progress while a
+ *            job runs), the count, new ones, signal; round buttons
+ *   MENU     check, nearby networks, Wi-Fi, dashboard
  *   DEVICES  who is connected (online first), new ones marked
  *   DEVICE   one device: name, kind, maker, IP, MAC, names heard; check its
  *            services; mark it as trusted
@@ -40,7 +42,7 @@
 
 #define HISTORY 8
 
-enum { HOME, DEVICES, DEVICE, CHECK, AIR, DASH, FIND, WIFI };
+enum { HOME, DEVICES, DEVICE, CHECK, AIR, DASH, FIND, WIFI, MENU };
 
 typedef struct
 {
@@ -56,6 +58,7 @@ typedef struct
     sl_phase_t phase;
     uint32_t revision;
     lv_obj_t *find_arc, *find_value, *find_word, *find_info;   /* FIND, updated by tick() */
+    lv_obj_t *home_arc, *home_net, *home_big, *home_sub, *home_info;   /* HOME, updated by tick() */
     char known[KNOWN][33];       /* WIFI */
 } sl_ui_t;
 
@@ -193,41 +196,124 @@ static void do_join(lv_event_t *e)
 
 /* ---------------------------------------------------------------- HOME */
 
-static void home(sl_ui_t *ui)
+static lv_obj_t *box(lv_obj_t *parent)
 {
-    lv_obj_t *page = ui_page(ui->content, "Sentinel");
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_scrollable(o, false);
+    lv_obj_set_clickable(o, false);
+    return o;
+}
+
+static lv_obj_t *round_button(lv_obj_t *parent, const char *symbol, uint32_t color, lv_event_cb_t cb, void *data)
+{
+    lv_obj_t *b = lv_button_create(parent);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, 52, 52);
+    lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(b, ui_color(C_CARD), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(b, ui_color(C_LINE), 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_bg_color(b, ui_color(C_LINE), LV_STATE_PRESSED);
+    lv_obj_t *l = label(b, UI_FONT_LARGE, color, symbol);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, data);
+    lv_port_set_focusable(b);
+    return b;
+}
+
+/* The arc is the network (online / seen) when idle, the progress while a job runs. */
+static void home_update(sl_ui_t *ui)
+{
     sl_status_t st;
     sl_status(&st);
-    char text[96];
-    lv_obj_t *net = label(page, ui_font_headline, C_ACCENT, st.ssid[0] ? st.ssid : "Rete");
-    lv_obj_set_style_text_align(net, LV_TEXT_ALIGN_CENTER, 0);
-    int size = card_width() * 3 / 4;
-    lv_obj_t *arc = gauge(page, size, size / 14, st.fresh ? C_WARN : C_ACCENT,
-                          st.devices ? st.online * 100 / st.devices : 0);
-    snprintf(text, sizeof(text), "%d", st.online);
-    inside(arc, ui_font_big, C_INK, text, -size / 14);
-    snprintf(text, sizeof(text), "in linea su %d", st.devices);
-    inside(arc, UI_FONT_SMALL, C_DIM, text, size / 6);
-    if (st.fresh > 0)
+    bool busy = st.phase != SL_IDLE && st.phase != SL_FAILED && st.phase != SL_FINDING;
+    char text[80];
+    if (busy)
     {
-        snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %d %s", st.fresh, st.fresh == 1 ? "nuovo dispositivo" : "nuovi dispositivi");
-        label(page, UI_FONT_BODY, C_WARN, text);
+        lv_arc_set_value(ui->home_arc, st.percent);
+        lv_obj_set_style_arc_color(ui->home_arc, ui_color(C_ACCENT), LV_PART_INDICATOR);
+        snprintf(text, sizeof(text), "%d%%", st.percent);
+        lv_label_set_text(ui->home_big, text);
+        lv_label_set_text(ui->home_sub, st.message);
+        lv_obj_set_style_text_color(ui->home_sub, ui_color(C_ACCENT), 0);
     }
+    else
+    {
+        lv_arc_set_value(ui->home_arc, st.devices ? st.online * 100 / st.devices : 0);
+        lv_obj_set_style_arc_color(ui->home_arc, ui_color(st.fresh ? C_WARN : C_ACCENT), LV_PART_INDICATOR);
+        snprintf(text, sizeof(text), "%d", st.online);
+        lv_label_set_text(ui->home_big, text);
+        if (st.phase == SL_FAILED)
+        {
+            snprintf(text, sizeof(text), "%s", st.message);
+        }
+        else if (st.fresh)
+        {
+            snprintf(text, sizeof(text), LV_SYMBOL_WARNING " %d %s", st.fresh, st.fresh == 1 ? "nuovo" : "nuovi");
+        }
+        else
+        {
+            snprintf(text, sizeof(text), "in linea su %d", st.devices);
+        }
+        lv_label_set_text(ui->home_sub, text);
+        lv_obj_set_style_text_color(ui->home_sub, ui_color(st.phase == SL_FAILED ? C_BAD : st.fresh ? C_WARN : C_DIM), 0);
+    }
+    lv_label_set_text(ui->home_net, st.ssid[0] ? st.ssid : "Rete");
     sl_check_t c;
     sl_check_result(&c);
     if (c.done)
     {
-        snprintf(text, sizeof(text), "%d dBm  ·  router %d ms  ·  internet %s", c.rssi, c.gateway_avg,
-                 c.internet_ms < 0 ? "no" : "ok");
-        lv_obj_t *h = label(page, UI_FONT_SMALL, c.gateway_avg < 0 || c.internet_ms < 0 ? C_BAD : C_DIM, text);
-        lv_obj_set_style_text_align(h, LV_TEXT_ALIGN_CENTER, 0);
+        snprintf(text, sizeof(text), "%d dBm · router %d ms", c.rssi, c.gateway_avg);
     }
-    ui->status = ui_text(page, st.message, true);
-    lv_obj_set_style_text_align(ui->status, LV_TEXT_ALIGN_CENTER, 0);
-    ui_row(page, LV_SYMBOL_LIST, 0x2E7D78, "Dispositivi", NULL, open_view, (void *)(intptr_t)DEVICES);
-    ui_row(page, LV_SYMBOL_REFRESH, 0x2E7D78, "Scansiona di nuovo", NULL, do_scan, NULL);
+    else
+    {
+        snprintf(text, sizeof(text), "%s", st.ip[0] ? st.ip : "");
+    }
+    lv_label_set_text(ui->home_info, text);
+}
+
+static void home(sl_ui_t *ui)
+{
+    const board_info_t *b = board_info();
+    int size = b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
+    ui->home_arc = gauge(ui->content, size, size / 16, C_ACCENT, 0);
+    lv_obj_align(ui->home_arc, b->round ? LV_ALIGN_CENTER : LV_ALIGN_TOP_MID, 0, b->round ? 0 : 6);
+
+    lv_obj_t *col = box(ui->content);
+    lv_obj_set_size(col, size * 70 / 100, LV_SIZE_CONTENT);
+    lv_obj_align_to(col, ui->home_arc, LV_ALIGN_CENTER, 0, -size / 14);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(col, 2, 0);
+    ui->home_net = label(col, UI_FONT_SMALL, C_ACCENT, "");
+    lv_label_set_long_mode(ui->home_net, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_max_width(ui->home_net, size * 60 / 100, 0);
+    ui->home_big = label(col, ui_font_big, C_INK, "–");
+    ui->home_sub = label(col, UI_FONT_BODY, C_DIM, "");
+    lv_label_set_long_mode(ui->home_sub, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_max_width(ui->home_sub, size * 64 / 100, 0);
+    ui->home_info = label(col, UI_FONT_SMALL, 0x5C7F86, "");
+    lv_label_set_long_mode(ui->home_info, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_max_width(ui->home_info, size * 60 / 100, 0);
+
+    lv_obj_t *buttons = box(ui->content);
+    lv_obj_set_size(buttons, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(buttons, 8, 0);
+    round_button(buttons, LV_SYMBOL_LIST, C_ACCENT, open_view, (void *)(intptr_t)DEVICES);
+    round_button(buttons, LV_SYMBOL_GPS, C_HOT, open_view, (void *)(intptr_t)DEVICES);
+    round_button(buttons, LV_SYMBOL_REFRESH, 0x2EE39A, do_scan, NULL);
+    round_button(buttons, LV_SYMBOL_SETTINGS, C_DIM, open_view, (void *)(intptr_t)MENU);
+    lv_obj_align(buttons, LV_ALIGN_BOTTOM_MID, 0, b->round ? -8 : -10);
+    home_update(ui);
+}
+
+static void menu(sl_ui_t *ui)
+{
+    lv_obj_t *page = ui_page(ui->content, "Sentinel");
     ui_row(page, LV_SYMBOL_OK, 0x3D6BFF, "Verifica la rete", NULL, do_check, NULL);
-    ui_row(page, LV_SYMBOL_GPS, C_HOT, "Trova un dispositivo", NULL, open_view, (void *)(intptr_t)DEVICES);
     ui_row(page, LV_SYMBOL_WIFI, 0x8E5BFF, "Reti vicine", NULL, do_air, NULL);
     ui_row(page, LV_SYMBOL_SHUFFLE, 0x3D6BFF, "Cambia Wi-Fi", NULL, open_view, (void *)(intptr_t)WIFI);
     ui_row(page, LV_SYMBOL_EYE_OPEN, C_ACCENT, "Dashboard", NULL, open_view, (void *)(intptr_t)DASH);
@@ -570,6 +656,7 @@ static void render(sl_ui_t *ui)
     }
     ui->status = NULL;
     ui->find_arc = NULL;
+    ui->home_arc = NULL;
     ui->content = lv_obj_create(ui->screen);
     lv_obj_remove_style_all(ui->content);
     lv_obj_set_size(ui->content, LV_PCT(100), LV_PCT(100));
@@ -589,6 +676,7 @@ static void render(sl_ui_t *ui)
     case AIR: air(ui); break;
     case FIND: find_view(ui); break;
     case WIFI: wifi_view(ui); break;
+    case MENU: menu(ui); break;
     default: dash(ui); break;
     }
 }
@@ -601,7 +689,7 @@ static void tick(lv_timer_t *timer)
     bool busy = st.phase != SL_IDLE && st.phase != SL_FAILED && st.phase != SL_FINDING;
     if (ui->border != NULL)
     {
-        lv_obj_set_hidden(ui->border, !busy);
+        lv_obj_set_hidden(ui->border, !busy || ui->view == HOME);   /* on HOME the arc is the progress */
         if (busy)
         {
             ui_border_progress_set(ui->border, st.percent, 100);
@@ -615,8 +703,12 @@ static void tick(lv_timer_t *timer)
     {
         find_update(ui);
     }
+    if (ui->home_arc != NULL && st.revision != ui->revision)
+    {
+        home_update(ui);
+    }
     bool ended = st.phase != ui->phase && (st.phase == SL_IDLE || st.phase == SL_FAILED);
-    if (ended && ui->view != DASH && ui->view != WIFI)
+    if (ended && ui->view != DASH && ui->view != WIFI && ui->view != HOME)
     {
         render(ui);
     }

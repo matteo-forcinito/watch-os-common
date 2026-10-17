@@ -191,11 +191,11 @@ int bilancio_tests(void)
     bl_tx_t one[] = {tx(1, D(2026, 10, 2), -5000, SPESA, 0)};
     bl_book_t computed = {.balance_date = BL_NONE, .rules = rules, .rule_count = 3, .tx = one, .tx_count = 1};
     CHECK(bl_balance_today(&computed, D(2026, 10, 17)) == 185000 - 65000 - 28900 - 5000);   /* salary, rent, loan 5/10 */
-    /* The salary entered starting this month (27/10, not come yet): the one of 25/9 is still the money there. */
+    /* The salary entered starting this month (27/10, not come yet): only the expenses so far, below zero. */
     bl_rule_t late[3] = {rules[0], rules[1], rules[2]};
     late[0].first = bl_month_index(2026, 10);
     bl_book_t started = {.balance_date = BL_NONE, .rules = late, .rule_count = 3, .tx = one, .tx_count = 1};
-    CHECK(bl_balance_today(&started, D(2026, 10, 17)) == 185000 - 65000 - 28900 - 5000);
+    CHECK(bl_balance_today(&started, D(2026, 10, 17)) == -65000 - 28900 - 5000);
     bl_book_t nothing = {.balance_date = BL_NONE};
     bl_summary(&nothing, D(2026, 10, 17), &s);
     CHECK(!s.has_balance && s.balance == 0 && s.daily == 0);

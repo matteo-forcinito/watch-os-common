@@ -1289,7 +1289,20 @@ static void sniff(void *buffer, wifi_promiscuous_pkt_type_t type)
     atomic_fetch_add(&s_find_frames, 1);
 }
 
-/* Hot and cold: ping the device and read the signal of its answers, up to 3 minutes. */
+typedef struct
+{
+    struct netif *netif;
+    ip4_addr_t ip;
+} poke_t;
+
+/* tcpip thread: an ARP request for the device. Phones in power save skip pings, not ARP. */
+static void poke_on_tcpip(void *arg)
+{
+    poke_t *p = arg;
+    etharp_request(p->netif, &p->ip);
+}
+
+/* Hot and cold: ARP + ping the device and read the signal of its answers, up to 3 minutes. */
 static void run_find(uint32_t ip)
 {
     sl_lock();
@@ -1314,6 +1327,11 @@ static void run_find(uint32_t ip)
         return;
     }
     atomic_store(&s_find_frames, 0);
+    esp_netif_ip_info_t info;
+    esp_netif_t *sta = station(&info);
+    static poke_t poke;
+    poke.netif = sta != NULL ? esp_netif_get_netif_impl(sta) : NULL;
+    poke.ip.addr = ip;
     wifi_set_fast(true);   /* modem sleep would miss most frames */
     power_keep_screen_on(true);
     wifi_promiscuous_filter_t filter = {.filter_mask = WIFI_PROMIS_FILTER_MASK_DATA | WIFI_PROMIS_FILTER_MASK_MGMT};
@@ -1330,7 +1348,15 @@ static void run_find(uint32_t ip)
     int smooth = 0;   /* tenths of dBm */
     while (error == ESP_OK && !s_cancel && esp_timer_get_time() - start < 180000000LL && wifi_is_connected())
     {
-        ping_once(ip, 200);   /* the answer is a frame sent by the device */
+        if (seen == 0 && esp_timer_get_time() - start > 25000000LL)
+        {
+            break;   /* nothing in 25 s: it is not on this radio */
+        }
+        if (poke.netif != NULL)
+        {
+            tcpip_callback(poke_on_tcpip, &poke);   /* the ARP reply is a frame sent by the device */
+        }
+        ping_once(ip, 200);   /* and so is the echo reply */
         int frames = atomic_load(&s_find_frames);
         int64_t now = esp_timer_get_time();
         if (frames != seen)
