@@ -206,6 +206,13 @@ static esp_err_t state(httpd_req_t *request)
     add_money(m, "yearly_fixed", bl_yearly_cost(book->rules, book->rule_count, BL_ANY_CATEGORY, month));
     add_money(m, "spent", bl_spent(book, BL_ANY_CATEGORY, bl_month_start(month), today + 1));
 
+    /* Regular flows per month: fixed rules (monthly shares) and variable spending at the 30-day pace. */
+    cJSON *flows = cJSON_AddObjectToObject(out, "flows");
+    add_money(flows, "income", bl_monthly_share(book->rules, book->rule_count, BL_INCOME, month));
+    add_money(flows, "fixed", bl_monthly_share(book->rules, book->rule_count, BL_EXPENSE, month));
+    add_money(flows, "variable", s.pace * 365 / 12);
+    add_money(flows, "spent_30", bl_spent(book, BL_ANY_CATEGORY, today - BL_PACE_DAYS + 1, today + 1));
+
     /* What falls from the last payday to a month past the next one. */
     timeline_t t = {.items = items};
     bl_each_date(book->rules, book->rule_count, s.period_start, s.payday + TIMELINE_AHEAD, collect, &t);

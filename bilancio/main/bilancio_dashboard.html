@@ -12,6 +12,12 @@
   --c0:#2a78d6;--c1:#eb6834;--c2:#1baf7a;--c3:#eda100;--c4:#e87ba4;--c5:#008300;--c6:#6250d6;--c7:#e34948;--c8:#8c94a5}}
 :root[data-theme=light]{--c0:#2a78d6;--c1:#eb6834;--c2:#1baf7a;--c3:#eda100;--c4:#e87ba4;--c5:#008300;--c6:#6250d6;--c7:#e34948;--c8:#8c94a5}
 .money{font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.flows{width:100%;border-collapse:collapse;font-size:14px}
+.flows th,.flows td{padding:7px 8px;text-align:right;white-space:nowrap}
+.flows th:first-child,.flows td:first-child{text-align:left;color:var(--dim);font-weight:600}
+.flows thead th{font-size:12px;color:var(--faint);font-weight:650}
+.flows tr.sum td{border-top:1px solid var(--line);font-weight:750}
+.flows-wrap{overflow-x:auto}
 .cents{font-size:.48em;font-weight:650;color:var(--dim);margin-left:1px}
 .in{color:var(--good)}
 
@@ -178,6 +184,8 @@
         </form>
       </div>
     </div>
+
+    <div class="card" id="flows" style="margin-top:16px"></div>
 
     <div class="grid g2 row2" style="margin-top:16px">
       <div class="card">
@@ -379,7 +387,7 @@ async function saved(promise, text) {
 }
 
 function renderAll() {
-  renderHero(); renderQuick(); renderForecast(); renderTimeline(); renderFixedCard(); renderLoans();
+  renderHero(); renderFlows(); renderQuick(); renderForecast(); renderTimeline(); renderFixedCard(); renderLoans();
   renderInsights(); renderCats(); renderRecent(); renderWelcome(); renderFixed(); renderIncome(); renderSettings();
 }
 
@@ -428,6 +436,34 @@ function renderHero() {
       el('div', {class: 'headline'}, headline),
       el('div', {class: 'dim'}, `Budget di ${eur(s.daily)} al giorno per ${s.days} ${s.days === 1 ? 'giorno' : 'giorni'}. Dall'ultimo stipendio hai speso ${eurSmart(s.period_spent)} extra.`),
       facts)));
+}
+/* Income and expenses per week, month and year: fixed rules plus variable spending at the current pace. */
+function renderFlows() {
+  const st = S.st, f = st.flows, s = st.summary, host = $('#flows');
+  if (!f) { host.hidden = true; return; }
+  const out = f.fixed + f.variable, net = f.income - out;
+  const per = {week: c => Math.round(c * 12 / 52), month: c => c, year: c => c * 12};
+  const row = (name, c, cls, sign) => el('tr', {class: cls || ''}, el('td', {}, name),
+    ...['week', 'month', 'year'].map(k => el('td', {class: 'money', style: sign && c < 0 ? 'color:var(--bad)' : ''}, eur(per[k](c), 0))));
+  const [y, mo] = st.today.split('-').map(Number), left = 12 - mo;
+  const yearEnd = s.balance + net * left;
+  host.hidden = false;
+  host.replaceChildren(el('h2', {}, 'Entrate e uscite'),
+    el('div', {class: 'facts'},
+      fact('Disponibile ora', eurSmart(s.balance), st.balance.set ? 'dalla banca del ' + fmt(st.balance.date) : 'entrate meno uscite'),
+      fact('Risparmio al mese', eurSmart(net), net >= 0 ? 'al ritmo attuale' : 'spendi più di quanto entra'),
+      fact('Stima a fine anno', eurSmart(yearEnd), left ? `fra ${left} ${left === 1 ? 'mese' : 'mesi'}` : 'dicembre ' + y),
+      fact('Spesi negli ultimi 30 giorni', eurSmart(f.spent_30), 'spese variabili')),
+    el('div', {class: 'flows-wrap'}, el('table', {class: 'flows'},
+      el('thead', {}, el('tr', {}, el('th', {}, ''), el('th', {}, 'Settimana'), el('th', {}, 'Mese'), el('th', {}, 'Anno'))),
+      el('tbody', {},
+        row('Entrate', f.income),
+        row('Uscite fisse', f.fixed),
+        row('Uscite variabili', f.variable),
+        row('Totale uscite', out, 'sum'),
+        row('Risparmio', net, 'sum', true)))),
+    el('p', {class: 'faint', style: 'margin:8px 0 0;font-size:13px'},
+      'Voci fisse in quota mensile (un’assicurazione annuale da 540 € conta 45 € al mese); spese variabili al ritmo degli ultimi 30 giorni.'));
 }
 function fact(label, value, sub) {
   return el('div', {class: 'fact'}, el('span', {}, label), el('b', {class: 'money'}, value), el('small', {}, sub));
