@@ -510,6 +510,63 @@ void bl_summary(const bl_book_t *original, bl_day_t today, bl_summary_t *out)
     }
 }
 
+typedef struct
+{
+    const bl_book_t *book;
+    bl_day_t today;
+    int loans_category;
+    bl_month_end_t *out;
+} end_ctx_t;
+
+static void end_date(const bl_rule_t *r, bl_day_t date, void *ctx)
+{
+    end_ctx_t *c = ctx;
+    if (bl_paid(c->book, r, date) || (c->book->balance_date != BL_NONE && date <= c->book->balance_date))
+    {
+        return;
+    }
+    if (r->kind == BL_INCOME)
+    {
+        c->out->income += date > c->today ? r->amount : 0;   /* today's is already in the balance */
+        return;
+    }
+    c->out->fixed += r->amount;                              /* from today: not in the balance yet */
+    if (r->loan.type != BL_LOAN_NONE || (c->loans_category >= 0 && r->category == c->loans_category))
+    {
+        c->out->loans += r->amount;
+    }
+}
+
+void bl_month_end(const bl_book_t *original, bl_day_t today, int loans_category, bl_month_end_t *out)
+{
+    bl_month_end_t zero = {0};
+    *out = zero;
+    bl_book_t e = effective(original, today);
+    bl_day_t next = bl_month_start(bl_month_of(today) + 1);
+    out->end = next - 1;
+    out->balance = bl_balance_today(original, today);
+    end_ctx_t c = {.book = &e, .today = today, .loans_category = loans_category, .out = out};
+    bl_each_date(e.rules, e.rule_count, today, next, end_date, &c);
+    bl_cents_t spent_today = 0;
+    for (int i = 0; i < e.tx_count; i++)
+    {
+        const bl_tx_t *t = &e.tx[i];
+        if (t->date > today && t->date < next)          /* planned */
+        {
+            if (t->amount > 0) out->income += t->amount;
+            else out->fixed -= t->amount;
+        }
+        else if (t->date == today && variable(t, BL_ANY_CATEGORY) && counted(&e, t))
+        {
+            spent_today -= t->amount;
+        }
+    }
+    bl_cents_t pace = bl_pace(&e, today);
+    out->variable = (pace > spent_today ? pace - spent_today : 0) + pace * (next - today - 1);
+    out->after_loans = out->balance + out->income - out->loans;
+    out->after_all = out->balance + out->income - out->fixed - out->variable;
+}
+
 bl_cents_t bl_month_total(const bl_rule_t *rules, int count, int kind, int month_index)
 {
     bl_cents_t total = 0;

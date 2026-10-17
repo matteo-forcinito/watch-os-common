@@ -60,6 +60,7 @@ idf_component_register(
         "timer/timer_app.c"
         "voice/voice_memo_app.c"
         "sensors/sensors_app.c"
+        "sistema/sistema_app.c"
         "usb/usb_drive_app.c"
         "sdcard/sdcard_app.c"
         "battery/battery_app.c"
@@ -74,6 +75,9 @@ idf_component_register(
         core
     PRIV_REQUIRES
         ui
+        nvs_flash
+        fatfs
+        esp_timer
         services
         companion
         hardware

@@ -8,12 +8,18 @@ Regola: gli orologi restano su **1.8.x**. Le novità escono sul canale **Dev** (
 
 | Firmware | Stabile | Dev |
 |---|---|---|
-| AMOLED 1.8 | 1.8.4 | 1.8.6-dev.3 |
-| AMOLED 1.75 | 1.8.5 (uscita la notte del 17/10, con Bilancio) | 1.8.6-dev.3 |
-| AMOLED 1.75C | 1.8.4 | 1.8.6-dev.3 |
-| Knob 1.8 | 1.8.4 (la 1.8.5 è stata compilata ma mai pubblicata) | 1.8.6-dev.3 |
-| Watcher | 1.8.4 | 1.8.6-dev.3 |
+| AMOLED 1.8 | 1.8.4 | 1.8.6-dev.8 |
+| AMOLED 1.75 | 1.8.5 (uscita la notte del 17/10, con Bilancio) | 1.8.6-dev.8 |
+| AMOLED 1.75C | 1.8.4 | 1.8.6-dev.8 |
+| Knob 1.8 | 1.8.4 (la 1.8.5 è stata compilata ma mai pubblicata) | 1.8.6-dev.8 |
+| Watcher | 1.8.4 | 1.8.6-dev.8 |
 
+- `1.8.6-dev.8` (18/10): app **Sistema** (RAM, PSRAM, file, SD, batteria, Wi-Fi, task, uptime) con
+  **monitor leggero** sempre in primo piano (doppio reset: il secondo appena compare lo schermo, entro
+  4 s; oppure dall'app); Bilancio **a fine mese** (dopo rate e mutui / dopo tutte le spese, barre in
+  dashboard, sezione nel Riepilogo). Provata all'avvio su 1.75C (COM10): avvio pulito.
+- dev.4–7: Sentinel Trova con ARP e Home come Copertura; Bilancio Home a due archi; dashboard non
+  più vuota dopo "Togli il saldo"; l'ultimo stipendio già arrivato conta nel saldo.
 - `1.8.6-dev.3` (18/10): Bilancio, saldo rimovibile, stipendio precedente contato prima che la voce
   dello stipendio inizi, Menu → Riepilogo sull'orologio. `dev.2`: Sentinel Lite rifatta.
 - `1.8.6-dev.1` (17/10): Bilancio su tutti, con saldo facoltativo e la card "Entrate e uscite"
@@ -61,10 +67,11 @@ Passo 2b (matematica dei debiti, bollette a consumo), grafici della dashboard (p
 (passo 5), versione esterna per il Market (passo 7), confronto tariffe (passo 8). Dettagli in
 [docs/progetti/BILANCIO.md](../progetti/BILANCIO.md).
 
-## Idea in coda: app Sistema
+## Da fare dopo
 
-Stato completo del sistema (RAM interna, PSRAM, flash, SD, batteria, task, Wi-Fi) nello stile di
-Copertura. Non iniziata.
+- Dashboard web di Sistema. Uso CPU nel monitor (serve `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS`).
+- Sentinel esterna da ripubblicare sul Market (nomi condivisi già nel codice).
+- Dev.6 non è uscita per 1.75C e Watcher (log occupato): coperta dalla dev.7.
 
 ## Cose note, non urgenti
 

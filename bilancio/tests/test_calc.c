@@ -196,6 +196,11 @@ int bilancio_tests(void)
     late[0].first = bl_month_index(2026, 10);
     bl_book_t started = {.balance_date = BL_NONE, .rules = late, .rule_count = 3, .tx = one, .tx_count = 1};
     CHECK(bl_balance_today(&started, D(2026, 10, 17)) == 185000 - 65000 - 28900 - 5000);   /* 25/9 already paid */
+    /* End of the month: the salary of the 27th still comes, rent and loan already paid. */
+    bl_month_end_t me;
+    bl_month_end(&computed, D(2026, 10, 17), -1, &me);
+    CHECK(me.end == D(2026, 10, 31) && me.income == 185000 && me.fixed == 0 && me.loans == 0);
+    CHECK(me.after_loans == me.balance + 185000 && me.after_all == me.balance + 185000 - me.variable);
     bl_book_t nothing = {.balance_date = BL_NONE};
     bl_summary(&nothing, D(2026, 10, 17), &s);
     CHECK(!s.has_balance && s.balance == 0 && s.daily == 0);

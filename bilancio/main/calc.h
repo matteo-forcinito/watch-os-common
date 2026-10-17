@@ -221,6 +221,21 @@ bl_cents_t bl_balance_today(const bl_book_t *book, bl_day_t today);
 bl_cents_t bl_due_between(const bl_book_t *book, int kind, bl_day_t from, bl_day_t to);
 void bl_summary(const bl_book_t *book, bl_day_t today, bl_summary_t *out);
 
+/* What the balance will be at the end of this month (the day before the 1st). */
+typedef struct
+{
+    bl_day_t end;           /* last day of the month */
+    bl_cents_t balance;     /* today */
+    bl_cents_t income;      /* still to come: rules after today (the salary of the 27th) and planned */
+    bl_cents_t fixed;       /* expenses still due from today, planned included */
+    bl_cents_t loans;       /* the part of `fixed` that is loans and mortgages */
+    bl_cents_t variable;    /* variable spending to the end at the 30-day pace */
+    bl_cents_t after_loans; /* balance + income - loans */
+    bl_cents_t after_all;   /* balance + income - fixed - variable */
+} bl_month_end_t;
+/* Loans: rules with loan details, or in `loans_category` (-1: none). */
+void bl_month_end(const bl_book_t *book, bl_day_t today, int loans_category, bl_month_end_t *out);
+
 /* Rule dates of `kind` whose nominal month is `month_index` (what falls this month). */
 bl_cents_t bl_month_total(const bl_rule_t *rules, int count, int kind, int month_index);
 /* Monthly share of every active rule of `kind` (a yearly 540 -> 45 a month). */

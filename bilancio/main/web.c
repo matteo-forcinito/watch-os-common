@@ -206,6 +206,27 @@ static esp_err_t state(httpd_req_t *request)
     add_money(m, "yearly_fixed", bl_yearly_cost(book->rules, book->rule_count, BL_ANY_CATEGORY, month));
     add_money(m, "spent", bl_spent(book, BL_ANY_CATEGORY, bl_month_start(month), today + 1));
 
+    /* End of the month: after loans only, and after every expense. */
+    int ncat = 0, loans_category = -1;
+    const char (*cats)[BL_CATEGORY_LEN] = bl_categories(&ncat);
+    for (int i = 0; i < ncat; i++)
+    {
+        if (strcmp(cats[i], "rate") == 0)
+        {
+            loans_category = i;
+        }
+    }
+    bl_month_end_t me;
+    bl_month_end(book, today, loans_category, &me);
+    cJSON *end = cJSON_AddObjectToObject(out, "month_end");
+    add_date(end, "date", me.end);
+    add_money(end, "income", me.income);
+    add_money(end, "fixed", me.fixed);
+    add_money(end, "loans", me.loans);
+    add_money(end, "variable", me.variable);
+    add_money(end, "after_loans", me.after_loans);
+    add_money(end, "after_all", me.after_all);
+
     /* Regular flows per month: fixed rules (monthly shares) and variable spending at the 30-day pace. */
     cJSON *flows = cJSON_AddObjectToObject(out, "flows");
     add_money(flows, "income", bl_monthly_share(book->rules, book->rule_count, BL_INCOME, month));

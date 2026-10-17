@@ -29,6 +29,9 @@ extern const app_t extapps_run_app;     /* hidden: arg = extapp_t * (malloc, fre
 extern const app_t power_app;
 extern const app_t voice_memo_app;
 extern const app_t sensors_app;
+extern const app_t sistema_app;
+/* Overlay of Sistema (on after a double reset or from the app); LVGL locked. */
+void sistema_boot(void);
 extern const app_t timer_app;
 extern const app_t music_app;
 extern const app_t usb_drive_app;

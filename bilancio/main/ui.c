@@ -382,6 +382,14 @@ static void summary(bl_ui_t *ui)
     bl_cents_t fixed = bl_monthly_share(book->rules, book->rule_count, BL_EXPENSE, mi);
     bl_cents_t yearly = bl_yearly_cost(book->rules, book->rule_count, BL_ANY_CATEGORY, mi);
     bool balance_set = book->balance_date != BL_NONE;
+    int ncat = 0, loans_category = -1;
+    const char (*names)[BL_CATEGORY_LEN] = bl_categories(&ncat);
+    for (int i = 0; i < ncat; i++)
+    {
+        loans_category = strcmp(names[i], "rate") == 0 ? i : loans_category;
+    }
+    bl_month_end_t me;
+    bl_month_end(book, today, loans_category, &me);
     bl_unlock();
     bl_cents_t variable = s.pace * 365 / 12, out = fixed + variable, net = income - out;
     int year, month_number, day;
@@ -397,6 +405,12 @@ static void summary(bl_ui_t *ui)
     snprintf(text, sizeof(text), "%s. Stipendio fra %d %s.", balance_set ? "Saldo dalla banca" : "Saldo calcolato da entrate e uscite",
              s.days, s.days == 1 ? "giorno" : "giorni");
     ui_text(page, text, true);
+
+    ui_section(page, "A fine mese");
+    figure(page, LV_SYMBOL_DOWNLOAD, 0x2EE39A, "Entrate in arrivo", me.income, false);
+    figure(page, LV_SYMBOL_UPLOAD, 0xFFA34D, "Spese fisse da pagare", me.fixed, false);
+    figure(page, LV_SYMBOL_SAVE, 0x4DA3FF, "Dopo rate e mutui", me.after_loans, true);
+    figure(page, LV_SYMBOL_SAVE, 0x8E7DFF, "Dopo tutte le spese", me.after_all, true);
 
     ui_section(page, "Al mese");
     figure(page, LV_SYMBOL_DOWNLOAD, 0x2EE39A, "Entrate", income, false);

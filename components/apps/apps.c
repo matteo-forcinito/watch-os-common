@@ -34,6 +34,7 @@ static const app_t *const s_apps[] = {
     &timer_app,
     &voice_memo_app,
     &sensors_app,
+    &sistema_app,
     &music_app,
     &flashlight_app,
     &web_app,
@@ -345,4 +346,5 @@ void apps_init(void)
     lv_subject_add_observer(state_subject(STATE_UPDATE), on_update_phase, NULL);
     lv_subject_add_observer(state_subject(STATE_UPDATE_PERCENT), on_update_percent, NULL);
     app_manager_set_focus_cb(on_focus_changed);
+    sistema_boot();   /* after the shell: the overlay goes on top of it */
 }

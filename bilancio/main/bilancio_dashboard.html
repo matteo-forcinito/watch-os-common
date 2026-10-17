@@ -438,6 +438,23 @@ function renderHero() {
       facts)));
 }
 /* Income and expenses per week, month and year: fixed rules plus variable spending at the current pace. */
+/* Balance today and at the end of the month, after loans and after every expense: horizontal bars. */
+function monthEnd(st) {
+  const e = st.month_end;
+  if (!e) return '';
+  const rows = [['Saldo oggi', st.summary.balance, 'var(--accent)'],
+    ['Fine mese, dopo rate e mutui', e.after_loans, 'var(--good)'],
+    ['Fine mese, dopo tutte le spese', e.after_all, 'var(--warn)']];
+  const max = Math.max(1, ...rows.map(r => Math.abs(r[1])));
+  return el('div', {style: {margin: '14px 0'}},
+    el('div', {class: 'dim', style: {fontSize: '13px', marginBottom: '6px'}},
+      `Al ${fmt(e.date, {day: 'numeric', month: 'long'})}: entrano ${eur(e.income, 0)}, fissi da pagare ${eur(e.fixed, 0)} (rate ${eur(e.loans, 0)}), spese variabili stimate ${eur(e.variable, 0)}`),
+    ...rows.map(([name, c, color]) => el('div', {style: {display: 'grid', gridTemplateColumns: 'minmax(120px,1fr) 2fr auto', gap: '10px', alignItems: 'center', margin: '6px 0'}},
+      el('span', {style: {fontSize: '13px'}}, name),
+      el('div', {style: {height: '12px', borderRadius: '99px', background: 'var(--panel2)', overflow: 'hidden'}},
+        el('i', {style: {display: 'block', height: '100%', width: (Math.abs(c) / max * 100).toFixed(0) + '%', background: c < 0 ? 'var(--bad)' : color, borderRadius: '99px'}})),
+      el('b', {class: 'money', style: {color: c < 0 ? 'var(--bad)' : ''}}, eur(c, 0)))));
+}
 function renderFlows() {
   const st = S.st, f = st.flows, s = st.summary, host = $('#flows');
   if (!f) { host.hidden = true; return; }
@@ -454,6 +471,7 @@ function renderFlows() {
       fact('Risparmio al mese', eurSmart(net), net >= 0 ? 'al ritmo attuale' : 'spendi più di quanto entra'),
       fact('Stima a fine anno', eurSmart(yearEnd), left ? `fra ${left} ${left === 1 ? 'mese' : 'mesi'}` : 'dicembre ' + y),
       fact('Spesi negli ultimi 30 giorni', eurSmart(f.spent_30), 'spese variabili')),
+    monthEnd(st),
     el('div', {class: 'flows-wrap'}, el('table', {class: 'flows'},
       el('thead', {}, el('tr', {}, el('th', {}, ''), el('th', {}, 'Settimana'), el('th', {}, 'Mese'), el('th', {}, 'Anno'))),
       el('tbody', {},
