@@ -1,13 +1,15 @@
 /*
  * Sistema: the state of the device, and a light overlay to watch it under load.
  *
- *   App      internal RAM, PSRAM, flash file system, SD, battery, Wi-Fi, tasks,
- *            uptime and last reset; refreshed every second (storage every 30 s:
- *            reading the free space of a big card is slow).
+ *   HOME     like Bilancio: outer arc = internal RAM used, inner arc (touching)
+ *            = PSRAM used; free RAM in big digits, PSRAM, lowest, battery;
+ *            round buttons: details, light monitor on/off.
+ *   DETAILS  RAM, PSRAM, file system, SD (every 30 s: slow on big cards),
+ *            battery, Wi-Fi, tasks, uptime, last reset.
  *   Overlay  two small lines on top of every screen (RAM, PSRAM, battery,
  *            lowest RAM since it was turned on), updated every second. Turned on
  *            and off from the app, or with a double reset: press reset again
- *            within 4 seconds of the screen coming on. It stays on across restarts.
+ *            within 10 seconds of the screen coming on. It stays on across restarts.
  */
 #include "apps_internal.h"
 
@@ -20,7 +22,9 @@
 #include "services/wifi.h"
 #include "ui/ui.h"
 
+#include "core/lv_port.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
@@ -31,7 +35,7 @@
 #include <stdlib.h>
 
 #define NS "sysmon"
-#define DOUBLE_RESET_MS 4000
+#define DOUBLE_RESET_MS 10000
 
 static lv_obj_t *s_overlay, *s_overlay_text;
 static lv_timer_t *s_overlay_timer;
@@ -108,7 +112,8 @@ static void overlay_show(bool on)
         return;
     }
     s_overlay_low = 0;
-    s_overlay = lv_obj_create(lv_layer_top());
+    /* The system layer: above everything, and the focus logic ignores it (the top layer is for dialogs). */
+    s_overlay = lv_obj_create(lv_layer_sys());
     lv_obj_remove_style_all(s_overlay);
     lv_obj_set_size(s_overlay, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(s_overlay, lv_color_black(), 0);
@@ -153,101 +158,305 @@ void sistema_boot(void)
             esp_timer_start_once(timer, DOUBLE_RESET_MS * 1000ULL);
         }
     }
+    ESP_LOGI("sysmon", "overlay %s (double reset %s)", on ? "on" : "off", double_reset ? "yes" : "no");
     overlay_show(on);
 }
 
 /* -------------------------------------------------------------------- app */
 
+#define C_BG   0x060B12
+#define C_CARD 0x111A26
+#define C_LINE 0x1F2C3D
+#define C_INK  0xE3F4F5
+#define C_DIM  0x8A9BB0
+
+enum { HOME, DETAILS };
+
 typedef struct
 {
-    lv_obj_t *ram, *psram, *flash, *sd, *battery, *wifi, *system;
+    lv_obj_t *screen, *content;
+    int view;
+    lv_obj_t *ram_arc, *psram_arc, *big, *sub, *info, *eye;   /* HOME */
+    lv_obj_t *ram, *psram, *flash, *sd, *battery, *wifi, *system;   /* DETAILS */
     lv_timer_t *timer;
     int ticks;
 } sistema_ui_t;
 
 static sistema_ui_t *s_ui;
+static void render(sistema_ui_t *ui);
+
+static uint32_t level_color(int used)
+{
+    return used >= 90 ? 0xFF6B6B : used >= 75 ? 0xFFA34D : 0x2EE39A;
+}
+
+static int used_pct(uint32_t caps)
+{
+    size_t total = heap_caps_get_total_size(caps);
+    return total ? (int)((total - heap_caps_get_free_size(caps)) * 100 / total) : 0;
+}
+
+static lv_obj_t *box(lv_obj_t *parent)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_scrollable(o, false);
+    lv_obj_set_clickable(o, false);
+    return o;
+}
+
+static lv_obj_t *text(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
+{
+    lv_obj_t *l = lv_label_create(parent);
+    lv_obj_set_style_text_font(l, font, 0);
+    lv_obj_set_style_text_color(l, ui_color(color), 0);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(l, "");
+    return l;
+}
+
+static lv_obj_t *gauge(lv_obj_t *parent, int size, int width)
+{
+    lv_obj_t *arc = lv_arc_create(parent);
+    lv_obj_remove_style_all(arc);
+    lv_obj_set_size(arc, size, size);
+    lv_arc_set_rotation(arc, 135);
+    lv_arc_set_bg_angles(arc, 0, 270);
+    lv_arc_set_range(arc, 0, 100);
+    lv_obj_set_style_arc_width(arc, width, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, ui_color(C_LINE), LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, width, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
+    lv_obj_set_clickable(arc, false);
+    return arc;
+}
+
+static lv_obj_t *round_button(lv_obj_t *parent, const char *symbol, uint32_t color, lv_event_cb_t cb)
+{
+    lv_obj_t *b = lv_button_create(parent);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, 52, 52);
+    lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(b, ui_color(C_CARD), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(b, ui_color(C_LINE), 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_bg_color(b, ui_color(C_LINE), LV_STATE_PRESSED);
+    lv_obj_t *l = text(b, UI_FONT_LARGE, color);
+    lv_label_set_text(l, symbol);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    lv_port_set_focusable(b);
+    return b;
+}
+
+static void home_update(sistema_ui_t *ui)
+{
+    uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    int ram = used_pct(internal), psram = used_pct(MALLOC_CAP_SPIRAM);
+    lv_arc_set_value(ui->ram_arc, ram);
+    lv_obj_set_style_arc_color(ui->ram_arc, ui_color(level_color(ram)), LV_PART_INDICATOR);
+    lv_arc_set_value(ui->psram_arc, psram);
+    lv_obj_set_style_arc_color(ui->psram_arc, ui_color(psram >= 90 ? 0xFF6B6B : 0x4DA3FF), LV_PART_INDICATOR);
+    char t[64], a[16];
+    kb(a, sizeof(a), heap_caps_get_free_size(internal));
+    lv_label_set_text(ui->big, a);
+    kb(a, sizeof(a), heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    snprintf(t, sizeof(t), "RAM libera · PSRAM %s", a);
+    lv_label_set_text(ui->sub, t);
+    kb(a, sizeof(a), heap_caps_get_minimum_free_size(internal));
+    if (pmu_battery_present())
+    {
+        snprintf(t, sizeof(t), "minimo %s · batteria %d%%%s", a, pmu_battery_percent(), pmu_is_charging() ? "+" : "");
+    }
+    else
+    {
+        snprintf(t, sizeof(t), "minimo %s", a);
+    }
+    lv_label_set_text(ui->info, t);
+    lv_obj_set_style_text_color(lv_obj_get_child(ui->eye, 0), ui_color(s_overlay != NULL ? 0x2EE39A : C_DIM), 0);
+}
+
+static void open_details(lv_event_t *e)
+{
+    (void)e;
+    s_ui->view = DETAILS;
+    render(s_ui);
+}
+
+static void toggle_overlay(lv_event_t *e)
+{
+    (void)e;
+    bool on = s_overlay == NULL;
+    flag_set("overlay", on);
+    overlay_show(on);
+    ui_toast(on ? "Monitor leggero acceso" : "Monitor leggero spento");
+    home_update(s_ui);
+}
+
+static void home(sistema_ui_t *ui)
+{
+    const board_info_t *b = board_info();
+    int size = b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
+    int width = size / 16;
+    ui->ram_arc = gauge(ui->content, size, width);
+    lv_obj_align(ui->ram_arc, b->round ? LV_ALIGN_CENTER : LV_ALIGN_TOP_MID, 0, b->round ? 0 : 6);
+    ui->psram_arc = gauge(ui->content, size - 2 * width, width);   /* touching the outer one */
+    lv_obj_align_to(ui->psram_arc, ui->ram_arc, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t *col = box(ui->content);
+    lv_obj_set_size(col, size * 56 / 100, LV_SIZE_CONTENT);
+    lv_obj_align_to(col, ui->ram_arc, LV_ALIGN_CENTER, 0, -size / 16);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(col, 1, 0);
+    lv_label_set_text(text(col, UI_FONT_SMALL, 0x2EE39A), "RAM · " LV_SYMBOL_BULLET " PSRAM");
+    ui->big = text(col, ui_font_big, C_INK);
+    ui->sub = text(col, UI_FONT_SMALL, C_DIM);
+    ui->info = text(col, UI_FONT_SMALL, 0x5C6B80);
+
+    lv_obj_t *buttons = box(ui->content);
+    lv_obj_set_size(buttons, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(buttons, 10, 0);
+    round_button(buttons, LV_SYMBOL_LIST, 0x4DA3FF, open_details);
+    ui->eye = round_button(buttons, LV_SYMBOL_EYE_OPEN, C_DIM, toggle_overlay);
+    lv_obj_align(buttons, LV_ALIGN_BOTTOM_MID, 0, -10);
+    home_update(ui);
+}
 
 static void memory_text(lv_obj_t *l, uint32_t caps)
 {
-    char free_t[16], min_t[16], block_t[16], total_t[16], text[128];
-    size_t total = heap_caps_get_total_size(caps), free_b = heap_caps_get_free_size(caps);
-    kb(free_t, sizeof(free_t), free_b);
+    char free_t[16], min_t[16], block_t[16], total_t[16], t[128];
+    kb(free_t, sizeof(free_t), heap_caps_get_free_size(caps));
     kb(min_t, sizeof(min_t), heap_caps_get_minimum_free_size(caps));
     kb(block_t, sizeof(block_t), heap_caps_get_largest_free_block(caps));
-    kb(total_t, sizeof(total_t), total);
-    int used = total ? (int)((total - free_b) * 100 / total) : 0;
-    snprintf(text, sizeof(text), "Libera %s su %s (%d%% usata)\nMinimo dall'avvio %s · blocco max %s", free_t, total_t, used,
-             min_t, block_t);
-    lv_label_set_text(l, text);
+    kb(total_t, sizeof(total_t), heap_caps_get_total_size(caps));
+    snprintf(t, sizeof(t), "%s su %s · %d%%\nminimo %s · blocco %s", free_t, total_t, used_pct(caps), min_t, block_t);
+    lv_label_set_text(l, t);
 }
 
 static void disk_text(lv_obj_t *l, const char *path, const char *missing)
 {
     uint64_t total = 0, free_b = 0;
-    char text[96], a[16], b[16];
+    char t[96];
     if (esp_vfs_fat_info(path, &total, &free_b) != ESP_OK || total == 0)
     {
         lv_label_set_text(l, missing);
         return;
     }
-    kb(a, sizeof(a), (size_t)(free_b > SIZE_MAX ? SIZE_MAX : free_b));
-    kb(b, sizeof(b), (size_t)(total > SIZE_MAX ? SIZE_MAX : total));
-    if (total >= 4ULL << 30)
-    {
-        snprintf(text, sizeof(text), "Libera %.1f GB su %.1f GB (%d%% usata)", free_b / 1073741824.0, total / 1073741824.0,
-                 (int)((total - free_b) * 100 / total));
-    }
-    else
-    {
-        snprintf(text, sizeof(text), "Libera %s su %s (%d%% usata)", a, b, (int)((total - free_b) * 100 / total));
-    }
-    lv_label_set_text(l, text);
+    snprintf(t, sizeof(t), "%.1f MB liberi su %.1f MB · %d%%", free_b / 1048576.0, total / 1048576.0,
+             (int)((total - free_b) * 100 / total));
+    lv_label_set_text(l, t);
 }
 
-static void refresh(lv_timer_t *t)
+static void details_update(sistema_ui_t *ui)
 {
-    sistema_ui_t *ui = lv_timer_get_user_data(t);
-    char text[160];
+    char t[160];
     memory_text(ui->ram, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     memory_text(ui->psram, MALLOC_CAP_SPIRAM);
-    if (ui->ticks++ % 30 == 0)
+    if (ui->ticks % 30 == 0)
     {
         disk_text(ui->flash, STORAGE_FLASH_MOUNT, "Non montata");
         disk_text(ui->sd, SDCARD_MOUNT, "Nessuna scheda");
     }
     if (pmu_battery_present())
     {
-        snprintf(text, sizeof(text), "%d%% · %d mV%s%s", pmu_battery_percent(), pmu_battery_mv(),
+        snprintf(t, sizeof(t), "%d%% · %d mV%s%s", pmu_battery_percent(), pmu_battery_mv(),
                  pmu_is_charging() ? " · in carica" : "", pmu_usb_present() ? " · USB" : "");
     }
     else
     {
-        snprintf(text, sizeof(text), "Senza batteria%s", pmu_usb_present() ? " · USB" : "");
+        snprintf(t, sizeof(t), "Senza batteria%s", pmu_usb_present() ? " · USB" : "");
     }
-    lv_label_set_text(ui->battery, text);
+    lv_label_set_text(ui->battery, t);
     if (wifi_is_connected())
     {
         char ssid[33] = "", ip[16] = "";
         wifi_current_ssid(ssid, sizeof(ssid));
         wifi_get_ip(ip, sizeof(ip));
-        snprintf(text, sizeof(text), "%s · %d dBm\n%s", ssid, wifi_rssi(), ip);
+        snprintf(t, sizeof(t), "%s · %d dBm\n%s", ssid, wifi_rssi(), ip);
     }
     else
     {
-        snprintf(text, sizeof(text), "Spento (si accende quando serve)");
+        snprintf(t, sizeof(t), "Spento (si accende quando serve)");
     }
-    lv_label_set_text(ui->wifi, text);
+    lv_label_set_text(ui->wifi, t);
     int64_t up = esp_timer_get_time() / 1000000;
-    snprintf(text, sizeof(text), "Acceso da %lldg %02lld:%02lld:%02lld · %u task\nUltimo avvio: %s", up / 86400, up / 3600 % 24,
+    snprintf(t, sizeof(t), "Acceso da %lldg %02lld:%02lld:%02lld · %u task\nUltimo avvio: %s", up / 86400, up / 3600 % 24,
              up / 60 % 60, up % 60, (unsigned)uxTaskGetNumberOfTasks(), sys_last_reset_text());
-    lv_label_set_text(ui->system, text);
+    lv_label_set_text(ui->system, t);
 }
 
-static void toggle_overlay(lv_event_t *e)
+static void details(sistema_ui_t *ui)
 {
-    bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-    flag_set("overlay", on);
-    overlay_show(on);
+    lv_obj_t *page = ui_page(ui->content, "Dettagli");
+    ui_section(page, "RAM INTERNA");
+    ui->ram = ui_text(page, "", false);
+    ui_section(page, "PSRAM");
+    ui->psram = ui_text(page, "", false);
+    ui_section(page, "MEMORIA FILE");
+    ui->flash = ui_text(page, "", false);
+    ui_section(page, "SCHEDA SD");
+    ui->sd = ui_text(page, "", false);
+    ui_section(page, "BATTERIA");
+    ui->battery = ui_text(page, "", false);
+    ui_section(page, "WI-FI");
+    ui->wifi = ui_text(page, "", false);
+    ui_section(page, "SISTEMA");
+    ui->system = ui_text(page, "", false);
+    ui_text(page, "Monitor leggero: occhio nella schermata principale, oppure reset due volte "
+                  "(la seconda entro 10 secondi da quando compare lo schermo).", true);
+    ui->ticks = 0;
+    details_update(ui);
+}
+
+static void render(sistema_ui_t *ui)
+{
+    if (ui->content != NULL)
+    {
+        lv_obj_delete(ui->content);
+    }
+    ui->content = box(ui->screen);
+    lv_obj_set_size(ui->content, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_style_bg_color(ui->content, ui_color(C_BG), 0);
+    lv_obj_set_style_bg_opa(ui->content, LV_OPA_COVER, 0);
+    ui->ram_arc = NULL;
+    ui->ram = NULL;
+    if (ui->view == HOME)
+    {
+        home(ui);
+    }
+    else
+    {
+        details(ui);
+    }
+}
+
+static void refresh(lv_timer_t *t)
+{
+    sistema_ui_t *ui = lv_timer_get_user_data(t);
+    ui->ticks++;
+    if (ui->ram_arc != NULL)
+    {
+        home_update(ui);
+    }
+    else if (ui->ram != NULL)
+    {
+        details_update(ui);
+    }
+}
+
+static bool back(void)
+{
+    if (s_ui == NULL || s_ui->view == HOME)
+    {
+        return false;
+    }
+    s_ui->view = HOME;
+    render(s_ui);
+    return true;
 }
 
 static void deleted(lv_event_t *e)
@@ -267,40 +476,21 @@ static void deleted(lv_event_t *e)
 static void create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
-    lv_obj_t *page = ui_page(screen, "Sistema");
     sistema_ui_t *ui = calloc(1, sizeof(*ui));
     if (ui == NULL)
     {
-        ui_text(page, "Memoria insufficiente", true);
+        ui_text(ui_page(screen, "Sistema"), "Memoria insufficiente", true);
         return;
     }
     s_ui = ui;
+    ui->screen = screen;
+    lv_obj_set_style_bg_color(screen, ui_color(C_BG), 0);
     lv_obj_add_event_cb(screen, deleted, LV_EVENT_DELETE, ui);
-    ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_PURPLE, "Monitor leggero", s_overlay != NULL, toggle_overlay, NULL);
-    ui_text(page, "Sempre in primo piano, anche nelle altre app. Si accende e spegne anche premendo reset due volte "
-                  "(la seconda appena compare lo schermo, entro 4 secondi).", true);
-    ui_section(page, "RAM INTERNA");
-    ui->ram = ui_text(page, "", false);
-    ui_section(page, "PSRAM");
-    ui->psram = ui_text(page, "", false);
-    ui_section(page, "MEMORIA INTERNA (FILE)");
-    ui->flash = ui_text(page, "", false);
-    ui_section(page, "SCHEDA SD");
-    ui->sd = ui_text(page, "", false);
-    ui_section(page, "BATTERIA");
-    ui->battery = ui_text(page, "", false);
-    ui_section(page, "WI-FI");
-    ui->wifi = ui_text(page, "", false);
-    ui_section(page, "SISTEMA");
-    ui->system = ui_text(page, "", false);
+    render(ui);
     ui->timer = lv_timer_create(refresh, 1000, ui);
-    if (ui->timer != NULL)
-    {
-        refresh(ui->timer);
-    }
 }
 
 const app_t sistema_app = {
     .id = "sistema", .name = "Sistema", .icon = LV_SYMBOL_SETTINGS,
-    .color = UI_COLOR_PURPLE, .create = create,
+    .color = UI_COLOR_PURPLE, .create = create, .back = back,
 };

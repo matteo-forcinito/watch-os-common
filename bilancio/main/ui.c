@@ -172,13 +172,13 @@ static void home(bl_ui_t *ui)
     lv_obj_t *arc = gauge(ui->content, size, size / 16, outer_color, s.balance < 0 ? 100 : left_pct);
     lv_obj_align(arc, b->round ? LV_ALIGN_CENTER : LV_ALIGN_TOP_MID, 0, b->round ? 0 : 6);
     /* Inner arc: today's budget still free. */
-    int inner = size * 76 / 100;
+    int inner = size - 2 * (size / 16);   /* as wide as the outer arc, touching it */
     int today_pct = s.daily > 0 && s.today_left > 0 ? (int)(s.today_left * 100 / s.daily) : 0;
-    lv_obj_t *small = gauge(ui->content, inner, size / 30, s.today_left > 0 ? 0x4DA3FF : 0xFF6B6B, today_pct);
+    lv_obj_t *small = gauge(ui->content, inner, size / 16, s.today_left > 0 ? 0x4DA3FF : 0xFF6B6B, today_pct);
     lv_obj_align_to(small, arc, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *col = box(ui->content);
-    lv_obj_set_size(col, inner * 74 / 100, LV_SIZE_CONTENT);
+    lv_obj_set_size(col, inner * 70 / 100, LV_SIZE_CONTENT);
     lv_obj_align_to(col, arc, LV_ALIGN_CENTER, 0, -size / 16);
     lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
