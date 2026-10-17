@@ -1,125 +1,70 @@
-# Stato del progetto (17/10/2026)
+# Stato del progetto (17/10/2026, sera)
 
-## Firmware: tutto rilasciato e allineato
+Regola: gli orologi restano su **1.8.x**. Le novità escono sul canale **Dev** (`1.8.6-dev.N`) dal branch
+`dev`, poi la stessa versione diventa stabile con `-Promote` ([pagina 9](09-release-firmware.md),
+`tools/dev/release_dev.ps1`).
 
-| Firmware | Versione pubblicata | Commit `watch-os-common` nel submodule |
+## Firmware
+
+| Firmware | Stabile | Dev |
 |---|---|---|
-| AMOLED 1.8 | 1.8.4 stabile | `6269065` |
-| AMOLED 1.75 | 1.8.4 stabile | `6269065` |
-| AMOLED 1.75C | 1.8.4 stabile | `6269065` |
-| Knob 1.8 | 1.8.4 stabile | `6269065` |
-| Watcher | 1.8.4 stabile | `6269065` |
+| AMOLED 1.8 | 1.8.4 | 1.8.6-dev.1 |
+| AMOLED 1.75 | 1.8.5 (uscita la notte del 17/10, con Bilancio) | 1.8.6-dev.1 |
+| AMOLED 1.75C | 1.8.4 | 1.8.6-dev.1 |
+| Knob 1.8 | 1.8.4 (la 1.8.5 è stata compilata ma mai pubblicata) | 1.8.6-dev.1 |
+| Watcher | 1.8.4 | 1.8.6-dev.1 |
 
-Novità 1.8.4: schermo remoto con display spento e solo aree cambiate (ORF2), nuova rete
-Wi-Fi via Bluetooth. Collaudo hardware: 1.75C (streaming, input, fine sessione) e 1.75
-(avvio). AMOLED 1.8, Knob e Watcher: compilati, non provati su hardware.
+- `1.8.6-dev.1` (17/10): Bilancio su tutti, con saldo facoltativo e la card "Entrate e uscite"
+  (disponibile ora, risparmio al mese, stima a fine anno, tabella settimana/mese/anno). Libreria `9dfa834`.
+- Su `main` dei firmware ci sono commit "Release 1.9.0" mai pubblicati: la 1.9.0 **non va usata**.
+  Le note `release/notes/1.9.0.md` si possono cancellare.
+- In AMOLED 1.8, 1.75C e Watcher c'è un `CMakeLists.txt` modificato a mano (1.9.0 → 1.8.5), non
+  committato: lo script di release lavora in worktree separate e non lo tocca. Si può scartare
+  (`git checkout CMakeLists.txt`).
 
-Dispositivi collegati al PC: COM10 = AMOLED 1.75C (1.8.4 normale), COM14 = AMOLED 1.75 (1.8.4).
+## Da provare sull'orologio (tu)
 
-Dopo la release, su `watch-os-common/main` ci sono solo documentazione (questa guida),
-script `tools/dev/` e il test della dashboard aggiornato: non richiedono una nuova release.
+1. **Bilancio** (dev.1): Home, Questo mese, dashboard dal QR; senza saldo inserito il saldo deve
+   venire da entrate e uscite; card "Entrate e uscite" in Panoramica. Tondo e rettangolare.
+2. **Sentinel Lite** (dev.2, quando esce): vedi sotto.
 
-## Companion: pronta, pubblicazione bloccata da un test Android preesistente
+Se va tutto bene: `release_dev.ps1 -Version 1.8.6 -Notes <note> -Promote`.
 
-- Codice su `Orbit-Companion/main` (commit `bc0861d`), versione `0.4.2-dev.4+9`, note in
-  `release/notes/0.4.2-dev.4.md`. Analisi pulita, 46 test superati.
-- Branch `release/0.4.2-dev.4` pushato: la Action compila **Windows e Android con successo**,
-  ma il job `smoke-android` (prova su emulatore) fallisce, quindi la release non viene pubblicata.
-- Errore: `test01NotificationRuntimePermission` → `Platform method timed out`, poi
-  `test02ForegroundServiceAndBluetoothPermissions` → "Autorizza le notifiche di Orbit...".
-  **Era identico già prima** di queste modifiche (run del 16/10 ore 15:03 sul branch
-  `fix/connection-stability`): riguarda la richiesta del permesso notifiche su Android 15
-  nell'emulatore, non lo schermo remoto.
-- In locale c'è uno `stash` con i file di plugin rigenerati da Flutter
-  (`git stash list` in `Orbit-Companion`): non servono, si possono scartare con `git stash drop`.
+## Sentinel Lite rifatta (branch `dev` di watch-os-common, compilata, non provata su hardware)
 
-### Come procedere
+- **Trova (caldo/freddo)**: dal dispositivo → "Trova". L'orologio pinga il dispositivo e legge il
+  segnale delle risposte (ricezione promiscua sul canale, solo l'indirizzo del mittente). Arco da blu
+  a rosso, "Gelido → Bollente", tendenza, miglior valore; massimo 3 minuti. Non funziona per
+  dispositivi a 5 GHz, via cavo o su un altro access point (lo dice).
+- **Cambia Wi-Fi**: sull'orologio le reti salvate (tocco = cambio); dalla dashboard anche una rete
+  nuova con password e "Collegati" dalle reti vicine. La rete scelta diventa preferita.
+- **Nomi condivisi con la Sentinel esterna**: `<storage>/sentinel/names.txt` (MAC, fidato, nome),
+  `sentinel/main/names.h`. Ognuna lo legge all'avvio e lo scrive a ogni modifica; i nomi già dati
+  prima vengono aggiunti al file la prima volta. La Sentinel esterna va ricompilata e ripubblicata
+  sul Market perché lo faccia anche lei (codice già pronto in `probe.c`).
+- **Dashboard nuova**: radar animato, salute della rete, schede con azioni, pagina Trova con
+  termometro, pagina Rete e Wi-Fi.
+- Memoria: ~23 KB di PSRAM per i nomi, il resto invariato; nessun task in più (tutto nel task dei job).
 
-1. Guarda il test: `Orbit-Companion/android/app/src/androidTest/` (`CompanionSmokeTest`) e
-   `tools/smoke_android.py`. Il primo test non riesce a concedere il permesso notifiche
-   entro il tempo: controlla come lo concede (dialog di sistema o `pm grant`) su API 35.
-2. Correggi, poi nuova versione (le release sono immutabili, ma questa non è stata pubblicata:
-   puoi riusare lo stesso branch con un nuovo push):
-   ```powershell
-   cd C:\Users\matte\Documents\ESP-IDF\Orbit-Companion
-   git checkout release/0.4.2-dev.4
-   # ...correzione...
-   git commit -am "Fix Android notification permission smoke test"
-   git push
-   ```
-3. Segui la Action:
-   ```powershell
-   $gh = "C:\Users\matte\Documents\ESP-IDF\ESP32-S3-Knob-Touch-LCD-1.8\.companion-tools\gh\bin\gh.exe"
-   & $gh run list -R matteo-forcinito/Orbit-Companion --limit 3
-   ```
-   Rilancio del solo job fallito: `& $gh run rerun <id> -R matteo-forcinito/Orbit-Companion --failed`.
-4. Ricordati di riportare la correzione anche su `main` (`git checkout main; git merge release/0.4.2-dev.4`).
+## Companion
 
-Nel frattempo la companion si può usare dal PC con `flutter run -d windows` ([pagina 11](11-companion-flutter.md)).
+- Fix del test Android (clic sul permesso notifiche perso durante l'animazione del dialog su API 35),
+  commit `ab7e067` su `main` e `release/0.4.2-dev.4`. Se la Action passa, la release esce da sola.
+- Lo `stash` in `Orbit-Companion` (file plugin rigenerati da Flutter) si può scartare: `git stash drop`.
 
-## In corso: app Bilancio (gestione del denaro)
+## Bilancio: cosa manca
 
-Progetto in [docs/progetti/BILANCIO.md](../progetti/BILANCIO.md). Stato al 17/10/2026, in
-`watch-os-common/bilancio/` (**non ancora committato**, non registrato in nessun firmware):
+Passo 2b (matematica dei debiti, bollette a consumo), grafici della dashboard (passo 4), import CSV
+(passo 5), versione esterna per il Market (passo 7), confronto tariffe (passo 8). Dettagli in
+[docs/progetti/BILANCIO.md](../progetti/BILANCIO.md).
 
-- **Passo 1 fatto**: `main/calc.c` (logica pura) + `tests/test_calc.c`. Test superato:
-  ```powershell
-  . C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1
-  cd C:\Users\matte\Documents\ESP-IDF\watch-os-common
-  python bilancio\tests\run_tests.py --deps build\ecos-checks\test-deps --output $env:TEMP\bilancio-test
-  ```
-  Atteso: `PASS: bilancio money logic, real C in RISC-V emulator`.
-- **Passo 2 fatto**: `store.c` (dati in PSRAM, `<storage>/config/bilancio.json`), `web.c` (API),
-  `bilancio_dashboard.html` (Panoramica, Movimenti, Fissi e rate, Entrate, Impostazioni con saldo,
-  categorie e backup). Compilati con `-Werror` usando i flag della build AMOLED 1.75C (solo sintassi);
-  dashboard provata in Edge con un server finto. **Mai provata su un orologio vero**: il primo test
-  reale arriva con il passo 6 (registrazione nei firmware).
-- In più rispetto al progetto: voci oltre l'anno (revisione ogni 2 anni, patente ogni 10), movimenti
-  previsti (rimborso 730), pagamenti collegati alle voci fisse con storico delle bollette,
-  accantonamento mensile, mutuo e prestiti con rate rimaste e residuo.
+## Idea in coda: app Sistema
 
-**Su AMOLED 1.75C (COM10)**: build `build-bilancio` (versione ancora `1.8.4`, compilata il 17/10 alle
-01:36) flashata con `app-flash`; avvio fino a `main: Ready`, unico `E (` il noto `sleep_cpu_configure`.
-Schermate e dashboard da controllare a vista sull'orologio (console di sviluppo spenta: niente
-screenshot automatici). Per tornare alla release: `idf.py -p COM10 app-flash` dalla build normale.
-
-### Portare Bilancio su un firmware (fatto per AMOLED 1.75C, gli altri a mano)
-
-La registrazione (passo 6) è già in `watch-os-common`: `components/apps/CMakeLists.txt` (blocco
-`BILANCIO` dentro `CONFIG_APPKIT_HOSTED`), `apps.c` (`&bilancio_app` e
-`appkit_hosted_register("Bilancio", "bilancio")`), `apps_internal.h`. Le schermate sono in
-`bilancio/main/ui.c` (Home con arco, Questo mese, Spesa veloce, Menu/Dashboard). Per ogni firmware
-(AMOLED 1.8, 1.75, Knob, Watcher):
-
-```powershell
-. C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1
-$env:WATCH_OS_COMMON_DIR = "C:\Users\matte\Documents\ESP-IDF\watch-os-common"   # la copia con Bilancio
-cd C:\Users\matte\Documents\ESP-IDF\<cartella del firmware>
-idf.py -B build-bilancio build            # cartella separata: la build di release resta intatta
-idf.py -B build-bilancio -p COMxx app-flash
-```
-
-Poi sull'orologio: Bilancio nell'elenco app → Menu → Dashboard → inquadra il QR. Dalla
-dashboard: saldo, stipendio, fissi. Controlla la Home su schermo tondo e rettangolare (testo non
-tagliato dal cerchio). Tutti e quattro hanno `CONFIG_APPKIT_HOSTED=y` (verificato il 17/10/2026).
-
-Per una release vera: commit e push in `watch-os-common`, aggiorna il submodule in ogni firmware e
-segui [pagina 9](09-release-firmware.md) (versione 1.9.0).
-
-### Come procedere
-
-1. **Passo 3**: `bilancio/main/ui.c` Home e Questo mese, nello stile della schermata LIVE di
-   Copertura (design nel documento, sezione "Sull'orologio"). Poi `app.c` e `main.c`.
-2. Passi 4–7 come da documento; il **passo 8** (nuovo) è il confronto delle tariffe luce/gas con
-   dati pubblici ARERA/GME, da verificare prima di scrivere codice.
-3. Prima di committare: `git status` in `watch-os-common`. I file nuovi sono `bilancio/` e le
-   modifiche a `docs/progetti/BILANCIO.md`, `docs/guida/STATO.md` e `docs/guida/07-test.md`.
+Stato completo del sistema (RAM interna, PSRAM, flash, SD, batteria, task, Wi-Fi) nello stile di
+Copertura. Non iniziata.
 
 ## Cose note, non urgenti
 
-- Log `E sleep: sleep_cpu_configure ... Failed to enable CPU power down during light sleep`
-  all'avvio: noto, nessun effetto funzionale (TODO nel `CLAUDE.md` del Watcher).
-- Latenza minima dello schermo remoto circa 100 ms: con Bluetooth attivo il Wi-Fi resta
-  in modem sleep (coesistenza radio).
-- File `build-local.log` non tracciati nelle cartelle dei firmware: sono log delle build
-  locali, si possono cancellare.
+- Log `E sleep: sleep_cpu_configure ...` all'avvio: noto, nessun effetto.
+- Latenza minima dello schermo remoto circa 100 ms (coesistenza radio Wi-Fi/Bluetooth).
+- File `build-local.log` non tracciati nelle cartelle dei firmware: log locali, si possono cancellare.

@@ -11,8 +11,13 @@
  *   airwaves    nearby 2.4 GHz networks and the least busy channel
  *   ports       the open services of one device (with warnings: Telnet, SMB...)
  *
- * Compared with the external Sentinel: no packet capture, no radio "find",
- * no speed test, a compact maker table. Jobs run in a short-lived task while
+ *   find        hot and cold: the signal of one device's answers (promiscuous
+ *               receive on our channel, transmitter address only)
+ *   join        another Wi-Fi network, known or new
+ *
+ * Names and trust are shared with the external Sentinel (sentinel/names.txt,
+ * see names.h). Compared with it: no packet capture, no speed test, a compact
+ * maker table. Jobs run in a short-lived task while
  * the app is open; the devices of each network are kept on the card.
  */
 
@@ -63,7 +68,17 @@ typedef struct
     char verdict[160];
 } sl_check_t;
 
-typedef enum { SL_IDLE, SL_WIFI, SL_SCANNING, SL_NAMING, SL_CHECKING, SL_PORTS_RUNNING, SL_AIR, SL_FAILED } sl_phase_t;
+typedef enum { SL_IDLE, SL_WIFI, SL_SCANNING, SL_NAMING, SL_CHECKING, SL_PORTS_RUNNING, SL_AIR, SL_FAILED, SL_FINDING } sl_phase_t;
+
+typedef struct
+{
+    bool running;
+    uint32_t ip;
+    char name[48];
+    int rssi, smooth, best;      /* dBm: last frame, smoothed, best so far */
+    int trend;                   /* 1 warmer, -1 colder, 0 steady */
+    int frames, seconds, age_ms; /* age of the last frame, -1 = none yet */
+} sl_find_t;
 
 typedef struct
 {
@@ -83,6 +98,11 @@ void sl_scan(void);
 void sl_check(void);
 void sl_airwaves(void);
 void sl_ports(uint32_t ip);
+void sl_find(uint32_t ip);        /* hot and cold: the signal of the device's answers */
+void sl_find_state(sl_find_t *out);
+void sl_stop(void);               /* stop the running job (a search, a scan) */
+/* Another network: password NULL / "" for a known one. false if the name is not valid. */
+bool sl_join(const char *ssid, const char *password);
 
 void sl_status(sl_status_t *out);
 void sl_lock(void);

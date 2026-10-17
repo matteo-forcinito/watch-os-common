@@ -1,4 +1,5 @@
 /* Network worker: fresh ARP replies, ICMP, mDNS and SSDP; bounded local scopes. */
+#include "names.h"
 #include "internal.h"
 #include "packet.h"
 #include "core/clock.h"
@@ -801,6 +802,41 @@ static void merge(sn_model_t *incoming)
     free(candidate);
 }
 
+static bool parse_mac(const char *text, uint8_t mac[6])
+{
+    unsigned v[6];
+    if (sscanf(text,"%2x:%2x:%2x:%2x:%2x:%2x",&v[0],&v[1],&v[2],&v[3],&v[4],&v[5]) != 6) return false;
+    for (int i = 0; i < 6; i++) mac[i] = (uint8_t)v[i];
+    return true;
+}
+
+/* Locked. Names and trust shared with Sentinel Lite (names.h): the file wins, names
+ * given here before it existed are added to it. */
+static void merge_names(void)
+{
+    int count = 0;
+    sn_name_t *list = sn_names_load(&count);
+    if (list == NULL) list = heap_caps_calloc(SN_NAMES_MAX,sizeof(sn_name_t),MALLOC_CAP_SPIRAM);
+    if (list == NULL) return;
+    bool added = false;
+    for (int i = 0; i < sn_model->device_count; i++)
+    {
+        sn_device_t *d = &sn_model->devices[i];
+        uint8_t mac[6];
+        if (!parse_mac(d->mac,mac)) continue;
+        int k = sn_names_find(list,count,mac);
+        if (k >= 0)
+        {
+            if (strcmp(d->label,list[k].label) != 0 || d->trusted != list[k].trusted) s_status.dirty = true;
+            snprintf(d->label,sizeof(d->label),"%s",list[k].label);
+            d->trusted = list[k].trusted;
+        }
+        else if (d->label[0] || d->trusted) added |= sn_names_set(list,&count,mac,d->label,d->trusted);
+    }
+    if (added) sn_names_save(list,count);
+    free(list);
+}
+
 static void worker(void *unused)
 {
     (void)unused;
@@ -808,6 +844,7 @@ static void worker(void *unused)
     /* Readers use try-lock: they skip a frame rather than seeing a partial
      * startup snapshot. The dashboard starts after this load completes. */
     sn_store_load(sn_model);
+    merge_names();
     s_status.persistent = storage_dir() != NULL && !sn_store_corrupt();
     xSemaphoreGive(sn_mutex);
     bool connected = connect_network();
@@ -842,6 +879,8 @@ static void worker(void *unused)
                 snprintf(d->note,sizeof(d->note),"%s",command.device->note);
                 d->trusted = command.device->trusted;
                 s_status.dirty = true; found = true;
+                uint8_t mac[6];
+                if (parse_mac(d->mac,mac)) sn_names_put(mac,d->label,d->trusted);
             }
             xSemaphoreGive(sn_mutex);
             if (found && save()) message("Nome e categoria salvati",100);

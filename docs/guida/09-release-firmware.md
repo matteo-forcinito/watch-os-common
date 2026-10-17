@@ -67,6 +67,27 @@ foreach ($d in "ESP32-S3-Amoled-Touch-1.8","ESP32-S3-Touch-AMOLED-1.75","ESP32-S
 }
 ```
 
+## Canale Dev con un comando (`tools/dev/release_dev.ps1`)
+
+Il modo normale di lavorare: le novità escono prima come `X.Y.Z-dev.N` dal branch `dev`, si provano
+sugli orologi, poi la stessa identica versione diventa stabile.
+
+```powershell
+cd C:\Users\matte\Documents\ESP-IDF\watch-os-common       # sul branch dev, tutto committato
+# note: prima riga = riassunto per l'orologio (max 79 caratteri)
+powershell -ExecutionPolicy Bypass -File tools\dev\release_dev.ps1 -Version 1.8.6-dev.2 -Notes C:\percorso\note.md
+# provata e ok: dev -> main ovunque e release stabile
+powershell -ExecutionPolicy Bypass -File tools\dev\release_dev.ps1 -Version 1.8.6 -Notes C:\percorso\note.md -Promote
+```
+
+Lo script pusha la libreria su `dev` (con `-Promote` porta `origin/dev` su `main`, solo fast-forward),
+poi per ogni firmware lavora in una **worktree temporanea** in `ESP-IDF\.release-work\` (le tue cartelle
+e le loro modifiche locali non vengono toccate): parte da `origin/dev` con `origin/main` unito dentro,
+sposta il submodule, scrive note e `PROJECT_VER`, committa e pusha su `dev` (e `main` se promuovi),
+infine pubblica i 5 in parallelo. Log in `%TEMP%\release-<prodotto>.log`. Opzioni: `-Only amoled,knob`,
+`-NoPublish` (solo branch). Se un firmware fallisce, la sua worktree resta lì per rilanciare a mano
+`release_firmware.py --project <worktree> --source-ref dev`.
+
 ## Pubblicare
 
 Ogni firmware ha `tools/release.ps1`. Lui:

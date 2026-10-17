@@ -7,6 +7,8 @@
  *            services; mark it as trusted
  *   CHECK    router / internet / DNS times, signal, security, a verdict
  *   AIR      nearby networks and the least busy channel
+ *   FIND     hot and cold: an arc from blue to red with the device's signal
+ *   WIFI     the known networks: tap one to move the watch there
  *   DASH     QR code + code for the web dashboard
  */
 #include "lite.h"
@@ -14,6 +16,7 @@
 #include "appkit.h"
 #include "core/lv_port.h"
 #include "hardware/board.h"
+#include "services/wifi.h"
 #include "ui/ui.h"
 
 #include "esp_heap_caps.h"
@@ -31,10 +34,13 @@
 #define C_ACCENT  0x49E2BC
 #define C_WARN    0xFFC67B
 #define C_BAD     0xFF6B6B
+#define C_COLD    0x3C8CFF
+#define C_HOT     0xFF5A3C
+#define KNOWN     8
 
 #define HISTORY 8
 
-enum { HOME, DEVICES, DEVICE, CHECK, AIR, DASH };
+enum { HOME, DEVICES, DEVICE, CHECK, AIR, DASH, FIND, WIFI };
 
 typedef struct
 {
@@ -49,6 +55,8 @@ typedef struct
     uint32_t ip;                 /* DEVICE */
     sl_phase_t phase;
     uint32_t revision;
+    lv_obj_t *find_arc, *find_value, *find_word, *find_info;   /* FIND, updated by tick() */
+    char known[KNOWN][33];       /* WIFI */
 } sl_ui_t;
 
 static sl_ui_t *s_ui;
@@ -131,6 +139,58 @@ static void toggle_trust(lv_event_t *e)
     sl_edit(has_mac ? mac : NULL, s_ui->ip, label_text, on);
 }
 
+/* A 270° arc, value 0..100, nothing clickable. */
+static lv_obj_t *gauge(lv_obj_t *parent, int size, int width, uint32_t color, int value)
+{
+    lv_obj_t *arc = lv_arc_create(parent);
+    lv_obj_remove_style_all(arc);
+    lv_obj_set_size(arc, size, size);
+    lv_arc_set_rotation(arc, 135);
+    lv_arc_set_bg_angles(arc, 0, 270);
+    lv_arc_set_range(arc, 0, 100);
+    lv_obj_set_style_arc_width(arc, width, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, ui_color(C_LINE), LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, width, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(arc, ui_color(color), LV_PART_INDICATOR);
+    lv_arc_set_value(arc, value < 0 ? 0 : value > 100 ? 100 : value);
+    lv_obj_set_clickable(arc, false);
+    return arc;
+}
+
+/* A label centred inside `arc`. */
+static lv_obj_t *inside(lv_obj_t *arc, const lv_font_t *font, uint32_t color, const char *text, int dy)
+{
+    lv_obj_t *l = label(arc, font, color, text);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(l, LV_ALIGN_CENTER, 0, dy);
+    return l;
+}
+
+static void open_find(lv_event_t *e)
+{
+    (void)e;
+    sl_find(s_ui->ip);
+    go(s_ui, FIND);
+}
+
+static void do_stop(lv_event_t *e)
+{
+    (void)e;
+    sl_stop();
+}
+
+static void do_join(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (sl_join(s_ui->known[i], NULL))
+    {
+        ui_toast("Cambio rete...");
+        go(s_ui, HOME);
+    }
+}
+
 /* ---------------------------------------------------------------- HOME */
 
 static void home(sl_ui_t *ui)
@@ -141,24 +201,37 @@ static void home(sl_ui_t *ui)
     char text[96];
     lv_obj_t *net = label(page, ui_font_headline, C_ACCENT, st.ssid[0] ? st.ssid : "Rete");
     lv_obj_set_style_text_align(net, LV_TEXT_ALIGN_CENTER, 0);
+    int size = card_width() * 3 / 4;
+    lv_obj_t *arc = gauge(page, size, size / 14, st.fresh ? C_WARN : C_ACCENT,
+                          st.devices ? st.online * 100 / st.devices : 0);
     snprintf(text, sizeof(text), "%d", st.online);
-    lv_obj_t *big = label(page, ui_font_big, C_INK, text);
-    lv_obj_set_style_text_align(big, LV_TEXT_ALIGN_CENTER, 0);
-    snprintf(text, sizeof(text), "dispositivi connessi%s", st.fresh ? "" : "");
-    label(page, UI_FONT_SMALL, C_DIM, text);
+    inside(arc, ui_font_big, C_INK, text, -size / 14);
+    snprintf(text, sizeof(text), "in linea su %d", st.devices);
+    inside(arc, UI_FONT_SMALL, C_DIM, text, size / 6);
     if (st.fresh > 0)
     {
-        snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %d nuovi da quando l'hai vista", st.fresh);
+        snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %d %s", st.fresh, st.fresh == 1 ? "nuovo dispositivo" : "nuovi dispositivi");
         label(page, UI_FONT_BODY, C_WARN, text);
+    }
+    sl_check_t c;
+    sl_check_result(&c);
+    if (c.done)
+    {
+        snprintf(text, sizeof(text), "%d dBm  ·  router %d ms  ·  internet %s", c.rssi, c.gateway_avg,
+                 c.internet_ms < 0 ? "no" : "ok");
+        lv_obj_t *h = label(page, UI_FONT_SMALL, c.gateway_avg < 0 || c.internet_ms < 0 ? C_BAD : C_DIM, text);
+        lv_obj_set_style_text_align(h, LV_TEXT_ALIGN_CENTER, 0);
     }
     ui->status = ui_text(page, st.message, true);
     lv_obj_set_style_text_align(ui->status, LV_TEXT_ALIGN_CENTER, 0);
     ui_row(page, LV_SYMBOL_LIST, 0x2E7D78, "Dispositivi", NULL, open_view, (void *)(intptr_t)DEVICES);
     ui_row(page, LV_SYMBOL_REFRESH, 0x2E7D78, "Scansiona di nuovo", NULL, do_scan, NULL);
     ui_row(page, LV_SYMBOL_OK, 0x3D6BFF, "Verifica la rete", NULL, do_check, NULL);
+    ui_row(page, LV_SYMBOL_GPS, C_HOT, "Trova un dispositivo", NULL, open_view, (void *)(intptr_t)DEVICES);
     ui_row(page, LV_SYMBOL_WIFI, 0x8E5BFF, "Reti vicine", NULL, do_air, NULL);
+    ui_row(page, LV_SYMBOL_SHUFFLE, 0x3D6BFF, "Cambia Wi-Fi", NULL, open_view, (void *)(intptr_t)WIFI);
     ui_row(page, LV_SYMBOL_EYE_OPEN, C_ACCENT, "Dashboard", NULL, open_view, (void *)(intptr_t)DASH);
-    ui_text(page, "Sentinel Lite: inventario, verifica e reti vicine. I dispositivi restano salvati per ogni rete.", true);
+    ui_text(page, "Nomi e dispositivi fidati sono condivisi con l'app Sentinel completa.", true);
 }
 
 /* ------------------------------------------------------------- DEVICES */
@@ -310,6 +383,10 @@ static void device(sl_ui_t *ui)
             }
         }
     }
+    if (d.online && d.has_mac)
+    {
+        ui_button(page, "Trova (caldo/freddo)", C_HOT, open_find, NULL);
+    }
     ui_button(page, "Controlla i servizi", 0x2E7D78, do_ports, NULL);
     ui_text(page, "Il nome si cambia dalla dashboard.", true);
 }
@@ -401,6 +478,84 @@ static void air(sl_ui_t *ui)
     ui_button(page, "Ascolta di nuovo", 0x8E5BFF, do_air, NULL);
 }
 
+/* ---------------------------------------------------------------- FIND */
+
+static void find_update(sl_ui_t *ui)
+{
+    sl_find_t f;
+    sl_find_state(&f);
+    int level = f.frames ? (f.smooth + 90) * 100 / 55 : 0;   /* -90 dBm cold .. -35 dBm hot */
+    level = level < 0 ? 0 : level > 100 ? 100 : level;
+    lv_color_t color = lv_color_mix(ui_color(C_HOT), ui_color(C_COLD), (uint8_t)(level * 255 / 100));
+    static const char *const words[] = {"Gelido", "Freddo", "Tiepido", "Caldo", "Bollente"};
+    char text[96];
+    lv_arc_set_value(ui->find_arc, level);
+    lv_obj_set_style_arc_color(ui->find_arc, color, LV_PART_INDICATOR);
+    snprintf(text, sizeof(text), f.frames ? "%d" : "–", f.smooth);
+    lv_label_set_text(ui->find_value, text);
+    lv_label_set_text(ui->find_word, f.frames ? words[level >= 100 ? 4 : level / 20] : f.running ? "In ascolto" : "Nessun segnale");
+    lv_obj_set_style_text_color(ui->find_word, f.frames ? color : ui_color(C_DIM), 0);
+    if (!f.frames)
+    {
+        snprintf(text, sizeof(text), "%s", f.running ? "Aspetto le risposte..." : "Forse è a 5 GHz, via cavo\no su un altro access point");
+    }
+    else
+    {
+        snprintf(text, sizeof(text), "%s\nmeglio %d dBm · %d s", f.trend > 0 ? "Ti avvicini" : f.trend < 0 ? "Ti allontani" : "Stabile",
+                 f.best, f.seconds);
+    }
+    lv_label_set_text(ui->find_info, text);
+}
+
+static void find_view(sl_ui_t *ui)
+{
+    sl_find_t f;
+    sl_find_state(&f);
+    lv_obj_t *page = ui_page(ui->content, f.name[0] ? f.name : "Trova");
+    int size = card_width() * 4 / 5;
+    ui->find_arc = gauge(page, size, size / 10, C_COLD, 0);
+    ui->find_value = inside(ui->find_arc, ui_font_big, C_INK, "–", -size / 12);
+    ui->find_word = inside(ui->find_arc, ui_font_headline, C_DIM, "", size / 6);
+    ui->find_info = label(page, UI_FONT_SMALL, C_DIM, "");
+    lv_obj_set_style_text_align(ui->find_info, LV_TEXT_ALIGN_CENTER, 0);
+    find_update(ui);
+    if (f.running)
+    {
+        ui_button(page, "Ferma la ricerca", C_BAD, do_stop, NULL);
+    }
+    else if (f.ip != 0)
+    {
+        ui->ip = f.ip;
+        ui_button(page, "Cerca di nuovo", C_HOT, open_find, NULL);
+    }
+    ui_text(page, "Cammina: il segnale delle risposte sale quando ti avvicini. Massimo 3 minuti.", true);
+}
+
+/* ---------------------------------------------------------------- WIFI */
+
+static void wifi_view(sl_ui_t *ui)
+{
+    lv_obj_t *page = ui_page(ui->content, "Cambia Wi-Fi");
+    wifi_known_t *known = heap_caps_calloc(KNOWN, sizeof(wifi_known_t), MALLOC_CAP_SPIRAM);
+    int n = known != NULL ? wifi_known_list(known, KNOWN) : 0;
+    char current[33] = "";
+    wifi_current_ssid(current, sizeof(current));
+    for (int i = 0; i < n; i++)
+    {
+        snprintf(ui->known[i], sizeof(ui->known[i]), "%s", known[i].ssid);
+        bool here = current[0] && strcmp(current, known[i].ssid) == 0;
+        ui_row(page, LV_SYMBOL_WIFI, here ? C_ACCENT : 0x3D6BFF, ui->known[i], here ? "in uso" : NULL, here ? NULL : do_join,
+               (void *)(intptr_t)i);
+    }
+    if (known != NULL)
+    {
+        memset(known, 0, KNOWN * sizeof(wifi_known_t));
+        free(known);
+    }
+    ui_text(page, n ? "Tocca una rete per spostare l'orologio. Le reti nuove si aggiungono dalla dashboard."
+                    : "Nessuna rete salvata.", true);
+}
+
 static void dash(sl_ui_t *ui)
 {
     lv_obj_t *page = ui_page(ui->content, "Dashboard");
@@ -414,6 +569,7 @@ static void render(sl_ui_t *ui)
         lv_obj_delete(ui->content);
     }
     ui->status = NULL;
+    ui->find_arc = NULL;
     ui->content = lv_obj_create(ui->screen);
     lv_obj_remove_style_all(ui->content);
     lv_obj_set_size(ui->content, LV_PCT(100), LV_PCT(100));
@@ -431,6 +587,8 @@ static void render(sl_ui_t *ui)
     case DEVICE: device(ui); break;
     case CHECK: check(ui); break;
     case AIR: air(ui); break;
+    case FIND: find_view(ui); break;
+    case WIFI: wifi_view(ui); break;
     default: dash(ui); break;
     }
 }
@@ -440,7 +598,7 @@ static void tick(lv_timer_t *timer)
     sl_ui_t *ui = lv_timer_get_user_data(timer);
     sl_status_t st;
     sl_status(&st);
-    bool busy = st.phase != SL_IDLE && st.phase != SL_FAILED;
+    bool busy = st.phase != SL_IDLE && st.phase != SL_FAILED && st.phase != SL_FINDING;
     if (ui->border != NULL)
     {
         lv_obj_set_hidden(ui->border, !busy);
@@ -453,8 +611,12 @@ static void tick(lv_timer_t *timer)
     {
         lv_label_set_text(ui->status, st.message);
     }
+    if (ui->find_arc != NULL && st.revision != ui->revision)
+    {
+        find_update(ui);
+    }
     bool ended = st.phase != ui->phase && (st.phase == SL_IDLE || st.phase == SL_FAILED);
-    if (ended && ui->view != DASH)
+    if (ended && ui->view != DASH && ui->view != WIFI)
     {
         render(ui);
     }

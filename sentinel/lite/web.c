@@ -7,11 +7,16 @@
  *   POST /api/air        nearby networks
  *   POST /api/ports      {ip}: open services of a device
  *   POST /api/edit       {mac|ip, label, trusted}
+ *   POST /api/find       {ip}: hot and cold, state in /api/state "find"
+ *   POST /api/stop       stop the running job
+ *   GET  /api/wifi       known networks (names only) and the preferred one
+ *   POST /api/join       {ssid, password?}: another network (the page loses the watch if it moves)
  *   GET  /api/export.csv the inventory
  */
 #include "lite.h"
 
 #include "appkit.h"
+#include "services/wifi.h"
 
 #include "esp_heap_caps.h"
 #include "lwip/inet.h"
@@ -115,6 +120,24 @@ static esp_err_t state(httpd_req_t *request)
         cJSON_AddNumberToObject(k, "dns_ms", c.dns_ms);
         cJSON_AddStringToObject(k, "verdict", c.verdict);
     }
+    sl_find_t f;
+    sl_find_state(&f);
+    if (f.ip != 0)
+    {
+        char ip[16];
+        sl_ip_text(f.ip, ip, sizeof(ip));
+        cJSON *j = cJSON_AddObjectToObject(out, "find");
+        cJSON_AddBoolToObject(j, "running", f.running);
+        cJSON_AddStringToObject(j, "ip", ip);
+        cJSON_AddStringToObject(j, "name", f.name);
+        cJSON_AddNumberToObject(j, "rssi", f.rssi);
+        cJSON_AddNumberToObject(j, "smooth", f.smooth);
+        cJSON_AddNumberToObject(j, "best", f.best);
+        cJSON_AddNumberToObject(j, "trend", f.trend);
+        cJSON_AddNumberToObject(j, "frames", f.frames);
+        cJSON_AddNumberToObject(j, "seconds", f.seconds);
+        cJSON_AddNumberToObject(j, "age_ms", f.age_ms);
+    }
     sl_lock();
     int count;
     const sl_device_t *list = sl_devices(&count);
@@ -172,6 +195,59 @@ static esp_err_t ports(httpd_req_t *request)
     }
     sl_ports(ip.s_addr);
     return appkit_json(request, cJSON_CreateObject());
+}
+
+static esp_err_t find(httpd_req_t *request)
+{
+    GUARD();
+    cJSON *in = body(request);
+    struct in_addr ip = {0};
+    const char *text = cJSON_GetStringValue(cJSON_GetObjectItem(in, "ip"));
+    bool ok = text != NULL && inet_pton(AF_INET, text, &ip) == 1;
+    cJSON_Delete(in);
+    if (!ok)
+    {
+        return appkit_error(request, "400 Bad Request", "IP non valido");
+    }
+    sl_find(ip.s_addr);
+    return appkit_json(request, cJSON_CreateObject());
+}
+
+static esp_err_t stop(httpd_req_t *request) { return simple(request, sl_stop); }
+
+static esp_err_t networks(httpd_req_t *request)
+{
+    GUARD();
+    wifi_known_t *known = heap_caps_calloc(16, sizeof(wifi_known_t), MALLOC_CAP_SPIRAM);
+    int n = known != NULL ? wifi_known_list(known, 16) : 0;
+    cJSON *out = cJSON_CreateObject();
+    char text[33] = "";
+    wifi_preferred_ssid(text, sizeof(text));
+    cJSON_AddStringToObject(out, "preferred", text);
+    wifi_current_ssid(text, sizeof(text));
+    cJSON_AddStringToObject(out, "current", text);
+    cJSON *list = cJSON_AddArrayToObject(out, "known");
+    for (int i = 0; i < n; i++)
+    {
+        cJSON_AddItemToArray(list, cJSON_CreateString(known[i].ssid));   /* never the password */
+    }
+    if (known != NULL)
+    {
+        memset(known, 0, 16 * sizeof(wifi_known_t));
+        free(known);
+    }
+    return appkit_json(request, out);
+}
+
+static esp_err_t join(httpd_req_t *request)
+{
+    GUARD();
+    cJSON *in = body(request);
+    const char *ssid = cJSON_GetStringValue(cJSON_GetObjectItem(in, "ssid"));
+    const char *password = cJSON_GetStringValue(cJSON_GetObjectItem(in, "password"));
+    bool ok = sl_join(ssid, password);
+    cJSON_Delete(in);
+    return ok ? appkit_json(request, cJSON_CreateObject()) : appkit_error(request, "400 Bad Request", "Nome della rete non valido");
 }
 
 static esp_err_t edit(httpd_req_t *request)
@@ -242,6 +318,10 @@ static const httpd_uri_t s_routes[] = {
     {.uri = "/api/ports", .method = HTTP_POST, .handler = ports},
     {.uri = "/api/edit", .method = HTTP_POST, .handler = edit},
     {.uri = "/api/export.csv", .method = HTTP_GET, .handler = export_csv},
+    {.uri = "/api/find", .method = HTTP_POST, .handler = find},
+    {.uri = "/api/stop", .method = HTTP_POST, .handler = stop},
+    {.uri = "/api/wifi", .method = HTTP_GET, .handler = networks},
+    {.uri = "/api/join", .method = HTTP_POST, .handler = join},
 };
 
 static const appkit_web_config_t s_config = {

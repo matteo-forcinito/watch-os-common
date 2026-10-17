@@ -4,8 +4,11 @@
  */
 #include "lite.h"
 
+#include "names.h"
 #include "oui.h"
 #include "packet.h"
+
+#include "core/power.h"
 
 #include "core/sys.h"
 #include "services/storage.h"
@@ -30,6 +33,7 @@
 #include "freertos/task.h"
 
 #include <ctype.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -50,10 +54,16 @@ static sl_check_t s_check_result;
 static sl_status_t s_state;
 static char s_network[12];              /* file key of the loaded network */
 static bool s_known_before;             /* the network had devices before this scan */
+static sn_name_t *s_names;              /* names.txt, shared with the external Sentinel (PSRAM) */
+static int s_name_count;
+static sl_find_t s_find;
+static uint8_t s_find_mac[6];
+static atomic_int s_find_rssi, s_find_frames;
+static char s_join_ssid[33], s_join_password[65];
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
-static bool s_running, s_want_scan, s_want_check, s_want_air;
-static uint32_t s_want_ports;
+static bool s_running, s_want_scan, s_want_check, s_want_air, s_want_join;
+static uint32_t s_want_ports, s_want_find;
 static volatile bool s_app_open, s_cancel;
 
 static const uint16_t s_ports[SL_PORTS] = {21, 22, 23, 53, 80, 139, 443, 445, 554, 631,
@@ -298,6 +308,47 @@ static void save_network(void)
     cJSON_free(text);
 }
 
+/* Locked. The shared name and trust win: they are the last edit made in either app. */
+static void apply_name(sl_device_t *d)
+{
+    int i = d->has_mac ? sn_names_find(s_names, s_name_count, d->mac) : -1;
+    if (i >= 0)
+    {
+        sn_names_copy(d->label, sizeof(d->label), s_names[i].label);
+        d->trusted = s_names[i].trusted;
+    }
+}
+
+/* Locked. Reads names.txt; names given here before it existed are added to it. */
+static void load_names(void)
+{
+    free(s_names);
+    s_names = sn_names_load(&s_name_count);
+    if (s_names == NULL)
+    {
+        s_names = heap_caps_calloc(SN_NAMES_MAX, sizeof(sn_name_t), MALLOC_CAP_SPIRAM);
+        s_name_count = 0;
+    }
+    if (s_names == NULL)
+    {
+        return;
+    }
+    bool added = false;
+    for (int i = 0; i < s_count; i++)
+    {
+        sl_device_t *d = &s_devices[i];
+        if (d->has_mac && (d->label[0] || d->trusted) && sn_names_find(s_names, s_name_count, d->mac) < 0)
+        {
+            added |= sn_names_set(s_names, &s_name_count, d->mac, d->label, d->trusted);
+        }
+        apply_name(d);
+    }
+    if (added)
+    {
+        sn_names_save(s_names, s_name_count);
+    }
+}
+
 /* Locked. Switches to the devices saved for this network. */
 static void load_network(const char *ssid)
 {
@@ -314,13 +365,10 @@ static void load_network(const char *ssid)
     snprintf(s_network, sizeof(s_network), "%s", key);
     s_count = 0;
     char path[80];
-    if (!path_of(key, path, sizeof(path)))
-    {
-        return;
-    }
-    FILE *f = fopen(path, "r");
+    FILE *f = path_of(key, path, sizeof(path)) ? fopen(path, "r") : NULL;
     if (f == NULL)
     {
+        load_names();
         return;
     }
     char *text = heap_caps_malloc(96 * 1024, MALLOC_CAP_SPIRAM);
@@ -328,6 +376,7 @@ static void load_network(const char *ssid)
     fclose(f);
     if (text == NULL)
     {
+        load_names();
         return;
     }
     text[n] = '\0';
@@ -362,6 +411,7 @@ static void load_network(const char *ssid)
         s_count++;
     }
     cJSON_Delete(root);
+    load_names();
 }
 
 bool sl_edit(const uint8_t mac[6], uint32_t ip, const char *label, bool trusted)
@@ -377,6 +427,10 @@ bool sl_edit(const uint8_t mac[6], uint32_t ip, const char *label, bool trusted)
             d->trusted = trusted;
             d->fresh = false;
             found = true;
+            if (d->has_mac && s_names != NULL && sn_names_set(s_names, &s_name_count, d->mac, d->label, trusted))
+            {
+                sn_names_save(s_names, s_name_count);
+            }
         }
     }
     if (found)
@@ -432,6 +486,7 @@ static sl_device_t *observe(uint32_t ip, const uint8_t *mac, int rtt)
         d->has_mac = true;
         const char *vendor = (mac[0] & 0x02) ? "MAC privato" : sn_oui_vendor(mac);
         snprintf(d->vendor, sizeof(d->vendor), "%s", vendor != NULL ? vendor : "");
+        apply_name(d);   /* maybe named in the external Sentinel */
     }
     return d;
 }
@@ -1221,15 +1276,168 @@ static void run_ports(uint32_t ip)
     set_state(SL_IDLE, 100, "Servizi controllati");
 }
 
+/* Wi-Fi task: only the transmitter address is compared, nothing of the frame is kept. */
+static void sniff(void *buffer, wifi_promiscuous_pkt_type_t type)
+{
+    const wifi_promiscuous_pkt_t *packet = buffer;
+    if ((type != WIFI_PKT_DATA && type != WIFI_PKT_MGMT) || packet->rx_ctrl.sig_len < 24 ||
+        memcmp(packet->payload + 10, s_find_mac, 6) != 0)
+    {
+        return;
+    }
+    atomic_store(&s_find_rssi, packet->rx_ctrl.rssi);
+    atomic_fetch_add(&s_find_frames, 1);
+}
+
+/* Hot and cold: ping the device and read the signal of its answers, up to 3 minutes. */
+static void run_find(uint32_t ip)
+{
+    sl_lock();
+    sl_device_t *d = by_ip(ip);
+    bool ok = d != NULL && d->has_mac;
+    memset(&s_find, 0, sizeof(s_find));
+    if (ok)
+    {
+        memcpy(s_find_mac, d->mac, 6);
+        s_find.ip = ip;
+        sl_display_name(d, s_find.name, sizeof(s_find.name));
+    }
+    sl_unlock();
+    if (!ok)
+    {
+        set_state(SL_FAILED, 0, "Serve il MAC: rifai la scansione");
+        return;
+    }
+    if (wifi_acquire(20000) != ESP_OK)
+    {
+        set_state(SL_FAILED, 0, "Wi-Fi non raggiungibile");
+        return;
+    }
+    atomic_store(&s_find_frames, 0);
+    wifi_set_fast(true);   /* modem sleep would miss most frames */
+    power_keep_screen_on(true);
+    wifi_promiscuous_filter_t filter = {.filter_mask = WIFI_PROMIS_FILTER_MASK_DATA | WIFI_PROMIS_FILTER_MASK_MGMT};
+    esp_err_t error = esp_wifi_set_promiscuous_filter(&filter);
+    if (error == ESP_OK) error = esp_wifi_set_promiscuous_rx_cb(sniff);
+    if (error == ESP_OK) error = esp_wifi_set_promiscuous(true);
+    sl_lock();
+    s_find.running = error == ESP_OK;
+    s_find.best = -127;
+    sl_unlock();
+    set_state(SL_FINDING, 0, error == ESP_OK ? "Muoviti: il segnale sale avvicinandoti" : "Ricezione radio non disponibile");
+    int64_t start = esp_timer_get_time(), last_frame = 0, next_second = start;
+    int seen = 0, history[4] = {0}, filled = 0;
+    int smooth = 0;   /* tenths of dBm */
+    while (error == ESP_OK && !s_cancel && esp_timer_get_time() - start < 180000000LL && wifi_is_connected())
+    {
+        ping_once(ip, 200);   /* the answer is a frame sent by the device */
+        int frames = atomic_load(&s_find_frames);
+        int64_t now = esp_timer_get_time();
+        if (frames != seen)
+        {
+            int rssi = atomic_load(&s_find_rssi);
+            smooth = seen == 0 ? rssi * 10 : (smooth * 7 + rssi * 30) / 10;
+            seen = frames;
+            last_frame = now;
+        }
+        if (now >= next_second && seen)
+        {
+            next_second = now + 1000000;
+            memmove(history + 1, history, sizeof(history) - sizeof(history[0]));
+            history[0] = smooth;
+            filled += filled < 4;
+        }
+        sl_lock();
+        s_find.frames = seen;
+        s_find.seconds = (int)((now - start) / 1000000);
+        s_find.age_ms = seen ? (int)((now - last_frame) / 1000) : -1;
+        if (seen)
+        {
+            s_find.rssi = atomic_load(&s_find_rssi);
+            s_find.smooth = (smooth - 5) / 10;
+            s_find.best = s_find.smooth > s_find.best ? s_find.smooth : s_find.best;
+            int change = filled == 4 ? history[0] - history[3] : 0;
+            s_find.trend = change >= 30 ? 1 : change <= -30 ? -1 : 0;
+        }
+        s_state.revision++;
+        sl_unlock();
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_promiscuous_rx_cb(NULL);
+    power_keep_screen_on(false);
+    wifi_set_fast(false);
+    wifi_release();
+    sl_lock();
+    s_find.running = false;
+    sl_unlock();
+    if (error == ESP_OK)
+    {
+        set_state(SL_IDLE, 100, seen ? "Ricerca terminata" : "Nessun segnale diretto: 5 GHz, cavo o altro access point");
+    }
+    else
+    {
+        set_state(SL_FAILED, 0, "Ricezione radio non disponibile");
+    }
+}
+
+/* Another network: a known one (no password) or a new one, then a scan there. */
+static void run_join(void)
+{
+    char ssid[33], password[65];
+    sl_lock();
+    snprintf(ssid, sizeof(ssid), "%s", s_join_ssid);
+    snprintf(password, sizeof(password), "%s", s_join_password);
+    memset(s_join_password, 0, sizeof(s_join_password));
+    sl_unlock();
+    char message[64];
+    snprintf(message, sizeof(message), "Mi collego a %.40s...", ssid);
+    set_state(SL_WIFI, 0, message);
+    esp_err_t err = password[0] ? wifi_connect_new(ssid, password, 20000) : wifi_connect_saved(ssid, 20000);
+    memset(password, 0, sizeof(password));
+    if (err != ESP_OK)
+    {
+        int reason = wifi_last_reason();
+        snprintf(message, sizeof(message), "%.24s: %.36s", ssid, reason ? wifi_reason_text(reason) : "non raggiungibile");
+        set_state(SL_FAILED, 0, message);
+        return;
+    }
+    wifi_set_preferred(ssid);   /* stay here: the next acquire would pick the strongest one */
+    sl_lock();
+    snprintf(s_state.ssid, sizeof(s_state.ssid), "%s", ssid);
+    load_network(ssid);
+    s_state.devices = s_count;
+    s_state.online = s_state.fresh = 0;
+    s_state.scanned = 0;
+    sl_unlock();
+    wifi_release();
+    snprintf(message, sizeof(message), "Collegato a %.40s", ssid);
+    set_state(SL_IDLE, 100, message);
+    taskENTER_CRITICAL(&s_mux);
+    s_want_scan = true;   /* the job loop picks it up next */
+    taskEXIT_CRITICAL(&s_mux);
+}
+
 static void job_task(void *arg)
 {
     (void)arg;
     for (;;)
     {
-        enum { NONE, SCAN, CHECK, AIR, PORTS } job = NONE;
+        enum { NONE, SCAN, CHECK, AIR, PORTS, FIND, JOIN } job = NONE;
         uint32_t ip = 0;
         taskENTER_CRITICAL(&s_mux);
-        if (s_want_ports)
+        if (s_want_join)
+        {
+            job = JOIN;
+            s_want_join = false;
+        }
+        else if (s_want_find)
+        {
+            job = FIND;
+            ip = s_want_find;
+            s_want_find = 0;
+        }
+        else if (s_want_ports)
         {
             job = PORTS;
             ip = s_want_ports;
@@ -1268,6 +1476,8 @@ static void job_task(void *arg)
         if (job == SCAN) run_scan();
         else if (job == CHECK) run_check();
         else if (job == AIR) run_airwaves();
+        else if (job == FIND) run_find(ip);
+        else if (job == JOIN) run_join();
         else run_ports(ip);
     }
 }
@@ -1282,8 +1492,8 @@ static void kick(void)
     {
         taskENTER_CRITICAL(&s_mux);
         s_running = false;
-        s_want_scan = s_want_check = s_want_air = false;
-        s_want_ports = 0;
+        s_want_scan = s_want_check = s_want_air = s_want_join = false;
+        s_want_ports = s_want_find = 0;
         taskEXIT_CRITICAL(&s_mux);
         set_state(SL_FAILED, 0, "Memoria piena: riprova tra poco");
     }
@@ -1319,6 +1529,45 @@ void sl_ports(uint32_t ip)
     s_want_ports = ip;
     taskEXIT_CRITICAL(&s_mux);
     kick();
+}
+
+void sl_find(uint32_t ip)
+{
+    s_cancel = true;   /* a running job gives way */
+    taskENTER_CRITICAL(&s_mux);
+    s_want_find = ip;
+    taskEXIT_CRITICAL(&s_mux);
+    kick();
+}
+
+void sl_stop(void)
+{
+    s_cancel = true;
+}
+
+void sl_find_state(sl_find_t *out)
+{
+    sl_lock();
+    *out = s_find;
+    sl_unlock();
+}
+
+bool sl_join(const char *ssid, const char *password)
+{
+    if (ssid == NULL || ssid[0] == '\0' || strlen(ssid) > 32 || (password != NULL && strlen(password) > 64))
+    {
+        return false;
+    }
+    sl_lock();
+    snprintf(s_join_ssid, sizeof(s_join_ssid), "%s", ssid);
+    snprintf(s_join_password, sizeof(s_join_password), "%s", password != NULL ? password : "");
+    sl_unlock();
+    s_cancel = true;
+    taskENTER_CRITICAL(&s_mux);
+    s_want_join = true;
+    taskEXIT_CRITICAL(&s_mux);
+    kick();
+    return true;
 }
 
 void sl_app_open(bool open)

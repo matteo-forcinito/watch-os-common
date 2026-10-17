@@ -6,26 +6,57 @@
 <title>Sentinel · la tua rete</title>
 <link rel="stylesheet" href="/kit.css">
 <style>
-:root{--accent:#2fcfa5}
-.hero{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}@media(max-width:900px){.hero{grid-template-columns:1fr}}
-.radar{position:relative;aspect-ratio:1;max-width:340px;margin:auto}
-.radar svg{width:100%;height:100%}
-.devgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
-.dev{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:14px;cursor:pointer;display:flex;flex-direction:column;gap:6px}
-.dev:hover{border-color:var(--accent)}.dev.fresh{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn)}.dev.off{opacity:.55}
-.dev .top{display:flex;align-items:center;gap:10px}
-.dev .ic{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 18%,transparent);font-size:18px;flex:none}
-.dev b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dev .sub{font-size:12.5px;color:var(--dim)}
-.badge{display:inline-block;font-size:11px;font-weight:800;padding:2px 7px;border-radius:99px;background:var(--warn);color:#000}
-.badge.ok{background:color-mix(in srgb,var(--good) 25%,transparent);color:var(--good)}
+:root{--accent:#2fcfa5;--hot:#ff5a3c;--cold:#3c8cff}
+main{padding-bottom:40px}
+.progress{height:3px;background:var(--panel2);border-radius:99px;overflow:hidden;margin:-8px 0 14px;visibility:hidden}.progress i{display:block;height:100%;background:var(--accent);transition:width .4s}
+.status{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--dim);margin-bottom:14px;min-height:22px}
+.status .dot{width:9px;height:9px;border-radius:50%;background:var(--good);flex:none}.status.busy .dot{background:var(--accent);animation:pulse 1s infinite}.status.fail .dot{background:var(--bad)}
+@keyframes pulse{50%{opacity:.25}}
+.hero{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}@media(max-width:900px){.hero{grid-template-columns:1fr}}
+.hero .net{font-size:13px;color:var(--dim);display:flex;gap:8px;flex-wrap:wrap}
+.count{display:flex;align-items:baseline;gap:12px;margin:10px 0 4px}.count b{font-size:64px;line-height:1;letter-spacing:-.04em}
+.alert{display:flex;gap:10px;align-items:center;padding:10px 12px;border-radius:12px;margin:12px 0;font-size:14px;background:color-mix(in srgb,var(--good) 12%,transparent)}
+.alert.warn{background:color-mix(in srgb,var(--warn) 16%,transparent)}
+.health{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0}
+.health div{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-width:0}
+.health span{display:block;font-size:12px;color:var(--dim)}.health b{display:block;font-size:18px;margin-top:2px;white-space:nowrap}
+.radar{position:relative;aspect-ratio:1;max-width:360px;margin:auto}.radar svg{width:100%;height:100%;display:block}
+.sweep{transform-origin:180px 180px;animation:spin 4s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+.kinds{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.kinds span{background:var(--panel2);border:1px solid var(--line);border-radius:99px;padding:6px 12px;font-size:13px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}.toolbar input{flex:1;min-width:200px}
+.devgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.dev{background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.dev.fresh{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn)}.dev.off{opacity:.55}
+.dev .top{display:flex;align-items:center;gap:10px;min-width:0}
+.ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 16%,transparent);font-size:20px;flex:none}
+.dev b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sub{font-size:12.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dev .acts{display:flex;gap:6px;margin-top:auto}.dev .acts .btn{flex:1;padding:6px 8px;font-size:13px}
+.badge{display:inline-block;font-size:11px;font-weight:800;padding:2px 8px;border-radius:99px;background:var(--warn);color:#000;white-space:nowrap}
+.badge.ok{background:color-mix(in srgb,var(--good) 22%,transparent);color:var(--good)}
+.badge.off{background:var(--panel2);color:var(--faint);border:1px solid var(--line)}
 .meter{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden;margin-top:6px}.meter i{display:block;height:100%;border-radius:99px}
-.chbar{display:flex;align-items:flex-end;gap:6px;height:120px;margin-top:12px}
-.chbar div{flex:1;border-radius:6px 6px 0 0;background:var(--accent);opacity:.8;position:relative}
+.find{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:900px){.find{grid-template-columns:1fr}}
+.thermo{position:relative;height:300px;display:grid;place-items:center}
+.thermo svg{width:100%;height:100%}
+.thermo .word{position:absolute;bottom:20px;left:0;right:0;text-align:center;font-size:30px;font-weight:800;letter-spacing:-.02em}
+.trend{font-size:15px;color:var(--dim);text-align:center;margin-top:6px}
+.picks{display:flex;flex-direction:column;gap:6px;max-height:360px;overflow:auto}
+.pick{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);cursor:pointer;text-align:left;color:inherit;font:inherit}
+.pick:hover,.pick.on{border-color:var(--accent)}
+.netrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}.netrow:last-child{border:0}
+.netrow .grow{min-width:0}
+.chbar{display:flex;align-items:flex-end;gap:6px;height:130px;margin-top:12px;padding-bottom:20px}
+.chbar div{flex:1;border-radius:6px 6px 0 0;background:var(--accent);position:relative;min-height:2px}
 .chbar span{position:absolute;bottom:-20px;left:0;right:0;text-align:center;font-size:12px;color:var(--dim)}
-.portrow{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)}
+.portrow{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
 .warnline{color:var(--warn);font-size:13px}
-.progress{height:3px;background:var(--panel2);border-radius:99px;overflow:hidden;margin:-12px 0 16px;display:none}.progress i{display:block;height:100%;background:var(--accent);transition:width .4s}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40;display:none;place-items:center}
+.modal .card{max-width:540px;width:calc(100% - 32px);max-height:90vh;overflow:auto}
+table.aps{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}
+table.aps td,table.aps th{padding:7px 6px;border-bottom:1px solid var(--line)}
+.aps-wrap{overflow-x:auto}
 </style>
 </head>
 <body>
@@ -34,57 +65,102 @@
   <nav class="kit-nav">
     <button data-view="v-home">Panoramica</button>
     <button data-view="v-devices">Dispositivi</button>
-    <button data-view="v-check">Verifica</button>
+    <button data-view="v-find">Trova</button>
+    <button data-view="v-net">Rete e Wi-Fi</button>
     <button data-view="v-air">Reti vicine</button>
   </nav>
   <div class="kit-dev"></div>
 </header>
 <main>
 <div class="progress" id="progress"><i></i></div>
+<div class="status" id="status"><i class="dot"></i><span id="status-text">Collegamento...</span></div>
 
 <section class="view" id="v-home">
   <div class="hero">
-    <div class="card"><div class="dim" id="h-ssid">Rete</div>
-      <div style="display:flex;align-items:baseline;gap:12px;margin:8px 0"><span class="big" id="h-online" style="font-size:56px">–</span><span class="dim">dispositivi connessi</span></div>
-      <div id="h-fresh"></div><p class="dim" id="h-msg"></p>
-      <div class="row"><button class="btn primary" onclick="job('scan','Scansione avviata')">↻ Scansiona</button>
-        <button class="btn" onclick="job('check','Verifica avviata');kit.show('v-check')">Verifica la rete</button>
-        <button class="btn" onclick="exportCsv()">⤓ Esporta CSV</button></div></div>
-    <div class="card"><div class="radar" id="radar"></div></div>
+    <div class="card">
+      <div class="net" id="h-net"></div>
+      <div class="count"><b id="h-online">–</b><span class="dim" id="h-of">dispositivi in linea</span></div>
+      <div id="h-alert"></div>
+      <div class="health" id="h-health"></div>
+      <div class="row">
+        <button class="btn primary" onclick="job('scan')">↻ Scansiona</button>
+        <button class="btn" onclick="job('check');kit.show('v-net')">Verifica la rete</button>
+        <button class="btn" onclick="exportCsv()">⤓ CSV</button>
+      </div>
+    </div>
+    <div class="card"><div class="radar" id="radar"></div><div class="kinds" id="kinds"></div></div>
   </div>
-  <div class="grid g3" style="margin-top:16px" id="kinds"></div>
 </section>
 
 <section class="view" id="v-devices">
-  <div class="row" style="margin-bottom:14px"><input id="search" placeholder="Cerca per nome, IP, produttore..." class="grow" oninput="drawDevices()">
-    <div class="pill-toggle" id="filter"><button data-f="all" class="on">Tutti</button><button data-f="new">Nuovi</button><button data-f="untrusted">Da verificare</button><button data-f="off">Non in linea</button></div></div>
+  <div class="toolbar">
+    <input id="search" placeholder="Cerca per nome, IP, MAC, produttore..." oninput="drawDevices()">
+    <div class="pill-toggle" id="filter"><button data-f="all" class="on">Tutti</button><button data-f="new">Nuovi</button><button data-f="untrusted">Da verificare</button><button data-f="off">Non in linea</button></div>
+  </div>
   <div class="devgrid" id="devs"></div>
+  <p class="faint" style="font-size:13px;margin-top:14px">Nomi e dispositivi fidati sono condivisi con l'app Sentinel completa (se installata): un nome dato qui compare anche lì.</p>
 </section>
 
-<section class="view" id="v-check">
+<section class="view" id="v-find">
+  <div class="find">
+    <div class="card">
+      <h2 id="f-title">Trova un dispositivo</h2>
+      <div class="thermo" id="thermo"></div>
+      <div class="trend" id="f-trend">Scegli un dispositivo e cammina: il segnale delle sue risposte sale quando ti avvicini.</div>
+      <div class="row" style="justify-content:center;margin-top:14px"><button class="btn" id="f-stop" onclick="stopJob()" disabled>■ Ferma</button></div>
+    </div>
+    <div class="card">
+      <h2>Quale?</h2>
+      <input id="f-search" placeholder="Cerca..." oninput="drawPicks()" style="width:100%;margin-bottom:10px">
+      <div class="picks" id="picks"></div>
+      <p class="faint" style="font-size:13px">Funziona con i dispositivi sulla stessa rete a 2,4 GHz collegati allo stesso access point: l'orologio ascolta le loro risposte ai ping. Dura al massimo 3 minuti.</p>
+    </div>
+  </div>
+</section>
+
+<section class="view" id="v-net">
   <div class="grid g2">
-    <div class="card"><h2>Verdetto</h2><p class="serif" id="c-verdict" style="font-size:20px">Nessuna verifica ancora.</p>
-      <button class="btn primary" onclick="job('check','Verifica avviata')">Verifica ora</button></div>
-    <div class="card"><h2>Misure</h2><div id="c-measures" class="dim">—</div></div>
+    <div class="card">
+      <h2>Salute della rete</h2>
+      <p class="serif" id="c-verdict" style="font-size:20px">Nessuna verifica ancora.</p>
+      <div id="c-measures"></div>
+      <button class="btn primary" onclick="job('check')">Verifica ora</button>
+    </div>
+    <div class="card">
+      <h2>Wi-Fi dell'orologio</h2>
+      <div id="w-current" class="dim"></div>
+      <div id="w-known" style="margin-top:8px"></div>
+      <h3 style="margin-top:18px">Nuova rete</h3>
+      <form id="w-new" class="row" style="flex-wrap:wrap">
+        <input id="w-ssid" placeholder="Nome della rete" maxlength="32" class="grow" required>
+        <input id="w-pass" type="password" placeholder="Password" maxlength="64" class="grow">
+        <button class="btn primary">Collegati</button>
+      </form>
+      <p class="faint" style="font-size:13px">Se l'orologio cambia rete questa pagina perde il collegamento: riaprila dal QR sull'orologio, nella nuova rete.</p>
+    </div>
   </div>
 </section>
 
 <section class="view" id="v-air">
   <div class="grid g2">
-    <div class="card"><div class="row"><h2 class="grow" style="margin:0">Reti vicine</h2><button class="btn" onclick="job('air','Ascolto le reti...')">↻ Ascolta</button></div>
-      <table style="width:100%;margin-top:10px"><thead><tr><th align=left>Rete</th><th>Canale</th><th>Segnale</th><th align=left>Sicurezza</th></tr></thead><tbody id="aps"></tbody></table></div>
-    <div class="card"><h2>Affollamento dei canali</h2><div class="chbar" id="chbar"></div><p style="margin-top:30px" id="best"></p></div>
+    <div class="card"><div class="row"><h2 class="grow" style="margin:0">Reti vicine</h2><button class="btn" onclick="job('air')">↻ Ascolta</button></div>
+      <div class="aps-wrap"><table class="aps"><thead><tr><th align=left>Rete</th><th>Canale</th><th>Segnale</th><th align=left>Sicurezza</th><th></th></tr></thead><tbody id="aps"></tbody></table></div></div>
+    <div class="card"><h2>Affollamento dei canali (2,4 GHz)</h2><div class="chbar" id="chbar"></div><p id="best"></p></div>
   </div>
 </section>
 </main>
 
-<div class="modal" id="dlg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40;place-items:center">
-  <div class="card" style="max-width:520px;width:calc(100% - 32px);max-height:90vh;overflow:auto">
+<div class="modal" id="dlg">
+  <div class="card">
     <div class="row"><h2 class="grow" style="margin:0" id="d-title"></h2><button class="btn sm" onclick="closeDlg()">✕</button></div>
     <div id="d-body" style="margin-top:12px"></div>
     <label class="field" style="margin-top:12px">Nome personale<input id="d-label" maxlength="31"></label>
-    <label class="row" style="margin-top:10px"><input type="checkbox" id="d-trusted"> Dispositivo fidato</label>
-    <div class="row end" style="margin-top:14px"><button class="btn" onclick="ports()">Controlla i servizi</button><button class="btn primary" onclick="saveDevice()">Salva</button></div>
+    <label class="row" style="margin-top:10px"><input type="checkbox" id="d-trusted"> Lo conosco, è fidato</label>
+    <div class="row end" style="margin-top:14px">
+      <button class="btn" onclick="findDev(S.open.ip)">◎ Trova</button>
+      <button class="btn" onclick="ports()">Servizi aperti</button>
+      <button class="btn primary" onclick="saveDevice()">Salva</button>
+    </div>
   </div>
 </div>
 
@@ -92,43 +168,66 @@
 <script>
 'use strict';
 const {$, $$} = kit;
-const S = {st: null, filter: 'all', open: null};
+const S = {st: null, filter: 'all', open: null, wifi: null, pick: null};
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const ICON = {'Router': '📡', 'Telefono': '📱', 'Tablet': '📱', 'Computer': '💻', 'Stampante': '🖨', 'TV / media': '📺', 'Altoparlante': '🔊',
   'Videocamera': '📷', 'Domotica': '💡', 'NAS': '🗄', 'Console': '🎮'};
+const PHASE = ['Pronto', 'Wi-Fi', 'Scansione', 'Nomi', 'Verifica', 'Servizi', 'Reti vicine', 'Errore', 'Ricerca'];
 const ago = t => t ? new Date(t * 1000).toLocaleString('it-IT', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) : '—';
+const icon = d => ICON[d.kind] || '🔹';
 
 async function load() {
   const st = S.st = await kit.api('/api/state'), s = st.status;
   const busy = s.phase !== 0 && s.phase !== 7;
-  $('#progress').style.display = busy ? 'block' : 'none';
+  $('#progress').style.visibility = busy && s.phase !== 8 ? 'visible' : 'hidden';
   $('#progress i').style.width = (s.percent || 4) + '%';
-  $('#h-ssid').textContent = (s.ssid || 'Rete') + (s.ip ? ' · orologio ' + s.ip + ' · router ' + s.gateway : '');
-  $('#h-online').textContent = s.online;
-  $('#h-msg').textContent = s.message + (s.scanned ? ' · ultima scansione ' + ago(s.scanned) : '');
-  $('#h-fresh').innerHTML = s.fresh ? `<span class="badge">${s.fresh} nuovi</span> <span class="dim">dispositivi mai visti prima su questa rete</span>` : '<span class="badge ok">nessun nuovo dispositivo</span>';
-  drawRadar(); drawKinds(); drawDevices(); drawCheck(); drawAir();
+  $('#status').className = 'status' + (busy ? ' busy' : s.phase === 7 ? ' fail' : '');
+  $('#status-text').textContent = s.message + (s.scanned && !busy ? ' · ultima scansione ' + ago(s.scanned) : '');
+  drawHome(); drawDevices(); drawFind(); drawCheck(); drawAir();
   if (S.open) { const d = st.devices.find(x => x.ip === S.open.ip); if (d) fillDlg(d, false); }
 }
-const job = (name, text) => kit.try(() => kit.api('/api/' + name, {body: {}}), text).then(() => setTimeout(load, 600));
+const job = name => kit.try(() => kit.api('/api/' + name, {body: {}})).then(() => setTimeout(load, 500));
+const stopJob = () => kit.try(() => kit.api('/api/stop', {body: {}})).then(() => setTimeout(load, 500));
 
+/* ---------------------------------------------------------------- home */
+function drawHome() {
+  const st = S.st, s = st.status, c = st.check;
+  $('#h-net').innerHTML = s.ssid ? `<b>📶 ${esc(s.ssid)}</b><span>orologio ${esc(s.ip || '—')}</span><span>router ${esc(s.gateway || '—')}</span>` : 'Rete non ancora letta';
+  $('#h-online').textContent = s.online;
+  $('#h-of').textContent = `in linea su ${s.devices} ${s.devices === 1 ? 'dispositivo visto' : 'dispositivi visti'}`;
+  const unknown = st.devices.filter(d => d.online && !d.trusted && d.kind !== 'Router').length;
+  $('#h-alert').innerHTML = s.fresh ? `<div class="alert warn">⚠ <span><b>${s.fresh} ${s.fresh === 1 ? 'nuovo dispositivo' : 'nuovi dispositivi'}</b> mai visti prima su questa rete. <a href="#" onclick="S.filter='new';setFilter();kit.show('v-devices');return false">Guarda</a></span></div>`
+    : `<div class="alert">✓ <span>Nessun dispositivo nuovo${unknown ? ` · ${unknown} da segnare come fidati` : ''}</span></div>`;
+  const cell = (label, value, cls) => `<div><span>${label}</span><b class="${cls || ''}">${value}</b></div>`;
+  $('#h-health').innerHTML = c ? cell('Segnale', c.rssi + ' dBm', c.rssi >= -67 ? 'good' : c.rssi >= -78 ? 'warn' : 'bad') +
+    cell('Router', c.gateway_avg < 0 ? 'non risponde' : c.gateway_avg + ' ms', c.gateway_avg < 0 ? 'bad' : c.gateway_avg < 30 ? 'good' : 'warn') +
+    cell('Internet', c.internet_ms < 0 ? 'assente' : c.internet_ms + ' ms', c.internet_ms < 0 ? 'bad' : c.internet_ms < 80 ? 'good' : 'warn')
+    : cell('Segnale', '–') + cell('Router', '–') + cell('Internet', '–');
+  drawRadar(); drawKinds();
+}
 function drawRadar() {
-  const devs = S.st.devices.filter(d => d.online), n = devs.length, size = 340, c = size / 2;
+  const devs = S.st.devices.filter(d => d.online), n = devs.length, size = 360, c = size / 2;
   let dots = '';
   devs.forEach((d, i) => {
-    const a = i / Math.max(n, 1) * Math.PI * 2 - Math.PI / 2, r = d.kind === 'Router' ? 0 : 60 + Math.min(1, (d.rtt < 0 ? 200 : d.rtt) / 200) * 95;
+    const a = i / Math.max(n, 1) * Math.PI * 2 - Math.PI / 2, router = d.kind === 'Router';
+    const r = router ? 0 : 58 + Math.min(1, (d.rtt < 0 ? 200 : d.rtt) / 200) * 105;
     const x = c + Math.cos(a) * r, y = c + Math.sin(a) * r, color = d.fresh ? 'var(--warn)' : d.trusted ? 'var(--good)' : 'var(--accent)';
-    dots += `<g style="cursor:pointer" onclick="openDev('${esc(d.ip)}')"><circle cx="${x}" cy="${y}" r="${d.kind === 'Router' ? 14 : 8}" fill="${color}"/><title>${esc(d.name)} · ${esc(d.ip)}</title></g>`;
+    dots += `<g style="cursor:pointer" onclick="openDev('${esc(d.ip)}')">${d.fresh ? `<circle cx="${x}" cy="${y}" r="15" fill="none" stroke="var(--warn)" opacity=".5"><animate attributeName="r" values="9;18;9" dur="2s" repeatCount="indefinite"/></circle>` : ''}
+      <circle cx="${x}" cy="${y}" r="${router ? 15 : 8}" fill="${color}"/><title>${esc(d.name)} · ${esc(d.ip)}${d.rtt >= 0 ? ' · ' + d.rtt + ' ms' : ''}</title></g>`;
   });
-  $('#radar').innerHTML = `<svg viewBox="0 0 ${size} ${size}">${[60, 110, 155].map(r => `<circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--line)"/>`).join('')}${dots}
-    <text x="${c}" y="${size - 6}" text-anchor="middle" fill="var(--faint)" font-size="11">più vicino al centro = risponde più in fretta</text></svg>`;
+  $('#radar').innerHTML = `<svg viewBox="0 0 ${size} ${size}">
+    <defs><linearGradient id="sw" x1="0" x2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity="0"/><stop offset="1" stop-color="var(--accent)" stop-opacity=".28"/></linearGradient></defs>
+    ${[58, 110, 163].map(r => `<circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="var(--line)"/>`).join('')}
+    <path class="sweep" d="M${c} ${c} L${c + 163} ${c} A163 163 0 0 0 ${c + 163 * Math.cos(-0.6)} ${c + 163 * Math.sin(-0.6)} Z" fill="url(#sw)"/>
+    ${dots}<text x="${c}" y="${size - 4}" text-anchor="middle" fill="var(--faint)" font-size="11">più vicino al centro = risponde più in fretta</text></svg>`;
 }
 function drawKinds() {
   const counts = {};
   S.st.devices.filter(d => d.online).forEach(d => { const k = d.kind || 'Altro'; counts[k] = (counts[k] || 0) + 1; });
-  $('#kinds').innerHTML = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) =>
-    `<div class="card kpi"><b>${ICON[k] || '🔹'} ${n}</b><span>${esc(k)}</span></div>`).join('');
+  $('#kinds').innerHTML = Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span>${ICON[k] || '🔹'} ${n} ${esc(k)}</span>`).join('');
 }
+
+/* ------------------------------------------------------------- devices */
 function drawDevices() {
   const q = $('#search').value.toLowerCase();
   const list = S.st.devices.filter(d => {
@@ -137,18 +236,21 @@ function drawDevices() {
     if (S.filter === 'off' && d.online) return false;
     return !q || [d.name, d.ip, d.mac, d.vendor, d.kind].join(' ').toLowerCase().includes(q);
   });
-  $('#devs').innerHTML = list.map(d => `<div class="dev${d.fresh ? ' fresh' : ''}${d.online ? '' : ' off'}" onclick="openDev('${esc(d.ip)}')">
-    <div class="top"><div class="ic">${ICON[d.kind] || '🔹'}</div><div style="min-width:0"><b>${esc(d.name)}</b><div class="sub">${esc(d.kind || d.vendor || 'Dispositivo')}</div></div>
-      <div style="margin-left:auto">${d.fresh ? '<span class="badge">NUOVO</span>' : d.trusted ? '<span class="badge ok">✓</span>' : ''}</div></div>
+  $('#devs').innerHTML = list.map(d => `<div class="dev${d.fresh ? ' fresh' : ''}${d.online ? '' : ' off'}">
+    <div class="top"><div class="ic">${icon(d)}</div><div style="min-width:0;flex:1"><b>${esc(d.name)}</b><div class="sub">${esc(d.kind || d.vendor || 'Dispositivo')}</div></div>
+      ${d.fresh ? '<span class="badge">NUOVO</span>' : d.trusted ? '<span class="badge ok">✓ fidato</span>' : !d.online ? '<span class="badge off">spento</span>' : ''}</div>
     <div class="sub">${esc(d.ip)} · ${esc(d.mac || 'MAC non rilevato')}${d.rtt >= 0 ? ' · ' + d.rtt + ' ms' : ''}</div>
-    ${d.vendor ? `<div class="sub">${esc(d.vendor)}</div>` : ''}</div>`).join('') || '<div class="empty">Nessun dispositivo.</div>';
+    ${d.vendor ? `<div class="sub">${esc(d.vendor)}</div>` : ''}
+    <div class="acts"><button class="btn" onclick="openDev('${esc(d.ip)}')">Dettagli</button>${d.online && d.mac ? `<button class="btn" onclick="findDev('${esc(d.ip)}')">◎ Trova</button>` : ''}</div></div>`).join('')
+    || '<div class="empty">Nessun dispositivo.</div>';
 }
-$$('#filter button').forEach(b => b.onclick = () => { S.filter = b.dataset.f; $$('#filter button').forEach(x => x.classList.toggle('on', x === b)); drawDevices(); });
+function setFilter() { $$('#filter button').forEach(x => x.classList.toggle('on', x.dataset.f === S.filter)); drawDevices(); }
+$$('#filter button').forEach(b => b.onclick = () => { S.filter = b.dataset.f; setFilter(); });
 
 function openDev(ip) { const d = S.st.devices.find(x => x.ip === ip); if (!d) return; S.open = d; fillDlg(d, true); $('#dlg').style.display = 'grid'; }
 function closeDlg() { S.open = null; $('#dlg').style.display = 'none'; }
 function fillDlg(d, inputs) {
-  $('#d-title').textContent = d.name;
+  $('#d-title').textContent = icon(d) + ' ' + d.name;
   const names = [['mDNS', d.mdns], ['NetBIOS', d.netbios], ['UPnP', d.upnp], ['DNS', d.dns]].filter(x => x[1]).map(x => `${x[0]}: <b>${esc(x[1])}</b>`).join('<br>');
   const ports = d.ports ? (d.ports.length ? d.ports.map(p => `<div class="portrow"><span>${p.port} · ${esc(p.name)}</span>${p.warning ? `<span class="warnline">⚠ ${esc(p.warning)}</span>` : ''}</div>`).join('')
     : '<div class="dim">Nessun servizio comune aperto.</div>') : '<div class="dim">Servizi non ancora controllati.</div>';
@@ -157,13 +259,52 @@ function fillDlg(d, inputs) {
     ${names ? `<p>${names}</p>` : ''}<h3>Servizi aperti</h3>${ports}`;
   if (inputs) { $('#d-label').value = d.label; $('#d-trusted').checked = d.trusted; }
 }
-const ports = () => S.open && kit.try(() => kit.api('/api/ports', {body: {ip: S.open.ip}}), 'Controllo i servizi (20 porte)...');
+const ports = () => S.open && kit.try(() => kit.api('/api/ports', {body: {ip: S.open.ip}}), 'Controllo 20 servizi comuni...');
 async function saveDevice() {
   const d = S.open;
   await kit.try(() => kit.api('/api/edit', {body: {mac: d.mac, ip: d.ip, label: $('#d-label').value, trusted: $('#d-trusted').checked}}), 'Salvato');
   closeDlg(); load();
 }
 
+/* ---------------------------------------------------------------- find */
+function findDev(ip) {
+  S.pick = ip; closeDlg(); kit.show('v-find');
+  kit.try(() => kit.api('/api/find', {body: {ip}})).then(() => setTimeout(load, 400));
+}
+function drawPicks() {
+  const q = $('#f-search').value.toLowerCase(), f = S.st.find;
+  const list = S.st.devices.filter(d => d.online && d.mac && d.kind !== 'Router' && (!q || [d.name, d.ip, d.vendor].join(' ').toLowerCase().includes(q)));
+  $('#picks').innerHTML = list.map(d => `<button class="pick${f && f.ip === d.ip ? ' on' : ''}" onclick="findDev('${esc(d.ip)}')"><span class="ic" style="width:32px;height:32px;font-size:16px">${icon(d)}</span>
+    <span style="min-width:0"><b class="sub" style="color:var(--ink)">${esc(d.name)}</b><span class="sub">${esc(d.ip)}</span></span></button>`).join('') || '<div class="empty">Fai prima una scansione.</div>';
+}
+function drawFind() {
+  drawPicks();
+  const f = S.st.find, running = !!(f && f.running);
+  $('#f-stop').disabled = !running;
+  const level = f && f.frames ? Math.max(0, Math.min(1, (f.smooth + 90) / 55)) : 0;   /* -90 dBm cold .. -35 hot */
+  const color = `color-mix(in srgb,var(--hot) ${Math.round(level * 100)}%,var(--cold))`;
+  const words = ['Gelido', 'Freddo', 'Tiepido', 'Caldo', 'Bollente'];
+  const word = f && f.frames ? words[Math.min(4, Math.floor(level * 5))] : running ? 'In ascolto...' : '—';
+  const a0 = Math.PI * .75, span = Math.PI * 1.5, R = 110, cx = 150, cy = 140;
+  const pt = t => [cx + R * Math.cos(a0 + span * t), cy + R * Math.sin(a0 + span * t)];
+  const arc = t => { const [x0, y0] = pt(0), [x1, y1] = pt(t); return `M${x0} ${y0} A${R} ${R} 0 ${span * t > Math.PI ? 1 : 0} 1 ${x1} ${y1}`; };
+  const best = f && f.frames ? Math.max(0, Math.min(1, (f.best + 90) / 55)) : 0, [bx, by] = pt(best);
+  $('#thermo').innerHTML = `<svg viewBox="0 0 300 280">
+    <defs><linearGradient id="tg" x1="0" x2="1"><stop offset="0" stop-color="var(--cold)"/><stop offset="1" stop-color="var(--hot)"/></linearGradient></defs>
+    <path d="${arc(1)}" fill="none" stroke="var(--panel2)" stroke-width="22" stroke-linecap="round"/>
+    <path d="${arc(1)}" fill="none" stroke="url(#tg)" stroke-width="22" stroke-linecap="round" opacity=".18"/>
+    ${level > 0 ? `<path d="${arc(Math.max(.01, level))}" fill="none" stroke="${color}" stroke-width="22" stroke-linecap="round" style="transition:all .4s"/>` : ''}
+    ${f && f.frames ? `<circle cx="${bx}" cy="${by}" r="5" fill="var(--ink)"><title>Il punto più caldo finora: ${f.best} dBm</title></circle>` : ''}
+    <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="46" font-weight="800" fill="var(--ink)">${f && f.frames ? f.smooth : '–'}</text>
+    <text x="${cx}" y="${cy + 22}" text-anchor="middle" font-size="14" fill="var(--dim)">dBm</text></svg>
+    <div class="word" style="color:${f && f.frames ? color : 'var(--dim)'}">${word}</div>`;
+  $('#f-title').textContent = f ? '◎ ' + f.name : 'Trova un dispositivo';
+  $('#f-trend').innerHTML = !f ? 'Scegli un dispositivo e cammina: il segnale delle sue risposte sale quando ti avvicini.'
+    : !f.frames ? (running ? 'Aspetto le prime risposte...' : 'Nessun segnale diretto: forse è a 5 GHz, via cavo o su un altro access point.')
+    : `${f.trend > 0 ? '🔥 Ti stai avvicinando' : f.trend < 0 ? '❄ Ti stai allontanando' : 'Stabile'} · meglio finora ${f.best} dBm · ${f.frames} risposte in ${f.seconds} s${f.age_ms > 3000 ? ' · <span class="warn">nessuna risposta da ' + Math.round(f.age_ms / 1000) + ' s</span>' : ''}${running ? '' : ' · ricerca finita'}`;
+}
+
+/* ------------------------------------------------------- network, wifi */
 function drawCheck() {
   const c = S.st.check;
   if (!c) return;
@@ -174,23 +315,37 @@ function drawCheck() {
     const color = p > .66 ? 'var(--good)' : p > .33 ? 'var(--warn)' : 'var(--bad)';
     return `<div style="margin-bottom:12px"><div class="row"><b class="grow">${label}</b><span>${value} ${unit}</span></div><div class="meter"><i style="width:${(p * 100).toFixed(0)}%;background:${color}"></i></div></div>`;
   };
-  $('#c-measures').innerHTML = bar('Segnale', c.rssi, 'dBm', -50, -85, true) + bar('Router', c.gateway_avg, 'ms', 5, 80) +
+  $('#c-measures').innerHTML = bar('Segnale', c.rssi, 'dBm', -50, -85, true) + bar('Router (media)', c.gateway_avg, 'ms', 5, 80) +
     bar('Pacchetti persi', c.gateway_loss, '%', 0, 30) + bar('Internet', c.internet_ms, 'ms', 15, 200) + bar('DNS', c.dns_ms, 'ms', 10, 300) +
-    `<p class="dim">Canale ${c.channel} · sicurezza ${esc(c.security)}</p>`;
+    `<p class="dim">Canale ${c.channel} · sicurezza ${esc(c.security)} · picco router ${c.gateway_max} ms</p>`;
 }
+async function loadWifi() {
+  const w = S.wifi = await kit.api('/api/wifi');
+  $('#w-current').innerHTML = w.current ? `Collegato a <b>${esc(w.current)}</b>${w.preferred ? ` · preferita: ${esc(w.preferred)}` : ' · scelta automatica'}` : 'Wi-Fi spento in questo momento (si accende quando serve).';
+  $('#w-known').innerHTML = w.known.map(n => `<div class="netrow"><span>📶</span><span class="grow"><b>${esc(n)}</b>${n === w.current ? ' <span class="badge ok">in uso</span>' : ''}</span>
+    ${n === w.current ? '' : `<button class="btn sm" onclick="join(${esc(JSON.stringify(n))})">Collegati</button>`}</div>`).join('') || '<div class="dim">Nessuna rete salvata.</div>';
+  drawAir();
+}
+function join(ssid, password) {
+  if (!confirm(`Collegare l'orologio a "${ssid}"? Questa pagina potrebbe perdere il collegamento.`)) return;
+  kit.try(() => kit.api('/api/join', {body: {ssid, password: password || ''}}), 'Cambio rete...').then(() => setTimeout(load, 1500));
+}
+$('#w-new').onsubmit = e => { e.preventDefault(); join($('#w-ssid').value.trim(), $('#w-pass').value); $('#w-pass').value = ''; };
+
 function drawAir() {
-  const aps = S.st.aps, load = {};
+  const aps = S.st ? S.st.aps : [], load = {}, known = S.wifi ? S.wifi.known : [];
   aps.forEach(a => { for (let ch = 1; ch <= 13; ch++) if (a.channel && Math.abs(a.channel - ch) <= 2) load[ch] = (load[ch] || 0) + 1; });
-  $('#aps').innerHTML = aps.map(a => `<tr${a.current ? ' style="color:var(--accent)"' : ''}><td>${esc(a.ssid || '(nascosta)')}${a.current ? ' · in uso' : ''}</td><td align=center>${a.channel}</td><td align=center>${a.rssi} dBm</td><td>${esc(a.security)}</td></tr>`).join('')
-    || '<tr><td colspan=4 class="dim">Tocca "Ascolta" per cercare le reti vicine.</td></tr>';
+  $('#aps').innerHTML = aps.map(a => `<tr${a.current ? ' style="color:var(--accent)"' : ''}><td>${esc(a.ssid || '(nascosta)')}${a.current ? ' · in uso' : ''}</td><td align=center>${a.channel}</td>
+    <td align=center>${a.rssi} dBm</td><td>${esc(a.security)}</td><td align=right>${!a.current && a.ssid ? `<button class="btn sm" onclick="${known.includes(a.ssid) ? `join(${esc(JSON.stringify(a.ssid))})` : `$('#w-ssid').value=${esc(JSON.stringify(a.ssid))};kit.show('v-net');$('#w-pass').focus()`}">Collegati</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan=5 class="dim">Tocca "Ascolta" per cercare le reti vicine.</td></tr>';
   const max = Math.max(1, ...Object.values(load));
   $('#chbar').innerHTML = Array.from({length: 13}, (_, i) => i + 1).map(ch => `<div style="height:${((load[ch] || 0) / max * 100).toFixed(0)}%;${[1, 6, 11].includes(ch) ? '' : 'opacity:.35'}"><span>${ch}</span></div>`).join('');
   if (aps.length) { const best = [1, 6, 11].sort((a, b) => (load[a] || 0) - (load[b] || 0))[0]; $('#best').innerHTML = `Canale consigliato tra 1, 6 e 11: <b>${best}</b> (${load[best] || 0} reti si sovrappongono)`; }
 }
 function exportCsv() { location.href = kit.base + '/api/export.csv?k=' + kit.key(); }
 
-kit.views(() => {});
-kit.start({onReady: () => kit.poll(load, 3000)});
+kit.views(v => { if (v === 'v-net' || v === 'v-air') loadWifi().catch(() => {}); });
+kit.start({onReady: () => { loadWifi().catch(() => {}); kit.poll(load, 2000); }});
 </script>
 </body>
 </html>
