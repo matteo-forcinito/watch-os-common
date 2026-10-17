@@ -168,9 +168,9 @@ static void home(bl_ui_t *ui)
     lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(col, 2, 0);
     char text[48], amount[24];
-    if (!s.has_balance || !any_rule)
+    if (!s.has_balance || (!any_rule && s.balance == 0))
     {
-        lv_obj_t *t = label(col, UI_FONT_BODY, C_INK, s.has_balance ? "Aggiungi lo stipendio e i fissi" : "Inserisci il saldo");
+        lv_obj_t *t = label(col, UI_FONT_BODY, C_INK, "Aggiungi lo stipendio e i fissi");
         lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_WRAP);
         lv_obj_set_width(t, size * 64 / 100);

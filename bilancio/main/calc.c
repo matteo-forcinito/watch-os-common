@@ -333,12 +333,42 @@ static bool counted(const bl_book_t *book, const bl_tx_t *t)
     return book->balance_date == BL_NONE || (t->id > book->balance_after && t->date >= book->balance_date);
 }
 
-bl_cents_t bl_balance_today(const bl_book_t *book, bl_day_t today)
+/*
+ * Without a balance entered, the book starts from zero on its first day: the
+ * earliest of the first movement, the last payday and the first of the month.
+ * The balance is then income minus expenses since then.
+ */
+static bl_book_t effective(const bl_book_t *book, bl_day_t today)
 {
-    if (book->balance_date == BL_NONE)
+    bl_book_t e = *book;
+    if (book->balance_date != BL_NONE)
     {
-        return 0;
+        return e;
     }
+    bl_day_t start = bl_month_start(bl_month_of(today));
+    int main = bl_main_income(book->rules, book->rule_count);
+    bl_day_t payday = main >= 0 ? bl_previous(&book->rules[main], today) : BL_NONE;
+    if (payday != BL_NONE && payday < start)
+    {
+        start = payday;
+    }
+    for (int i = 0; i < book->tx_count; i++)
+    {
+        if (book->tx[i].date < start)
+        {
+            start = book->tx[i].date;
+        }
+    }
+    e.balance = 0;
+    e.balance_after = 0;
+    e.balance_date = start - 1;
+    return e;
+}
+
+bl_cents_t bl_balance_today(const bl_book_t *original, bl_day_t today)
+{
+    bl_book_t e = effective(original, today);
+    const bl_book_t *book = &e;
     bl_cents_t balance = book->balance;
     for (int i = 0; i < book->tx_count; i++)
     {
@@ -408,9 +438,12 @@ bl_cents_t bl_pace(const bl_book_t *book, bl_day_t today)
     return bl_spent(book, BL_ANY_CATEGORY, from, today) / span;
 }
 
-void bl_summary(const bl_book_t *book, bl_day_t today, bl_summary_t *out)
+void bl_summary(const bl_book_t *original, bl_day_t today, bl_summary_t *out)
 {
-    out->has_balance = book->balance_date != BL_NONE;
+    bl_book_t e = effective(original, today);
+    const bl_book_t *book = &e;
+    /* Something to count: a balance entered, or income, costs or movements to add up. */
+    out->has_balance = original->balance_date != BL_NONE || original->rule_count > 0 || original->tx_count > 0;
     out->balance = bl_balance_today(book, today);
     out->main_income = bl_main_income(book->rules, book->rule_count);
     out->payday = bl_next_payday(book, today);

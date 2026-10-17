@@ -253,9 +253,9 @@
   <section class="view" id="v-set">
     <div class="grid g2">
       <div class="card">
-        <h2>Saldo del conto</h2>
+        <h2>Saldo del conto (facoltativo)</h2>
         <div id="bal-now"></div>
-        <p class="dim" style="font-size:14px">Scrivi quello che dice la banca (app o bancomat). Da lì in poi Bilancio aggiunge i movimenti che registri, lo stipendio e le spese fisse nei loro giorni. Aggiornalo ogni tanto: i numeri sono buoni quanto il saldo.</p>
+        <p class="dim" style="font-size:14px">Facoltativo. Senza saldo, Bilancio lo calcola da entrate e uscite dall'ultimo stipendio. Per farlo coincidere con la banca scrivi qui quello che dice l'app della banca: da lì in poi aggiunge movimenti, stipendio e spese fisse nei loro giorni.</p>
         <button class="btn primary" id="bal-edit">Aggiorna il saldo</button>
       </div>
       <div class="card">
@@ -410,14 +410,14 @@ function renderHero() {
       el('span', {class: 'sub'}, s.spent_today > 0 ? `spesi ${eur(s.spent_today)} su ${eur(s.daily)}` : `al giorno fino allo stipendio`)));
   const payday = st.summary.main_income ? `Stipendio ${inDays(s.days)}` : 'Fine del mese ' + inDays(s.days);
   let headline;
-  if (!st.balance.set) headline = 'Inserisci il saldo del conto per iniziare';
+  if (!S.rules.length && !st.recent.length) headline = 'Aggiungi stipendio e spese fisse per iniziare';
   else if (s.free < 0) headline = `Mancano ${eur(-s.free)} per arrivare allo stipendio`;
   else if (s.forecast < 0) headline = `Di questo passo vai in rosso di ${eur(-s.forecast)} prima dello stipendio`;
   else if (s.state === 1) headline = `Stai spendendo ${eur(s.pace)} al giorno: il budget è ${eur(s.daily)}`;
   else headline = `${payday}: arrivi con circa ${eurSmart(s.forecast)}`;
   const eve = addDays(s.payday, -1);
   const facts = el('div', {class: 'facts'},
-    fact('Saldo stimato', eurSmart(s.balance), st.balance.set ? 'banca del ' + fmt(st.balance.date) : 'non inserito'),
+    fact('Saldo stimato', eurSmart(s.balance), st.balance.set ? 'banca del ' + fmt(st.balance.date) : 'da entrate e uscite'),
     fact(st.summary.main_income ? 'Stipendio' : 'Fine periodo', inDays(s.days), fmt(s.payday, {weekday: 'short', day: 'numeric', month: 'short'})),
     fact('Da pagare', eurSmart(s.due), s.income ? `entrano ${eurSmart(s.income)}` : 'prima del ' + fmt(s.payday)),
     fact('Liberi', eurSmart(s.free), 'tolte le scadenze'),
@@ -479,7 +479,7 @@ function forecastSeries() {
 function renderForecast() {
   const host = $('#forecast'), s = S.st.summary;
   host.replaceChildren();
-  if (!S.st.balance.set) { host.append(el('div', {class: 'empty'}, 'Inserisci il saldo per vedere dove arrivi.')); $('#forecast-note').textContent = ''; return; }
+  if (!S.rules.length && !S.st.recent.length) { host.append(el('div', {class: 'empty'}, 'Aggiungi lo stipendio per vedere dove arrivi.')); $('#forecast-note').textContent = ''; return; }
   const pts = forecastSeries();
   const W = Math.max(260, host.clientWidth || 640), H = W < 480 ? 220 : 300, P = {l: 60, r: 74, t: 14, b: 28};
   const vals = pts.flatMap(p => [p.fixed, p.paced]);
@@ -626,7 +626,6 @@ function renderLoans() {
 function renderInsights() {
   const st = S.st, s = st.summary, m = st.month, out = [];
   const add = (tone, icon, text) => out.push(el('div', {class: 'insight', style: {'--tone': tone}}, el('div', {class: 'ic'}, icon), el('div', {}, text)));
-  if (!st.balance.set) add('var(--accent)', '€', 'Inserisci il saldo del conto: è il punto di partenza di tutti i calcoli.');
   if (s.free < 0) add('var(--bad)', '!', `Le scadenze prima dello stipendio superano il saldo di ${eur(-s.free)}. Sposta una spesa o prepara la differenza.`);
   else if (s.forecast < 0) add('var(--bad)', '↘', `Al ritmo attuale finisci in rosso: rallenta a ${eur(s.daily)} al giorno.`);
   else if (s.state === 1) add('var(--warn)', '↗', `Stai spendendo ${eur(s.pace)} al giorno, più dei ${eur(s.daily)} che puoi permetterti.`);
@@ -680,16 +679,15 @@ function renderRecent() {
 function renderWelcome() {
   const st = S.st, host = $('#welcome');
   const hasSalary = S.rules.some(r => r.kind === INCOME), hasFixed = S.rules.some(r => r.kind === EXPENSE);
-  if (st.balance.set && hasSalary && hasFixed) { host.replaceChildren(); return; }
+  if (hasSalary && hasFixed) { host.replaceChildren(); return; }
   const step = (n, done, title, text, button) => el('div', {class: 'step' + (done ? ' ok' : '')},
     el('div', {class: 'row'}, el('div', {class: 'n'}, done ? '✓' : n), el('b', {}, title)), el('div', {class: 'dim', style: {fontSize: '14px'}}, text), done ? '' : button);
   host.replaceChildren(el('div', {class: 'card welcome', style: {marginBottom: '16px'}},
-    el('div', {class: 'headline', style: {marginTop: 0}}, 'Tre passi e Bilancio ti dice ogni giorno quanto puoi spendere'),
+    el('div', {class: 'headline', style: {marginTop: 0}}, 'Due passi e Bilancio ti dice ogni giorno quanto puoi spendere'),
     el('div', {class: 'dim'}, 'Due minuti adesso, poi basta segnare le spese (anche dall\'orologio).'),
     el('div', {class: 'steps'},
-      step(1, st.balance.set, 'Il saldo', 'Quanto c\'è oggi sul conto.', el('button', {class: 'btn primary', onclick: editBalance}, 'Inserisci il saldo')),
-      step(2, hasSalary, 'Lo stipendio', 'Quanto e che giorno arriva.', el('button', {class: 'btn primary', onclick: () => editRule(preset('Stipendio'))}, 'Aggiungi lo stipendio')),
-      step(3, hasFixed, 'Le spese fisse', 'Mutuo, prestito, condominio, bollette, assicurazione...', el('button', {class: 'btn primary', onclick: () => kit.show('v-fixed')}, 'Aggiungi i fissi')))));
+      step(1, hasSalary, 'Lo stipendio', 'Quanto e che giorno arriva.', el('button', {class: 'btn primary', onclick: () => editRule(preset('Stipendio'))}, 'Aggiungi lo stipendio')),
+      step(2, hasFixed, 'Le spese fisse', 'Mutuo, prestito, condominio, bollette, assicurazione...', el('button', {class: 'btn primary', onclick: () => kit.show('v-fixed')}, 'Aggiungi i fissi')))));
 }
 
 /* ---------------------------------------------------------- movements view */
@@ -939,7 +937,7 @@ function renderSettings() {
   $('#bal-now').replaceChildren(st.balance.set
     ? el('div', {class: 'row', style: {marginBottom: '6px'}}, el('div', {class: 'kpi'}, el('b', {class: 'money'}, eur(st.balance.amount)), el('span', {}, 'inserito il ' + fmt(st.balance.date, {day: 'numeric', month: 'long'}))),
       el('div', {class: 'grow'}), el('div', {class: 'kpi', style: {textAlign: 'right'}}, el('b', {class: 'money'}, eur(st.summary.balance)), el('span', {}, 'stimato oggi')))
-    : el('div', {class: 'notice'}, 'Saldo non ancora inserito.'));
+    : el('div', {class: 'row', style: {marginBottom: '6px'}}, el('div', {class: 'kpi'}, el('b', {class: 'money'}, eur(st.summary.balance)), el('span', {}, 'calcolato da entrate e uscite'))));
   $('#cat-list').replaceChildren(...st.categories.map((c, i) => {
     const input = el('input', {value: c, maxlength: 19, class: 'grow'});
     input.onchange = () => saved(kit.api('/api/category', {body: {index: i, name: input.value.trim()}}), 'Categoria rinominata');

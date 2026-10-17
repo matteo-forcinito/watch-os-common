@@ -183,10 +183,17 @@ int bilancio_tests(void)
     CHECK(s.daily == 0 && s.free < 0 && s.state == BL_SHORT && s.today_left == -1500);
     book.balance = 124050;
 
-    /* No balance entered: nothing pretends to know. */
+    /* No balance entered: income minus expenses since the last payday (25/9). */
     bl_book_t empty = {.balance_date = BL_NONE, .rules = rules, .rule_count = 1};
     bl_summary(&empty, D(2026, 10, 17), &s);
-    CHECK(!s.has_balance && s.balance == 0 && s.daily == 0 && s.payday == D(2026, 10, 27));
+    CHECK(s.has_balance && s.balance == 185000 && s.daily == 18500 && s.payday == D(2026, 10, 27));
+    /* ...with the rent of 1/10 and a movement of the 2nd: both counted. */
+    bl_tx_t one[] = {tx(1, D(2026, 10, 2), -5000, SPESA, 0)};
+    bl_book_t computed = {.balance_date = BL_NONE, .rules = rules, .rule_count = 3, .tx = one, .tx_count = 1};
+    CHECK(bl_balance_today(&computed, D(2026, 10, 17)) == 185000 - 65000 - 28900 - 5000);   /* salary, rent, loan 5/10 */
+    bl_book_t nothing = {.balance_date = BL_NONE};
+    bl_summary(&nothing, D(2026, 10, 17), &s);
+    CHECK(!s.has_balance && s.balance == 0 && s.daily == 0);
     /* No income at all: the period ends with the month. */
     bl_book_t no_income = {.balance = 31000, .balance_date = D(2026, 10, 17), .rules = &rules[2], .rule_count = 1};
     bl_summary(&no_income, D(2026, 10, 17), &s);
