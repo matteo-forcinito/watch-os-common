@@ -26,6 +26,7 @@ const fixture=require('./fixtures.cjs');
     await page.waitForFunction(()=>document.querySelector('#feedback').textContent.includes('Configurazione salvata'));
     const report=await(await page.request.get('http://127.0.0.1:8769/qa')).json();
     const entities=report.lastSave.favorites;
+    assert(entities.some(entity=>entity.id.length===255),'Long Home Assistant IDs must survive import unchanged');
     assert.equal(entities.find(e=>e.id==='sensor.living_temperature').area,'Soggiorno');
     assert.equal(entities.find(e=>e.id==='light.kitchen').area,'Cucina','Entity area overrides device area');
     assert(entities.find(e=>e.id==='light.kitchen').dashboards.includes('Piano terra / Cucina'),'Area cards contribute their entities');

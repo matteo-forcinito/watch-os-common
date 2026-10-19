@@ -18,6 +18,8 @@ Il token viene conservato nella NVS del dispositivo, non nel catalogo sulla SD n
 
 La UI nativa impagina gruppi ed entità a 12 elementi; la pagina PC aggiunge ricerca, filtro disponibilità e accesso a tutte le entità selezionate. Un tocco esegue l'azione principale; una pressione prolungata apre i dettagli. Luci, prese, termostati, tapparelle, ventilatori, media, scene e serrature usano i relativi servizi HA. Le entità indisponibili e i sensori di sola lettura non ricevono comandi; lo sblocco di una serratura richiede conferma nell'interfaccia.
 
+Gli identificativi tecnici delle entità conservano fino a 255 caratteri, come il [limite Home Assistant](https://github.com/home-assistant/core/blob/dev/homeassistant/const.py). Vengono mantenuti integri durante importazione, salvataggio, sottoscrizione e invio dei comandi. Identificativi duplicati/non validi e gruppi fuori limite producono messaggi distinti che indicano il riferimento da correggere.
+
 Gli stati arrivano con `subscribe_entities`, limitato alle entità selezionate. I comandi restano in attesa dello stato confermato dal server; gli errori dei servizi sono mostrati nella UI. Dopo una disconnessione la coda dei vecchi comandi viene scartata. Chiudere Casa rilascia client WebSocket, task e relativo riferimento Wi-Fi; il modello e il buffer dei messaggi restano in PSRAM per la riapertura.
 
 ## Verifica

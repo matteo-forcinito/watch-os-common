@@ -676,21 +676,43 @@ esp_err_t casa_config_store(const char *json, char *error, size_t error_size)
         cJSON_ArrayForEach(item, favorites)
         {
             const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(item, "id"));
-            if (!valid_entity_id(id)) { valid = false; break; }
+            if (!valid_entity_id(id))
+            {
+                snprintf(error, error_size, "Identificativo non valido o oltre %d caratteri: %.60s", CASA_ID - 1, id ? id : "(mancante)");
+                valid = false;
+                break;
+            }
             for (const cJSON *previous = favorites->child; previous != item; previous = previous->next)
             {
                 const char *other = cJSON_GetStringValue(cJSON_GetObjectItem(previous, "id"));
-                if (other && strcmp(id, other) == 0) valid = false;
+                if (other && strcmp(id, other) == 0)
+                {
+                    snprintf(error, error_size, "Entita' duplicata: %.80s", id);
+                    valid = false;
+                    break;
+                }
             }
             const cJSON *groups = cJSON_GetObjectItem(item, "dashboards");
-            if (groups && (!cJSON_IsArray(groups) || cJSON_GetArraySize(groups) > 4)) valid = false;
+            if (groups && (!cJSON_IsArray(groups) || cJSON_GetArraySize(groups) > 4))
+            {
+                snprintf(error, error_size, "Massimo quattro gruppi dashboard per %.65s", id);
+                valid = false;
+            }
             const cJSON *group;
             cJSON_ArrayForEach(group, groups)
-                if (!cJSON_IsString(group) || strlen(group->valuestring) >= CASA_NAME) valid = false;
+                if (!cJSON_IsString(group) || strlen(group->valuestring) >= CASA_NAME)
+                {
+                    snprintf(error, error_size, "Gruppo dashboard non valido o oltre %d byte per %.50s", CASA_NAME - 1, id);
+                    valid = false;
+                    break;
+                }
+            if (!valid) break;
         }
         nvs_handle_t nvs;
         if (!valid)
-            snprintf(error, error_size, "Entità o gruppi non validi (identificativi univoci richiesti)");
+        {
+            /* The validation above identifies the offending entity or group. */
+        }
         else if (nvs_open("casa", NVS_READWRITE, &nvs) != ESP_OK)
             snprintf(error, error_size, "Impossibile aprire la configurazione");
         else

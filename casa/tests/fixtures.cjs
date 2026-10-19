@@ -8,7 +8,7 @@ const states = [
   {entity_id:'sensor.offline',state:'unavailable',attributes:{friendly_name:'Sensore non disponibile'}},
   {entity_id:'binary_sensor.motion',state:'off',attributes:{friendly_name:'Movimento'}},
   {entity_id:'scene.evening',state:'scening',attributes:{friendly_name:'Sera'}},
-  {entity_id:'sensor.escape',state:'1',attributes:{friendly_name:'<img src=x onerror=window.injected=true>'}},
+  {entity_id:'light.'+'x'.repeat(249),state:'off',attributes:{friendly_name:'<img src=x onerror=window.injected=true>'}},
 ];
 const areas=[{area_id:'living',name:'Soggiorno'},{area_id:'kitchen',name:'Cucina'}];
 const devices=[{id:'climate-device',area_id:'living'},{id:'kitchen-device',area_id:'kitchen'}];

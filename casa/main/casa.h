@@ -21,7 +21,7 @@
 #include <stdint.h>
 
 #define CASA_ENTITIES 256
-#define CASA_ID 64
+#define CASA_ID 256 /* Home Assistant entity IDs: up to 255 characters plus NUL. */
 #define CASA_NAME 40
 
 typedef enum
