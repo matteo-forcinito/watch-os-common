@@ -11,6 +11,7 @@
  * network. Ping every 30 s; on loss, reconnect after 2, 4, 8 ... 60 s.
  */
 #include "casa.h"
+#include "sdkconfig.h"
 
 #include "cJSON.h"
 #include "core/sys.h"
@@ -35,15 +36,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static const char *TAG = "casa";
 
-#define MESSAGE_MAX (96 * 1024)
+#define MESSAGE_MAX (512 * 1024)
+#define CONFIG_MAX (192 * 1024)
 #define COMMAND_MAX 512
 #define URL_MAX 160
 #define TOKEN_MAX 300
 
 static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_lifecycle;
+static atomic_bool s_enabled;
 static casa_entity_t *s_entities; /* PSRAM */
 static int s_count;
 static casa_status_t s_status;
@@ -57,6 +62,30 @@ static char s_url[URL_MAX], s_token[TOKEN_MAX];
 static TaskHandle_t s_task;
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
+
+const char *casa_type_name(const casa_entity_t *e)
+{
+    if (e->kind == CASA_SENSOR)
+    {
+        if (!strcmp(e->device_class, "temperature")) return "Termometri";
+        if (!strcmp(e->device_class, "humidity")) return "Umidità";
+        if (!strcmp(e->device_class, "power") || !strcmp(e->device_class, "energy")) return "Energia";
+        return "Sensori";
+    }
+    switch (e->kind)
+    {
+    case CASA_LIGHT: return "Luci";
+    case CASA_SWITCH: return !strcmp(e->device_class, "outlet") ? "Prese" : "Interruttori";
+    case CASA_CLIMATE: return "Termostati";
+    case CASA_COVER: return "Tapparelle";
+    case CASA_FAN: return "Ventilazione";
+    case CASA_MEDIA: return "Multimedia";
+    case CASA_SCENE: return "Scene e azioni";
+    case CASA_LOCK: return "Serrature";
+    case CASA_PERSON: return "Presenze";
+    default: return "Altro";
+    }
+}
 
 static void set_message(const char *text)
 {
@@ -233,6 +262,8 @@ static void apply_attributes(casa_entity_t *e, const cJSON *a)
         snprintf(e->name, sizeof(e->name), "%s", item->valuestring);
     if (cJSON_IsString(item = cJSON_GetObjectItem(a, "unit_of_measurement")))
         snprintf(e->unit, sizeof(e->unit), "%s", item->valuestring);
+    if (cJSON_IsString(item = cJSON_GetObjectItem(a, "device_class")))
+        snprintf(e->device_class, sizeof(e->device_class), "%s", item->valuestring);
     if (cJSON_IsNumber(item = cJSON_GetObjectItem(a, "brightness")))
         e->brightness = (int)lroundf((float)item->valuedouble * 100.0f / 255.0f);
     if (cJSON_IsArray(item = cJSON_GetObjectItem(a, "rgb_color")) && cJSON_GetArraySize(item) == 3)
@@ -449,6 +480,8 @@ static void handle_message(const char *text)
             snprintf(text_error, sizeof(text_error), "Home Assistant: %s", cJSON_IsString(error) ? error->valuestring : "errore");
             set_message(text_error);
         }
+        else if (cJSON_IsTrue(success) && cJSON_GetObjectItem(msg, "id") && cJSON_GetObjectItem(msg, "id")->valueint >= 10)
+            set_message("Collegato a Home Assistant");
     }
     cJSON_Delete(msg);
 }
@@ -482,7 +515,11 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *event_data
             s_message_len += d->data_len;
         }
         else
-            s_message_len = MESSAGE_MAX; /* too big: dropped below */
+        {
+            s_message_len = MESSAGE_MAX;
+            set_message("Risposta HA troppo grande: riduci le entità importate");
+            atomic_store(&s_dropped, true);
+        }
         if (d->payload_offset + d->data_len >= d->payload_len && s_message_len < MESSAGE_MAX)
         {
             s_message[s_message_len] = 0;
@@ -543,6 +580,8 @@ static void websocket_url(const char *base, char *out, size_t size)
 
 /* ------------------------------------------------------------ configuration */
 
+static bool valid_entity_id(const char *id);
+
 static void load_config(void)
 {
     nvs_handle_t nvs;
@@ -556,23 +595,28 @@ static void load_config(void)
         nvs_close(nvs);
     }
     char path[96];
-    s_count = 0;
-    if (!storage_config_path("casa.json", path, sizeof(path)))
-        return;
-    FILE *f = fopen(path, "rb");
-    if (f == NULL)
-        return;
-    char *json = heap_caps_calloc(1, 16 * 1024, MALLOC_CAP_SPIRAM);
-    size_t length = json ? fread(json, 1, 16 * 1024 - 1, f) : 0;
-    fclose(f);
+    if (!storage_files_acquire()) return;
+    bool has_path = storage_config_path("casa.json", path, sizeof(path));
+    if (has_path && access(path, F_OK) != 0)
+    {
+        char backup[104];
+        snprintf(backup, sizeof(backup), "%s.bak", path);
+        rename(backup, path); /* Recover an interrupted FAT catalogue replacement. */
+    }
+    FILE *f = has_path ? fopen(path, "rb") : NULL;
+    char *json = f ? heap_caps_calloc(1, CONFIG_MAX, MALLOC_CAP_SPIRAM) : NULL;
+    size_t length = json ? fread(json, 1, CONFIG_MAX - 1, f) : 0;
+    if (f) fclose(f);
+    storage_files_release();
     cJSON *root = length ? cJSON_Parse(json) : NULL;
     free(json);
     const cJSON *item;
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_count = 0;
     cJSON_ArrayForEach(item, cJSON_GetObjectItem(root, "favorites"))
     {
         const cJSON *id = cJSON_GetObjectItem(item, "id");
-        if (!cJSON_IsString(id) || s_count >= CASA_ENTITIES)
+        if (!cJSON_IsString(id) || !valid_entity_id(id->valuestring) || s_count >= CASA_ENTITIES)
             continue;
         casa_entity_t *e = &s_entities[s_count++];
         memset(e, 0, sizeof(*e));
@@ -580,6 +624,15 @@ static void load_config(void)
         const cJSON *name = cJSON_GetObjectItem(item, "name"), *area = cJSON_GetObjectItem(item, "area");
         snprintf(e->name, sizeof(e->name), "%s", cJSON_IsString(name) ? name->valuestring : "");
         snprintf(e->area, sizeof(e->area), "%s", cJSON_IsString(area) && area->valuestring[0] ? area->valuestring : "Altro");
+        const cJSON *device_class = cJSON_GetObjectItem(item, "device_class");
+        snprintf(e->device_class, sizeof(e->device_class), "%s", cJSON_IsString(device_class) ? device_class->valuestring : "");
+        const cJSON *dashboard;
+        int dashboard_index = 0;
+        cJSON_ArrayForEach(dashboard, cJSON_GetObjectItem(item, "dashboards"))
+        {
+            if (cJSON_IsString(dashboard) && dashboard_index < 4)
+                snprintf(e->dashboards[dashboard_index++], CASA_NAME, "%s", dashboard->valuestring);
+        }
         e->kind = (uint8_t)casa_kind_of(e->id);
         e->brightness = e->position = -1;
         e->current_temp = e->target_temp = NAN;
@@ -591,6 +644,17 @@ static void load_config(void)
     cJSON_Delete(root);
 }
 
+static bool valid_entity_id(const char *id)
+{
+    if (id == NULL || strlen(id) >= CASA_ID) return false;
+    const char *dot = strchr(id, '.');
+    if (dot == NULL || dot == id || dot[1] == 0) return false;
+    for (const char *p = id; *p; p++)
+        if (p != dot && !((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '_'))
+            return false;
+    return true;
+}
+
 esp_err_t casa_config_store(const char *json, char *error, size_t error_size)
 {
     cJSON *root = cJSON_Parse(json);
@@ -598,49 +662,146 @@ esp_err_t casa_config_store(const char *json, char *error, size_t error_size)
     const cJSON *favorites = cJSON_GetObjectItem(root, "favorites");
     esp_err_t result = ESP_ERR_INVALID_ARG;
     if (!cJSON_IsString(url) || (strncmp(url->valuestring, "http://", 7) && strncmp(url->valuestring, "https://", 8)) ||
-        strlen(url->valuestring) >= URL_MAX)
+        strlen(url->valuestring) >= URL_MAX || strpbrk(url->valuestring, "@?# \r\n\t") != NULL ||
+        !strstr(url->valuestring, "://")[3])
         snprintf(error, error_size, "Indirizzo non valido: usa http://... o https://...");
     else if (!cJSON_IsArray(favorites) || cJSON_GetArraySize(favorites) == 0 || cJSON_GetArraySize(favorites) > CASA_ENTITIES)
         snprintf(error, error_size, "Scegli da 1 a %d entità", CASA_ENTITIES);
+    else if (token && (!cJSON_IsString(token) || strlen(token->valuestring) >= TOKEN_MAX))
+        snprintf(error, error_size, "Token non valido o troppo lungo");
     else
     {
-        /* The token is optional on save: empty keeps the stored one. */
-        nvs_handle_t nvs;
-        if (nvs_open("casa", NVS_READWRITE, &nvs) == ESP_OK)
+        bool valid = true;
+        const cJSON *item;
+        cJSON_ArrayForEach(item, favorites)
         {
-            nvs_set_str(nvs, "url", url->valuestring);
-            if (cJSON_IsString(token) && token->valuestring[0] && strlen(token->valuestring) < TOKEN_MAX)
-                nvs_set_str(nvs, "token", token->valuestring);
-            nvs_commit(nvs);
+            const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(item, "id"));
+            if (!valid_entity_id(id)) { valid = false; break; }
+            for (const cJSON *previous = favorites->child; previous != item; previous = previous->next)
+            {
+                const char *other = cJSON_GetStringValue(cJSON_GetObjectItem(previous, "id"));
+                if (other && strcmp(id, other) == 0) valid = false;
+            }
+            const cJSON *groups = cJSON_GetObjectItem(item, "dashboards");
+            if (groups && (!cJSON_IsArray(groups) || cJSON_GetArraySize(groups) > 4)) valid = false;
+            const cJSON *group;
+            cJSON_ArrayForEach(group, groups)
+                if (!cJSON_IsString(group) || strlen(group->valuestring) >= CASA_NAME) valid = false;
+        }
+        nvs_handle_t nvs;
+        if (!valid)
+            snprintf(error, error_size, "Entità o gruppi non validi (identificativi univoci richiesti)");
+        else if (nvs_open("casa", NVS_READWRITE, &nvs) != ESP_OK)
+            snprintf(error, error_size, "Impossibile aprire la configurazione");
+        else
+        {
+            char previous_url[URL_MAX] = "";
+            size_t length = sizeof(previous_url), token_size = 0;
+            nvs_get_str(nvs, "url", previous_url, &length);
+            bool has_token = nvs_get_str(nvs, "token", NULL, &token_size) == ESP_OK && token_size > 1;
+            bool new_token = cJSON_IsString(token) && token->valuestring[0];
+            if ((!has_token || strcmp(previous_url, url->valuestring)) && !new_token)
+                snprintf(error, error_size, "Inserisci il token per questo indirizzo Home Assistant");
+            else if (!storage_files_acquire())
+                snprintf(error, error_size, "Archiviazione occupata, riprova");
+            else
+            {
+                char path[96], temporary[104];
+                cJSON *file = cJSON_CreateObject();
+                cJSON_AddItemReferenceToObject(file, "favorites", (cJSON *)favorites);
+                char *serialized = cJSON_PrintUnformatted(file);
+                cJSON_Delete(file);
+                bool ok = serialized && strlen(serialized) < CONFIG_MAX && storage_config_path("casa.json", path, sizeof(path));
+                FILE *f = NULL;
+                if (ok)
+                {
+                    snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+                    f = fopen(temporary, "wb");
+                    ok = f != NULL;
+                }
+                if (f)
+                {
+                    ok = fwrite(serialized, 1, strlen(serialized), f) == strlen(serialized);
+                    ok = fflush(f) == 0 && ok;
+                    ok = fsync(fileno(f)) == 0 && ok;
+                    ok = fclose(f) == 0 && ok;
+                    if (ok)
+                    {
+                        /* FatFs cannot rename over an existing destination. Keep a
+                         * recoverable copy until the new catalogue is in place. */
+                        char backup[104];
+                        snprintf(backup, sizeof(backup), "%s.bak", path);
+                        bool previous = access(path, F_OK) == 0;
+                        remove(backup);
+                        if (previous) ok = rename(path, backup) == 0;
+                        if (ok)
+                        {
+                            ok = rename(temporary, path) == 0;
+                            if (!ok && previous) rename(backup, path);
+                            if (ok && previous) remove(backup);
+                        }
+                    }
+                    if (!ok) remove(temporary);
+                }
+                free(serialized);
+                storage_files_release();
+                if (ok)
+                {
+                    result = nvs_set_str(nvs, "url", url->valuestring);
+                    if (result == ESP_OK && new_token) result = nvs_set_str(nvs, "token", token->valuestring);
+                    if (result == ESP_OK) result = nvs_commit(nvs);
+                    if (result != ESP_OK) snprintf(error, error_size, "Salvataggio credenziali non riuscito");
+                }
+                else snprintf(error, error_size, "Salvataggio catalogo non riuscito");
+            }
             nvs_close(nvs);
         }
-        char path[96];
-        cJSON *file = cJSON_CreateObject();
-        cJSON_AddItemReferenceToObject(file, "favorites", (cJSON *)favorites);
-        char *text = cJSON_PrintUnformatted(file);
-        cJSON_Delete(file);
-        FILE *f = text && storage_config_path("casa.json", path, sizeof(path)) ? fopen(path, "wb") : NULL;
-        if (f && fwrite(text, 1, strlen(text), f) == strlen(text))
-            result = ESP_OK;
-        else
-            snprintf(error, error_size, "Nessuna memoria per i file (microSD o flash)");
-        if (f)
-            fclose(f);
-        free(text);
     }
-    if (token && cJSON_IsString(token))
-        memset(token->valuestring, 0, strlen(token->valuestring));
+    if (cJSON_IsString(token)) memset(token->valuestring, 0, strlen(token->valuestring));
     cJSON_Delete(root);
-    if (result == ESP_OK)
-        casa_reconnect();
+    if (result == ESP_OK) casa_reconnect();
     return result;
 }
 
 void casa_reconnect(void)
 {
+    atomic_store(&s_authenticated, false);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_status.connected = false;
+    s_status.revision++;
+    xSemaphoreGive(s_lock);
     atomic_store(&s_reconnect, true);
     if (s_task)
         xTaskNotifyGive(s_task);
+}
+
+esp_err_t casa_config_clear(void)
+{
+    if (!storage_files_acquire()) return ESP_ERR_INVALID_STATE;
+    nvs_handle_t nvs;
+    esp_err_t result = nvs_open("casa", NVS_READWRITE, &nvs);
+    if (result == ESP_OK)
+    {
+        esp_err_t url_error = nvs_erase_key(nvs, "url");
+        esp_err_t token_error = nvs_erase_key(nvs, "token");
+        if (url_error != ESP_OK && url_error != ESP_ERR_NVS_NOT_FOUND) result = url_error;
+        if (token_error != ESP_OK && token_error != ESP_ERR_NVS_NOT_FOUND) result = token_error;
+        if (result == ESP_OK) result = nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    char path[96];
+    if (result == ESP_OK && storage_config_path("casa.json", path, sizeof(path)))
+    {
+        char other[104];
+        remove(path);
+        snprintf(other, sizeof(other), "%s.bak", path);
+        remove(other);
+        snprintf(other, sizeof(other), "%s.tmp", path);
+        remove(other);
+    }
+    storage_files_release();
+    if (result == ESP_OK) casa_reconnect();
+    return result;
 }
 
 /* ------------------------------------------------------------ worker */
@@ -654,6 +815,13 @@ static void stop_client(void)
         s_client = NULL;
     }
     atomic_store(&s_authenticated, false);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_status.connected = false;
+    s_status.revision++;
+    xSemaphoreGive(s_lock);
+    atomic_store(&s_need_auth, false);
+    atomic_store(&s_need_subscribe, false);
+    if (s_commands) xQueueReset(s_commands);
 }
 
 static void casa_task(void *arg)
@@ -663,6 +831,26 @@ static void casa_task(void *arg)
     uint32_t backoff = 2000, next_ping = 0;
     for (;;)
     {
+        if (!atomic_load(&s_enabled))
+        {
+            stop_client();
+            if (online) wifi_release();
+            online = false;
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            s_status.connected = s_status.online = false;
+            s_status.revision++;
+            xSemaphoreGive(s_lock);
+            xSemaphoreTake(s_lifecycle, portMAX_DELAY);
+            if (!atomic_load(&s_enabled))
+            {
+                s_task = NULL;
+                xSemaphoreGive(s_lifecycle);
+                vTaskDelete(NULL);
+                return;
+            }
+            xSemaphoreGive(s_lifecycle);
+            atomic_store(&s_dropped, true);
+        }
         if (!online)
         {
             set_message("Connessione al Wi-Fi...");
@@ -676,7 +864,9 @@ static void casa_task(void *arg)
                 ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10000));
                 continue;
             }
-            casa_web_start(); /* the setup page is always reachable while Casa runs */
+#if !CONFIG_APPKIT_HOSTED
+            casa_web_start(); /* Hosted dashboards are registered by the UI lifecycle. */
+#endif
         }
         if (atomic_exchange(&s_reconnect, false) || atomic_load(&s_dropped))
         {
@@ -762,27 +952,53 @@ static void *psram_malloc(size_t size) { return heap_caps_malloc(size, MALLOC_CA
 
 esp_err_t casa_start(void)
 {
-    s_lock = xSemaphoreCreateMutex();
-    s_entities = heap_caps_calloc(CASA_ENTITIES, sizeof(casa_entity_t), MALLOC_CAP_SPIRAM);
-    s_message = heap_caps_malloc(MESSAGE_MAX + 1, MALLOC_CAP_SPIRAM);
-    s_commands = xQueueCreate(8, COMMAND_MAX);
+    if (s_lifecycle == NULL) s_lifecycle = xSemaphoreCreateMutex();
+    if (s_lifecycle == NULL) return ESP_ERR_NO_MEM;
+    xSemaphoreTake(s_lifecycle, portMAX_DELAY);
+    if (s_lock == NULL) s_lock = xSemaphoreCreateMutex();
+    if (s_entities == NULL) s_entities = heap_caps_calloc(CASA_ENTITIES, sizeof(casa_entity_t), MALLOC_CAP_SPIRAM);
+    if (s_message == NULL) s_message = heap_caps_malloc(MESSAGE_MAX + 1, MALLOC_CAP_SPIRAM);
+    if (s_commands == NULL) s_commands = xQueueCreate(8, COMMAND_MAX);
     if (!s_lock || !s_entities || !s_message || !s_commands)
+    {
+        xSemaphoreGive(s_lifecycle);
         return ESP_ERR_NO_MEM;
+    }
+    atomic_store(&s_enabled, true);
+    if (s_task != NULL)
+    {
+        xTaskNotifyGive(s_task);
+        xSemaphoreGive(s_lifecycle);
+        return ESP_OK;
+    }
     cJSON_Hooks hooks = {.malloc_fn = psram_malloc, .free_fn = free};
     cJSON_InitHooks(&hooks);
-    load_config();
     atomic_store(&s_dropped, true); /* first connection */
     snprintf(s_status.message, sizeof(s_status.message), "Avvio...");
-    if (!sys_task_create(casa_task, "casa", 6144, NULL, 4, tskNO_AFFINITY))
+    if (xTaskCreatePinnedToCore(casa_task, "casa", 6144, NULL, 4, &s_task, tskNO_AFFINITY) != pdPASS)
+    {
+        atomic_store(&s_enabled, false);
+        xSemaphoreGive(s_lifecycle);
         return ESP_ERR_NO_MEM;
-    s_task = xTaskGetHandle("casa");
+    }
+    xSemaphoreGive(s_lifecycle);
     return ESP_OK;
+}
+
+void casa_stop(void)
+{
+    if (s_lifecycle == NULL) return;
+    xSemaphoreTake(s_lifecycle, portMAX_DELAY);
+    atomic_store(&s_enabled, false);
+    if (s_task != NULL) xTaskNotifyGive(s_task);
+    xSemaphoreGive(s_lifecycle);
 }
 
 /* ------------------------------------------------------------ queries and actions */
 
 void casa_status(casa_status_t *out)
 {
+    if (s_lock == NULL) { memset(out, 0, sizeof(*out)); return; }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     *out = s_status;
     xSemaphoreGive(s_lock);
@@ -809,6 +1025,35 @@ bool casa_entity(const char *id, casa_entity_t *out)
 
 bool casa_call(const char *domain, const char *service, const char *entity_id, const char *data_json)
 {
+    casa_entity_t entity;
+    if (!casa_entity(entity_id, &entity) || !entity.available || !entity.known) return false;
+    if (strlen(domain) != strcspn(entity_id, ".") || strncmp(domain, entity_id, strlen(domain))) return false;
+    for (const char *p = service; *p; p++)
+        if (!((*p >= 'a' && *p <= 'z') || *p == '_')) return false;
+    if (service[0] == '\0') return false;
+    const char *allowed;
+    switch (entity.kind)
+    {
+    case CASA_LIGHT:
+    case CASA_SWITCH:
+        allowed = " toggle turn_on turn_off "; break;
+    case CASA_FAN:
+        allowed = " toggle turn_on turn_off set_percentage "; break;
+    case CASA_COVER:
+        allowed = " toggle open_cover close_cover stop_cover set_cover_position "; break;
+    case CASA_CLIMATE:
+        allowed = " turn_on turn_off set_temperature set_hvac_mode "; break;
+    case CASA_MEDIA:
+        allowed = " media_play_pause media_play media_pause media_stop media_next_track media_previous_track volume_set turn_on turn_off "; break;
+    case CASA_SCENE:
+        allowed = " turn_on press "; break;
+    case CASA_LOCK:
+        allowed = " lock unlock "; break;
+    default:
+        return false;
+    }
+    char needle[64];
+    if (snprintf(needle, sizeof(needle), " %s ", service) >= (int)sizeof(needle) || !strstr(allowed, needle)) return false;
     char command[COMMAND_MAX];
     int n = snprintf(command, sizeof(command),
                      "{\"id\":%d,\"type\":\"call_service\",\"domain\":\"%s\",\"service\":\"%s\","

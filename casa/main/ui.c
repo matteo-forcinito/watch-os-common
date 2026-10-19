@@ -12,6 +12,7 @@
  * arrives (no rebuild under the finger).
  */
 #include "casa.h"
+#include "sdkconfig.h"
 
 #include "core/app.h"
 #include "core/clock.h"
@@ -19,13 +20,18 @@
 #include "core/power.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#if CONFIG_APPKIT_HOSTED
+#include "appkit.h"
+#else
 #include "extapp_sdk.h"
+#endif
 #include "hardware/board.h"
 #include "sdkconfig.h"
 #include "ui/ui.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -53,6 +59,10 @@ typedef struct
     int view;
     tile_t tiles[CASA_ENTITIES];
     int tile_count;
+    int group_mode, page;
+    char group[CASA_NAME];
+    char groups[CASA_ENTITIES * 4][CASA_NAME];
+    int group_count;
     uint32_t revision;
     char layout[CASA_ENTITIES * 8]; /* rooms/ids signature: rebuild only when it changes */
     /* detail */
@@ -276,6 +286,56 @@ static void summary_text(casa_ui_t *ui, int count, char *out, size_t size)
             *p = ',';
 }
 
+static void mode_event(lv_event_t *event)
+{
+    s_ui->group_mode = (int)(intptr_t)lv_event_get_user_data(event);
+    s_ui->group[0] = 0;
+    s_ui->page = 0;
+    render(s_ui);
+}
+
+static void group_event(lv_event_t *event)
+{
+    const char *name = lv_event_get_user_data(event);
+    snprintf(s_ui->group, sizeof(s_ui->group), "%s", name);
+    s_ui->page = 0;
+    render(s_ui);
+}
+
+static void page_event(lv_event_t *event)
+{
+    s_ui->page += (int)(intptr_t)lv_event_get_user_data(event);
+    if (s_ui->page < 0) s_ui->page = 0;
+    render(s_ui);
+}
+
+static const char *entity_group(const casa_entity_t *entity, int index)
+{
+    if (s_ui->group_mode == 0) return entity->area[0] ? entity->area : "Senza stanza";
+    if (s_ui->group_mode == 1) return casa_type_name(entity);
+    return entity->dashboards[index][0] ? entity->dashboards[index] : "Senza dashboard";
+}
+
+static bool in_group(const casa_entity_t *entity)
+{
+    int count = s_ui->group_mode == 2 && entity->dashboards[0][0] ? 4 : 1;
+    for (int i = 0; i < count; i++)
+    {
+        if (i && !entity->dashboards[i][0]) break;
+        if (!strcmp(entity_group(entity, i), s_ui->group)) return true;
+    }
+    return false;
+}
+
+static void pager(lv_obj_t *page, int count)
+{
+    char text[48];
+    snprintf(text, sizeof(text), "Pagina %d di %d", s_ui->page + 1, (count + 11) / 12);
+    ui_text(page, text, true);
+    if (s_ui->page) ui_button(page, "Precedenti", C_OFF, page_event, (void *)-1);
+    if ((s_ui->page + 1) * 12 < count) ui_button(page, "Successivi", C_OFF, page_event, (void *)1);
+}
+
 static void home(casa_ui_t *ui)
 {
     const board_info_t *b = board_info();
@@ -304,30 +364,66 @@ static void home(casa_ui_t *ui)
         ui_text(page, "Nessun preferito ancora. Sul PC, nella stessa rete, apri l'indirizzo che trovi in Impostazioni (tocca CASA in alto).", true);
         return;
     }
+    lv_obj_t *modes = plain(page);
+    lv_obj_set_size(modes, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(modes, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(modes, 6, 0);
+    lv_obj_set_style_pad_row(modes, 6, 0);
+    const char *labels[] = {"Stanze", "Tipi", "Dashboard"};
+    for (int i = 0; i < 3; i++)
+    {
+        lv_obj_t *button = ui_button(modes, labels[i], ui->group_mode == i ? C_WARM : C_OFF, mode_event, (void *)(intptr_t)i);
+        lv_obj_set_width(button, LV_SIZE_CONTENT);
+        lv_obj_set_height(button, 48);
+        lv_obj_t *text = lv_obj_get_child(button, 0);
+        lv_obj_set_style_text_font(text, UI_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(text, ui_color(ui->group_mode == i ? C_BG : C_INK), 0);
+    }
+    if (!ui->group[0])
+    {
+        ui->group_count = 0;
+        for (int i = 0; i < count; i++)
+        {
+            int groups = ui->group_mode == 2 && ui->list[i].dashboards[0][0] ? 4 : 1;
+            for (int j = 0; j < groups; j++)
+            {
+                if (j && !ui->list[i].dashboards[j][0]) break;
+                const char *name = entity_group(&ui->list[i], j);
+                bool found = false;
+                for (int k = 0; k < ui->group_count; k++)
+                    if (!strcmp(ui->groups[k], name)) found = true;
+                if (!found && ui->group_count < CASA_ENTITIES * 4)
+                    snprintf(ui->groups[ui->group_count++], CASA_NAME, "%s", name);
+            }
+        }
+        for (int i = ui->page * 12; i < ui->group_count && i < (ui->page + 1) * 12; i++)
+            ui_row(page, LV_SYMBOL_HOME, C_WARM, ui->groups[i], LV_SYMBOL_RIGHT, group_event, ui->groups[i]);
+        if (ui->group_count > 12) pager(page, ui->group_count);
+        return;
+    }
+    ui_row(page, LV_SYMBOL_LEFT, C_WARM, ui->group, "Tutti i gruppi", group_event, "");
     int inner = b->round ? w * 78 / 100 : w - 28;
     int tile_w = (inner - 10) / 2;
-    lv_obj_t *grid = NULL;
-    const char *area = NULL;
+    lv_obj_t *grid = plain(page);
+    lv_obj_set_size(grid, inner, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(grid, 10, 0);
+    lv_obj_set_style_pad_row(grid, 10, 0);
+    int matched = 0;
     for (int i = 0; i < count; i++)
     {
-        const casa_entity_t *e = &ui->list[i];
-        if (area == NULL || strcmp(area, e->area) != 0)
-        {
-            area = e->area;
-            lv_obj_t *section = label(page, UI_FONT_SMALL, C_WARM, area);
-            lv_obj_set_style_text_letter_space(section, 2, 0);
-            lv_obj_set_style_pad_top(section, 8, 0);
-            grid = plain(page);
-            lv_obj_set_size(grid, inner, LV_SIZE_CONTENT);
-            lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-            lv_obj_set_style_pad_column(grid, 10, 0);
-            lv_obj_set_style_pad_row(grid, 10, 0);
-        }
-        tile_t *t = &ui->tiles[ui->tile_count++];
-        snprintf(t->id, sizeof(t->id), "%s", e->id);
-        make_tile(ui, grid, t, tile_w);
-        update_tile(t, e);
+        const casa_entity_t *entity = &ui->list[i];
+        if (!in_group(entity)) continue;
+        int index = matched++;
+        if (index < ui->page * 12 || index >= (ui->page + 1) * 12) continue;
+        tile_t *tile = &ui->tiles[ui->tile_count++];
+        snprintf(tile->id, sizeof(tile->id), "%s", entity->id);
+        make_tile(ui, grid, tile, tile_w);
+        update_tile(tile, entity);
     }
+    if (!matched) ui_text(page, "Nessuna entità in questo gruppo", true);
+    if (matched > 12) pager(page, matched);
+
 }
 
 static void home_update(casa_ui_t *ui)
@@ -336,8 +432,9 @@ static void home_update(casa_ui_t *ui)
     char text[96];
     summary_text(ui, count, text, sizeof(text));
     lv_label_set_text(ui->summary, text);
-    lv_label_set_text(ui->status, ui->status_now.connected ? "" : ui->status_now.message);
-    lv_obj_set_hidden(ui->status, ui->status_now.connected);
+    bool show_status = !ui->status_now.connected || strncmp(ui->status_now.message, "Home Assistant:", 15) == 0;
+    lv_label_set_text(ui->status, show_status ? ui->status_now.message : "");
+    lv_obj_set_hidden(ui->status, !show_status);
     for (int t = 0; t < ui->tile_count; t++)
         for (int i = 0; i < count; i++)
             if (strcmp(ui->tiles[t].id, ui->list[i].id) == 0)
@@ -668,25 +765,25 @@ static void settings_action(lv_event_t *e)
         ui_toast("Ricollego");
     }
     else
+#if CONFIG_APPKIT_HOSTED
+        app_back();
+#else
         extapp_return_to_launcher();
+#endif
 }
 
 static void settings(casa_ui_t *ui)
 {
     lv_obj_t *page = ui_page(ui->content, "Impostazioni");
-    ui_text(page, "Sul PC, nella stessa rete Wi-Fi, apri nel browser http://", true);
-    char text[80];
-    snprintf(text, sizeof(text), "%s", casa_web_address()); /* the address alone fits one line */
-    lv_obj_t *address = ui_text(page, text, false);
-    lv_obj_set_style_text_font(address, ui_font_headline, 0);
-    lv_obj_set_style_text_color(address, ui_color(C_WARM), 0);
-    ui_text(page, "Codice:", true);
-    const char *code = casa_web_code();
-    snprintf(text, sizeof(text), "%.3s %.3s", code, code + 3);
-    lv_obj_t *code_label = ui_text(page, code[0] ? text : "...", false);
-    lv_obj_set_style_text_font(code_label, ui_font_big, 0);
+#if CONFIG_APPKIT_HOSTED
+    appkit_dashboard_page(page, ui_color(C_WARM));
+    ui_text(page, "Configura Home Assistant dal PC, anche con l'indirizzo remoto Nabu Casa. Tieni premuta l'ora sulla homepage per aprire Casa.", true);
+#else
+    ui_text(page, "Apri dal PC http://", true);
+    ui_text(page, casa_web_address(), false);
+    ui_text(page, casa_web_code(), false);
+#endif
     ui->status = ui_text(page, ui->status_now.message, true);
-    ui_text(page, "Lì inserisci l'indirizzo di Home Assistant e un token a lunga durata, poi scegli i preferiti stanza per stanza.", true);
     ui_button(page, "Ricollega", 0x2A2E38, settings_action, (void *)1);
     ui_button(page, "Esci", 0x2A2E38, settings_action, (void *)2);
 }
@@ -730,6 +827,9 @@ static void layout_signature(casa_ui_t *ui, char *out, size_t size)
             hash = (hash ^ (uint8_t)*p) * 16777619u;
         for (const char *p = ui->list[i].area; *p; p++)
             hash = (hash ^ (uint8_t)*p) * 16777619u;
+        for (const char *p = ui->list[i].device_class; *p; p++) hash = (hash ^ (uint8_t)*p) * 16777619u;
+        for (int group = 0; group < 4; group++)
+            for (const char *p = ui->list[i].dashboards[group]; *p; p++) hash = (hash ^ (uint8_t)*p) * 16777619u;
     }
     snprintf(out, size, "%d:%08lx", count, (unsigned long)hash);
 }
@@ -743,9 +843,9 @@ static void tick(lv_timer_t *timer)
     casa_status(&ui->status_now);
     if (ui->status_now.revision == ui->revision)
         return;
-    ui->revision = ui->status_now.revision;
     if (power_screen() == POWER_SCREEN_OFF || lv_screen_active() != ui->screen)
         return;
+    ui->revision = ui->status_now.revision;
     if (ui->view == HOME)
     {
         char layout[32];
@@ -767,24 +867,42 @@ static void tick(lv_timer_t *timer)
 bool casa_ui_back(void)
 {
     casa_ui_t *ui = s_ui;
-    if (ui->view == HOME)
-        extapp_return_to_launcher();
-    else
+    if (ui == NULL) return false;
+    if (ui->view == HOME && !ui->group[0])
     {
-        if (ui->view == DETAIL)
-            send_dial(ui);
-        ui->view = HOME;
-        render(ui);
+#if CONFIG_APPKIT_HOSTED
+        return false;
+#else
+        extapp_return_to_launcher();
+        return true;
+#endif
     }
+    if (ui->view == DETAIL) send_dial(ui);
+    else if (ui->view == HOME) { ui->group[0] = 0; ui->page = 0; }
+    ui->view = HOME;
+    render(ui);
     return true;
+}
+
+void casa_ui_destroy(void)
+{
+    if (s_ui == NULL) return;
+    if (s_ui->timer) lv_timer_delete(s_ui->timer);
+    free(s_ui->list);
+    free(s_ui);
+    s_ui = NULL;
 }
 
 void casa_ui_create(lv_obj_t *screen)
 {
     casa_ui_t *ui = heap_caps_calloc(1, sizeof(*ui), MALLOC_CAP_SPIRAM);
-    ESP_ERROR_CHECK(ui == NULL ? ESP_ERR_NO_MEM : ESP_OK);
-    ui->list = heap_caps_calloc(CASA_ENTITIES, sizeof(casa_entity_t), MALLOC_CAP_SPIRAM);
-    ESP_ERROR_CHECK(ui->list == NULL ? ESP_ERR_NO_MEM : ESP_OK);
+    if (ui != NULL) ui->list = heap_caps_calloc(CASA_ENTITIES, sizeof(casa_entity_t), MALLOC_CAP_SPIRAM);
+    if (ui == NULL || ui->list == NULL)
+    {
+        free(ui);
+        ui_text(ui_page(screen, "Casa"), "Memoria insufficiente", true);
+        return;
+    }
     s_ui = ui;
     ui->screen = screen;
     ui->pending = INT32_MIN;
@@ -795,7 +913,7 @@ void casa_ui_create(lv_obj_t *screen)
     ui->timer = lv_timer_create(tick, 120, ui);
 }
 
-#if CONFIG_WATCH_DEV_CONSOLE
+#if CONFIG_WATCH_DEV_CONSOLE && !CONFIG_APPKIT_HOSTED
 /* QA only: "view home|settings", "detail <entity_id>". */
 #include "core/devcon.h"
 

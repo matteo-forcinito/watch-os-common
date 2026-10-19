@@ -8,6 +8,10 @@ if(CONFIG_WATCH_ECOS_PAIRING)
     list(APPEND INTERNAL_SRCS "ecos/ecos_app.c")
 endif()
 if(CONFIG_APPKIT_HOSTED)
+    set(CASA "${CMAKE_CURRENT_LIST_DIR}/../../casa/main")
+    list(APPEND INTERNAL_SRCS "${CASA}/app.c" "${CASA}/ha.c" "${CASA}/ui.c" "${CASA}/web_hosted.c")
+    list(APPEND INTERNAL_INCLUDES "${CASA}")
+    list(APPEND INTERNAL_PAGES "${CASA}/casa_dashboard.html")
     set(PIENO "${CMAKE_CURRENT_LIST_DIR}/../../pieno/main")
     list(APPEND INTERNAL_SRCS "${PIENO}/app.c" "${PIENO}/feed.c" "${PIENO}/fuel.c" "${PIENO}/ui.c" "${PIENO}/web.c")
     list(APPEND INTERNAL_INCLUDES "${PIENO}")
@@ -90,6 +94,8 @@ idf_component_register(
         appkit
         esp_http_client
         esp_http_server
+        espressif__esp_websocket_client
+        espressif__mdns
         mbedtls
         cjson
         nvs_flash

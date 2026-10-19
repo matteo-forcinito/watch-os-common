@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Casa · Home Assistant</title>
+<link rel="stylesheet" href="/kit.css"><script src="/kit.js"></script>
+<style>
+:root{--muted:var(--dim);--accent:#ffd28b;--accent-ink:#231908;--positive:#88e0b4;--negative:#ffacac}
+@media(prefers-color-scheme:light){:root:not([data-theme=dark]){--accent:#965800;--accent-ink:#fff;--positive:#177749;--negative:#af2525}}
+:root[data-theme=light]{--accent:#965800;--accent-ink:#fff;--positive:#177749;--negative:#af2525}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,sans-serif}
+button,input,select{font:inherit}button{cursor:pointer;border:1px solid var(--line);border-radius:12px;padding:10px 16px;background:var(--panel2);color:var(--ink)}button:disabled{opacity:.4;cursor:default}button.active,.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+input,select{background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--ink);padding:10px;max-width:100%}input[type=range]{width:100%;padding:8px 0;accent-color:var(--accent)}input[type=checkbox]{accent-color:var(--accent);width:18px;height:18px}
+a{color:var(--accent)}main{max-width:1380px;margin:auto;padding:32px 24px 80px}header,.row,.tabs{display:flex;gap:12px;align-items:center;flex-wrap:wrap}header{justify-content:space-between;margin-bottom:24px}h1{margin:0;font-size:34px;letter-spacing:-1px}h2{font-size:18px}p{margin:6px 0 14px}.dim{color:var(--muted)}.badge{border:1px solid var(--line);border-radius:30px;padding:7px 12px;font-size:13px}.good{color:var(--positive)}.bad{color:var(--negative)}
+.panel{padding:22px;background:var(--panel);border:1px solid var(--line);border-radius:20px;margin-bottom:20px}.hidden{display:none!important}.toolbar{display:grid;grid-template-columns:1fr minmax(160px,240px) minmax(160px,280px);gap:12px;margin-bottom:24px}.tabs{margin-bottom:18px}.section-title{font-size:19px;margin:28px 0 12px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}.entity{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;min-width:0}.entity.on{border-color:color-mix(in srgb,var(--accent) 50%,var(--line));background:color-mix(in srgb,var(--accent) 10%,var(--panel))}.entity h3{font-size:15px;margin:0 0 6px;overflow-wrap:anywhere}.value{font-size:23px;margin:8px 0;min-height:34px}.entity .dim{font-size:12px;overflow-wrap:anywhere}.entity .row{margin-top:14px}.entity button{padding:7px 11px}.empty{padding:48px 20px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:18px}
+label.field{display:block;margin-bottom:16px}label.field input{display:block;width:100%;margin-top:5px}.setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.picker{max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:12px;margin:14px 0}.pick-row{display:flex;align-items:center;gap:12px;padding:11px;border-bottom:1px solid var(--line);cursor:pointer}.pick-row span{flex:1}.pick-row small{display:block;color:var(--muted)}.note{font-size:13px;color:var(--muted)}#import-message{white-space:pre-line}#feedback{min-height:24px}details{margin:16px 0}summary{cursor:pointer;color:var(--accent)}
+@media(max-width:760px){main{padding:20px 14px 60px}.toolbar,.setup-grid{grid-template-columns:1fr}h1{font-size:28px}.panel{padding:16px}.grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}
+</style>
+</head>
+<body><main>
+<header><div><h1>Casa</h1><div class="dim">Home Assistant sul pannello e sul PC</div></div><div class="row"><span id="status" class="badge">Collegamento al pannello…</span><a id="original" target="_blank" rel="noopener noreferrer" class="hidden">Apri Home Assistant ↗</a><button id="setup-toggle">Configura</button></div></header>
+<div id="feedback" role="status" aria-live="polite"></div>
+<section id="setup" class="panel hidden">
+<h2>Collega Home Assistant</h2><p class="dim">Il pannello si collega direttamente al tuo server, anche quando è su un’altra rete tramite Nabu Casa.</p>
+<div class="setup-grid"><div>
+<label class="field">Indirizzo Home Assistant<input id="ha-url" type="url" placeholder="https://….ui.nabu.casa" autocomplete="url"></label>
+<label class="field">Token di accesso a lunga durata<input id="ha-token" type="password" autocomplete="off" placeholder="Incolla il token qui"></label>
+<p class="note">Crealo dal tuo profilo Home Assistant → Sicurezza → Token di accesso a lunga durata. Usa l’URL di accesso remoto alla tua istanza, non quello del portale account Nabu Casa.</p>
+<div class="row"><button id="import" class="primary">Leggi entità, stanze e dashboard</button><button id="disconnect">Scollega</button></div>
+<p id="import-message" class="note" role="status"></p>
+</div><div>
+<h2>Catalogo sul pannello</h2><p class="note">Scegli fino a <span id="limit">256</span> entità. Stati e comandi funzionano anche dopo aver chiuso il browser. Il token viene conservato sul dispositivo e non viene restituito dalla dashboard.</p>
+<div class="row"><input id="pick-filter" placeholder="Cerca nel catalogo" aria-label="Cerca entità da importare"><button id="select-visible">Seleziona risultati</button><button id="clear-selection">Deseleziona risultati</button></div>
+<div id="picker" class="picker"></div><div class="row"><strong id="selected-count">0 selezionate</strong><button id="save" class="primary">Salva sul pannello</button></div>
+</div></div>
+<details><summary>Come vengono importate le dashboard?</summary><p class="note">Vengono ricavati i gruppi dalle entità e dalle aree esplicite nelle viste Home Assistant. Schede personalizzate, modelli e viste generate automaticamente possono richiedere la dashboard originale. Per ogni entità vengono conservati fino a quattro gruppi dashboard. Le modifiche a nomi, stanze e composizione si aggiornano ripetendo l’importazione.</p></details>
+</section>
+<nav class="tabs" aria-label="Raggruppamento"><button class="active" data-mode="area">Stanze</button><button data-mode="category">Tipologie</button><button data-mode="dashboards">Dashboard</button><button data-mode="all">Tutte</button></nav>
+<div class="toolbar"><input id="search" type="search" placeholder="Cerca un dispositivo o un sensore…" aria-label="Cerca nel pannello"><select id="group" aria-label="Gruppo"><option value="">Tutti i gruppi</option></select><select id="availability" aria-label="Disponibilità"><option value="all">Tutte le entità</option><option value="available">Disponibili</option><option value="unavailable">Non disponibili</option></select></div>
+<div id="cards"><div class="empty">Apri Configura per collegare la tua casa.</div></div>
+<p class="note">Accesso rapido sul dispositivo: tieni premuta l’ora della homepage.</p>
+</main>
+<script>
+'use strict';
+const $ = selector => document.querySelector(selector);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const SUPPORTED = new Set(['light','switch','input_boolean','automation','fan','cover','climate','media_player','scene','script','button','input_button','lock','sensor','binary_sensor','weather','person','device_tracker']);
+let state = {connected:false,entities:[]}, catalog = [], selected = new Map(), limit = 256, mode = localStorage.casaGroupMode || 'area';
+let dragging = false, loadingCatalog = false, configurationLoaded = false;
+const clip = (value, bytes = 39) => { const chars = Array.from(String(value || '')); while (new TextEncoder().encode(chars.join('')).length > bytes) chars.pop(); return chars.join(''); };
+function feedback(text, bad = false) { $('#feedback').textContent = text; $('#feedback').className = bad ? 'bad' : 'good'; }
+function category(entity) {
+  const domain = entity.id.split('.')[0], dc = entity.device_class;
+  if (domain === 'sensor' || domain === 'binary_sensor' || domain === 'weather') return ({temperature:'Termometri',humidity:'Umidità',power:'Energia',energy:'Energia'})[dc] || 'Sensori';
+  return ({light:'Luci',switch:dc === 'outlet' ? 'Prese' : 'Interruttori',input_boolean:'Interruttori',automation:'Interruttori',climate:'Termostati',cover:'Tapparelle',fan:'Ventilazione',media_player:'Multimedia',scene:'Scene e azioni',script:'Scene e azioni',button:'Scene e azioni',input_button:'Scene e azioni',lock:'Serrature',person:'Presenze',device_tracker:'Presenze'})[domain] || 'Altro';
+}
+function groups(entity) {
+  if (mode === 'area') return [entity.area || 'Senza stanza'];
+  if (mode === 'category') return [entity.category || category(entity)];
+  if (mode === 'dashboards') return entity.dashboards?.length ? entity.dashboards : ['Senza dashboard'];
+  return ['Tutte le entità'];
+}
+function matches(entity, query) { return !query || [entity.id,entity.name,entity.area,entity.category,...(entity.dashboards || [])].join(' ').toLocaleLowerCase('it').includes(query); }
+function render() {
+  if (dragging || $('#cards').contains(document.activeElement) && document.activeElement.matches('input,select')) return;
+  document.querySelectorAll('[data-mode]').forEach(button => button.classList.toggle('active', button.dataset.mode === mode));
+  const previous = $('#group').value, names = [...new Set(state.entities.flatMap(groups))];
+  $('#group').replaceChildren(new Option('Tutti i gruppi',''), ...names.map(name => new Option(name,name)));
+  $('#group').value = names.includes(previous) ? previous : '';
+  const chosenGroup = $('#group').value, query = $('#search').value.trim().toLocaleLowerCase('it'), availability = $('#availability').value;
+  const entities = state.entities.filter(entity => matches(entity,query) && (availability === 'all' || (availability === 'available') === (entity.known && entity.available)));
+  const sections = new Map();
+  entities.forEach(entity => groups(entity).filter(group => !chosenGroup || group === chosenGroup).forEach(group => {
+    if (!sections.has(group)) sections.set(group, []);
+    sections.get(group).push(entity);
+  }));
+  $('#cards').replaceChildren();
+  if (!sections.size) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = state.entities.length ? 'Nessuna entità corrisponde ai filtri.' : 'Nessuna entità importata. Apri Configura per iniziare.'; $('#cards').append(empty); }
+  for (const [group, items] of sections) {
+    const heading = document.createElement('h2'); heading.className = 'section-title'; heading.textContent = `${group} · ${items.length}`;
+    const grid = document.createElement('div'); grid.className = 'grid'; items.forEach(entity => grid.append(entityCard(entity)));
+    $('#cards').append(heading,grid);
+  }
+}
+async function command(entity, service, data) {
+  if (!state.connected || !entity.known || !entity.available) return feedback('Entità non disponibile: attendo Home Assistant.',true);
+  if (service === 'unlock' && !confirm(`Aprire la serratura «${entity.name || entity.id}»?`)) return;
+  try {
+    const result = await kit.api('/api/action',{body:{id:entity.id,...(service ? {service} : {}),...(data ? {data} : {})}});
+    feedback(result.message || (result.ok ? 'Comando inviato' : 'Comando non inviato'), !result.ok);
+  } catch (error) { feedback(error.message,true); }
+}
+function entityCard(entity) {
+  const card = document.createElement('article'); card.className = 'entity' + (entity.on ? ' on' : '');
+  card.innerHTML = `<h3>${esc(entity.name || entity.id)}</h3><div class="dim">${esc(entity.area)} · ${esc(entity.category || category(entity))}</div><div class="value">${esc(entity.display || entity.state || 'In attesa')}</div><div class="dim">${esc(entity.id)}</div>`;
+  const controls = document.createElement('div'); controls.className = 'row';
+  const enabled = state.connected && entity.known && entity.available;
+  const button = (label,service,data) => { const element = document.createElement('button'); element.textContent = label; element.disabled = !enabled; element.onclick = () => command(entity,service,data); controls.append(element); };
+  const slider = (label,value,min,max,step,service,key,scale=1) => {
+    const wrap = document.createElement('label'); wrap.className = 'field'; wrap.textContent = `${label}: ${value ?? '—'}`;
+    const input = document.createElement('input'); input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = value ?? min; input.disabled = !enabled;
+    input.oninput = () => { wrap.firstChild.textContent = `${label}: ${input.value}`; };
+    input.onchange = async () => { await command(entity,service,{[key]:Number(input.value)*scale}); input.blur(); };
+    wrap.append(input); card.append(wrap);
+  };
+  const domain = entity.id.split('.')[0];
+  if (['light','switch','input_boolean','automation','fan'].includes(domain)) button(entity.on ? 'Spegni' : 'Accendi');
+  if (domain === 'light' && entity.supports_brightness) slider('Luminosità %',entity.brightness,1,100,1,'turn_on','brightness_pct');
+  if (domain === 'fan' && entity.position >= 0) slider('Velocità %',entity.position,0,100,1,'set_percentage','percentage');
+  if (domain === 'climate') {
+    if (entity.target_temp != null) slider('Temperatura',entity.target_temp,entity.min_temp ?? 7,entity.max_temp ?? 35,entity.temp_step || .5,'set_temperature','temperature');
+    if (entity.hvac_modes?.length) {
+      const select = document.createElement('select'); select.setAttribute('aria-label','Modalità termostato'); select.disabled = !enabled;
+      entity.hvac_modes.forEach(value => select.add(new Option(value,value))); select.value = entity.state;
+      select.onchange = async () => { await command(entity,'set_hvac_mode',{hvac_mode:select.value}); select.blur(); }; controls.append(select);
+    }
+  }
+  if (domain === 'cover') { button('Apri','open_cover'); button('Ferma','stop_cover'); button('Chiudi','close_cover'); if (entity.position >= 0) slider('Apertura %',entity.position,0,100,1,'set_cover_position','position'); }
+  if (domain === 'media_player') { button('▶ / Ⅱ','media_play_pause'); button('Avanti','media_next_track'); if (entity.position >= 0) slider('Volume %',entity.position,0,100,1,'volume_set','volume_level',.01); }
+  if (['scene','script','button','input_button'].includes(domain)) button('Esegui');
+  if (domain === 'lock') button(entity.state === 'locked' ? 'Apri serratura' : 'Chiudi a chiave',entity.state === 'locked' ? 'unlock' : 'lock');
+  if (controls.children.length) card.append(controls);
+  return card;
+}
+async function loadState() {
+  state = await kit.api('/api/state'); state.entities ||= []; limit = state.limit || 256; $('#limit').textContent = limit;
+  $('#status').textContent = state.connected ? '● Home Assistant collegato' : state.message || 'Home Assistant non collegato';
+  $('#status').className = 'badge ' + (state.connected ? 'good' : '');
+  if (state.url && /^https?:\/\//.test(state.url)) { $('#original').href = state.url; $('#original').classList.remove('hidden'); }
+  else { $('#original').removeAttribute('href'); $('#original').classList.add('hidden'); }
+  if (state.message?.startsWith('Home Assistant:')) feedback(state.message,true);
+  if (!configurationLoaded) {
+    const configuration = await kit.api('/api/config'); configurationLoaded = true;
+    $('#ha-url').value = configuration.url || ''; selected = new Map((configuration.favorites || []).map(entity => [entity.id,entity]));
+    catalog = [...selected.values()]; drawPicker();
+    if (configuration.has_token) $('#ha-token').placeholder = 'Token già salvato: reinseriscilo per importare di nuovo';
+    if (!configuration.has_token) $('#setup').classList.remove('hidden');
+  }
+  render();
+}
+class HomeAssistantImport {
+  constructor(url,token) { this.url = url; this.token = token; this.pending = new Map(); this.id = 0; }
+  connect() {
+    return new Promise((resolve,reject) => {
+      const timeout = setTimeout(() => { reject(new Error('Home Assistant non risponde. Verifica URL remoto e accesso Nabu Casa.')); this.close(); },20000);
+      const ws = this.socket = new WebSocket(this.url.replace(/^http/,'ws').replace(/\/+$/,'') + '/api/websocket');
+      ws.onerror = () => reject(new Error('Connessione a Home Assistant non riuscita. Verifica URL e certificato.'));
+      ws.onclose = () => { clearTimeout(timeout); reject(new Error('Collegamento Home Assistant chiuso')); this.pending.forEach(item => { clearTimeout(item.timeout); item.reject(new Error('Collegamento Home Assistant chiuso')); }); this.pending.clear(); };
+      ws.onmessage = event => {
+        let message; try { message = JSON.parse(event.data); } catch { return; }
+        if (message.type === 'auth_required') ws.send(JSON.stringify({type:'auth',access_token:this.token}));
+        else if (message.type === 'auth_invalid') { reject(new Error('Token rifiutato da Home Assistant')); this.close(); }
+        else if (message.type === 'auth_ok') { clearTimeout(timeout); resolve(); }
+        else if (message.type === 'result' && this.pending.has(message.id)) {
+          const item = this.pending.get(message.id); this.pending.delete(message.id); clearTimeout(item.timeout);
+          message.success ? item.resolve(message.result) : item.reject(new Error(message.error?.message || 'Comando Home Assistant non disponibile'));
+        }
+      };
+    });
+  }
+  call(type,parameters={}) {
+    return new Promise((resolve,reject) => {
+      const id = ++this.id, timeout = setTimeout(() => { this.pending.delete(id); reject(new Error(`Nessuna risposta: ${type}`)); },20000);
+      this.pending.set(id,{resolve,reject,timeout}); this.socket.send(JSON.stringify({id,type,...parameters}));
+    });
+  }
+  close() { this.token = ''; if (this.socket) this.socket.close(); }
+}
+function collectReferences(value, known, areaEntities, output) {
+  if (typeof value === 'string') { if (known.has(value)) output.add(value); return; }
+  if (Array.isArray(value)) { value.forEach(item => collectReferences(item,known,areaEntities,output)); return; }
+  if (!value || typeof value !== 'object') return;
+  for (const [key,item] of Object.entries(value)) {
+    if ((key === 'area' || key === 'area_id') && typeof item === 'string') (areaEntities.get(item) || []).forEach(id => output.add(id));
+    collectReferences(item,known,areaEntities,output);
+  }
+}
+async function importCatalog() {
+  if (loadingCatalog) return;
+  let url; try { url = new URL($('#ha-url').value.trim()); } catch { return feedback('Inserisci un indirizzo Home Assistant valido.',true); }
+  if (!['http:','https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return feedback('Usa l’indirizzo http:// o https:// della tua istanza.',true);
+  const token = $('#ha-token').value.trim(); if (!token) return feedback('Per leggere il catalogo inserisci il token Home Assistant.',true);
+  const client = new HomeAssistantImport(url.href.replace(/\/+$/,''),token), warnings = [];
+  loadingCatalog = true; $('#import').disabled = true; $('#import-message').textContent = 'Collegamento a Home Assistant…';
+  try {
+    await client.connect();
+    const states = await client.call('get_states');
+    const optional = async (type,label) => { try { return await client.call(type); } catch { warnings.push(`${label} non accessibili con questo account.`); return []; } };
+    const [areas,registry,devices,dashboards] = await Promise.all([optional('config/area_registry/list','Stanze'),optional('config/entity_registry/list','Registro entità'),optional('config/device_registry/list','Registro dispositivi'),optional('lovelace/dashboards/list','Dashboard')]);
+    const areaNames = new Map(areas.map(area => [area.area_id,area.name])), deviceAreas = new Map(devices.map(device => [device.id,device.area_id]));
+    const entityAreas = new Map(registry.map(entity => [entity.entity_id,entity.area_id || deviceAreas.get(entity.device_id) || '']));
+    catalog = states.filter(entity => SUPPORTED.has(entity.entity_id.split('.')[0])).map(entity => ({id:entity.entity_id,name:clip(entity.attributes?.friendly_name || entity.entity_id),area:clip(areaNames.get(entityAreas.get(entity.entity_id)) || 'Senza stanza'),device_class:entity.attributes?.device_class || '',dashboards:[],state:entity.state,unit:entity.attributes?.unit_of_measurement || ''}));
+    const byId = new Map(catalog.map(entity => [entity.id,entity])), known = new Set(byId.keys()), areaEntities = new Map();
+    catalog.forEach(entity => { for (const area of [entityAreas.get(entity.id),entity.area]) { if (!area) continue; if (!areaEntities.has(area)) areaEntities.set(area,[]); areaEntities.get(area).push(entity.id); } });
+    let unreadable = 0, dynamic = 0, excess = 0; const labels = new Set();
+    const boards = [{title:'Panoramica',url_path:null},...dashboards];
+    for (const board of boards) {
+      $('#import-message').textContent = `Leggo dashboard: ${board.title || board.url_path || 'Panoramica'}…`;
+      let configuration; try { configuration = await client.call('lovelace/config',board.url_path ? {url_path:board.url_path} : {}); } catch { unreadable++; continue; }
+      if (!configuration.views?.length || configuration.strategy) dynamic++;
+      for (const [index,view] of (configuration.views || []).entries()) {
+        if (view.strategy) dynamic++;
+        let name = clip(`${board.title || board.url_path || 'Panoramica'} / ${view.title || view.path || index + 1}`), suffix = 1;
+        while (labels.has(name)) name = clip(`${clip(board.title || 'Dashboard',20)} / ${index + 1} · ${suffix++}`);
+        labels.add(name); const references = new Set(); collectReferences(view,known,areaEntities,references);
+        references.forEach(id => { const entity = byId.get(id); if (entity.dashboards.length < 4) entity.dashboards.push(name); else excess++; });
+      }
+    }
+    if (unreadable) warnings.push(`${unreadable} dashboard non leggibili tramite API.`);
+    if (dynamic) warnings.push(`${dynamic} viste generate automaticamente: usa Stanze/Tipologie o apri Home Assistant.`);
+    if (excess) warnings.push('Alcune entità compaiono in più di quattro viste: vengono conservate le prime quattro.');
+    catalog.sort((a,b) => a.area.localeCompare(b.area,'it') || a.name.localeCompare(b.name,'it'));
+    selected = new Map([...selected.keys()].filter(id => byId.has(id)).map(id => [id,byId.get(id)]));
+    if (!selected.size) catalog.slice(0,limit).forEach(entity => selected.set(entity.id,entity));
+    $('#import-message').textContent = `${catalog.length} entità trovate. ${selected.size} selezionate per il pannello.\n${warnings.join('\n')}`;
+    drawPicker();
+  } catch (error) { $('#import-message').textContent = error.message; feedback(error.message,true); }
+  finally { client.close(); loadingCatalog = false; $('#import').disabled = false; }
+}
+function pickerResults() { const query = $('#pick-filter').value.trim().toLocaleLowerCase('it'); return catalog.filter(entity => matches(entity,query)); }
+function drawPicker() {
+  $('#selected-count').textContent = `${selected.size} / ${limit} selezionate`;
+  $('#picker').replaceChildren();
+  pickerResults().forEach(entity => {
+    const label = document.createElement('label'); label.className = 'pick-row';
+    const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selected.has(entity.id);
+    const text = document.createElement('span'); text.textContent = entity.name || entity.id;
+    const hint = document.createElement('small'); hint.textContent = `${entity.area || 'Senza stanza'} · ${entity.id}`; text.append(hint);
+    check.onchange = () => { if (check.checked) { if (selected.size >= limit) { check.checked = false; return feedback(`Il pannello può importare fino a ${limit} entità.`,true); } selected.set(entity.id,entity); } else selected.delete(entity.id); $('#selected-count').textContent = `${selected.size} / ${limit} selezionate`; };
+    label.append(check,text); $('#picker').append(label);
+  });
+}
+$('#import').onclick = importCatalog;
+$('#disconnect').onclick = async () => {
+  if (!confirm('Rimuovere dal pannello il collegamento e le credenziali Home Assistant?')) return;
+  try { const result = await kit.api('/api/disconnect',{method:'POST'}); if (!result.ok) throw new Error('Impossibile scollegare ora, riprova'); selected.clear(); catalog = []; $('#ha-token').value = ''; $('#ha-url').value = ''; configurationLoaded = false; drawPicker(); feedback('Collegamento rimosso dal pannello.'); }
+  catch (error) { feedback(error.message,true); }
+};
+$('#setup-toggle').onclick = () => $('#setup').classList.toggle('hidden');
+$('#pick-filter').oninput = drawPicker;
+$('#select-visible').onclick = () => { const results = pickerResults(); results.forEach(entity => { if (selected.size < limit) selected.set(entity.id,entity); }); drawPicker(); if (results.some(entity => !selected.has(entity.id))) feedback(`Raggiunto il limite di ${limit} entità sul pannello.`,true); };
+$('#clear-selection').onclick = () => { pickerResults().forEach(entity => selected.delete(entity.id)); drawPicker(); };
+$('#save').onclick = async () => {
+  if (!selected.size) return feedback('Seleziona almeno un’entità.',true);
+  const favorites = [...selected.values()].map(entity => ({id:entity.id,name:clip(entity.name),area:clip(entity.area),device_class:entity.device_class || '',dashboards:(entity.dashboards || []).map(name => clip(name)).slice(0,4)}));
+  $('#save').disabled = true;
+  try { const result = await kit.api('/api/config',{body:{url:$('#ha-url').value.trim().replace(/\/+$/,''),token:$('#ha-token').value.trim(),favorites}}); if (!result.ok) throw new Error(result.error || 'Configurazione non salvata'); $('#ha-token').value = ''; feedback('Configurazione salvata. Il pannello si collega direttamente a Home Assistant.'); await loadState(); }
+  catch (error) { feedback(error.message,true); }
+  finally { $('#save').disabled = false; }
+};
+document.querySelectorAll('[data-mode]').forEach(button => button.onclick = () => { mode = button.dataset.mode; localStorage.casaGroupMode = mode; $('#group').value = ''; render(); });
+$('#search').oninput = render; $('#group').onchange = render; $('#availability').onchange = render;
+$('#cards').addEventListener('pointerdown',() => { dragging = true; });
+document.addEventListener('pointerup',() => { dragging = false; });
+$('#cards').addEventListener('focusout',() => setTimeout(render,0));
+kit.start({onReady:() => kit.poll(loadState,2000)});
+</script></body></html>

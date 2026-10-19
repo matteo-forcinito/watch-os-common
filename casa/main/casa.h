@@ -14,12 +14,13 @@
 #define CASA_H
 
 #include "esp_err.h"
+#include "lvgl.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define CASA_ENTITIES 40
+#define CASA_ENTITIES 256
 #define CASA_ID 64
 #define CASA_NAME 40
 
@@ -43,6 +44,8 @@ typedef struct
     char id[CASA_ID];       /* light.kitchen */
     char name[CASA_NAME];   /* from setup, else friendly_name */
     char area[CASA_NAME];
+    char device_class[24];
+    char dashboards[4][CASA_NAME];
     uint8_t kind;           /* casa_kind_t */
     bool known;             /* a state arrived */
     bool available;
@@ -74,6 +77,10 @@ typedef struct
 } casa_status_t;
 
 esp_err_t casa_start(void);
+void casa_stop(void);
+void casa_ui_create(lv_obj_t *screen);
+void casa_ui_destroy(void);
+bool casa_ui_back(void);
 void casa_status(casa_status_t *out);
 int casa_entities(casa_entity_t *out, int max);
 bool casa_entity(const char *id, casa_entity_t *out);
@@ -85,6 +92,7 @@ bool casa_tap(const casa_entity_t *e);
 
 /* Configuration (web.c stores it). */
 esp_err_t casa_config_store(const char *json, char *error, size_t error_size);
+esp_err_t casa_config_clear(void);
 void casa_reconnect(void);
 const char *casa_web_address(void);
 const char *casa_web_code(void);
@@ -93,5 +101,6 @@ esp_err_t casa_web_start(void);
 /* Helpers shared by the UI. */
 casa_kind_t casa_kind_of(const char *entity_id);
 const char *casa_state_text(const casa_entity_t *e, char *out, size_t size);
+const char *casa_type_name(const casa_entity_t *e);
 
 #endif
