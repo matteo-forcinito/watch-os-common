@@ -14,6 +14,7 @@
 #define CASA_H
 
 #include "esp_err.h"
+#include "cJSON.h"
 #include "lvgl.h"
 
 #include <stdbool.h>
@@ -37,6 +38,7 @@ typedef enum
     CASA_SENSOR,   /* sensor, binary_sensor, weather... read only */
     CASA_PERSON,   /* person, device_tracker */
     CASA_OTHER,
+    CASA_ALARM,
 } casa_kind_t;
 
 typedef struct
@@ -52,6 +54,8 @@ typedef struct
     bool known;             /* a state arrived */
     bool available;
     bool on;                /* on / open / playing / home / unlocked... per kind */
+    bool code_required, code_arm_required;
+    int alarm_features;
     char state[24];         /* raw state */
     char unit[12];
     int brightness;         /* 0..100, -1 n/a */
@@ -98,6 +102,9 @@ bool casa_tap(const casa_entity_t *e);
 esp_err_t casa_config_store(const char *json, char *error, size_t error_size);
 esp_err_t casa_config_clear(void);
 void casa_reconnect(void);
+/* Restricted, paged catalog reads over the existing authenticated connection. */
+bool casa_catalog_request(const char *type, int page, const char *path, int *job);
+cJSON *casa_catalog_poll(int job);
 const char *casa_web_address(void);
 const char *casa_web_code(void);
 esp_err_t casa_web_start(void);

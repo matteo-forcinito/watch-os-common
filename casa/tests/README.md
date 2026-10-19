@@ -1,5 +1,7 @@
 # Collaudo della dashboard
 
+`npm test` esegue anche `home-test.cjs`: reimportazione con credenziali salvate senza WebSocket dal browser, catalogo in due lotti, selezione conservata, sei card per pagina, Alarmo con PIN e annullamento, modalità supportate, corrente/tensione/potenza e termostato nella schermata 480×480. Il PIN di prova viene inviato solo al simulatore.
+
 Da questa cartella, con Node.js:
 
 ```sh

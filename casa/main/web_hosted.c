@@ -30,6 +30,9 @@ static cJSON *entity_json(const casa_entity_t *entity, bool configuration)
     cJSON_AddBoolToObject(item, "known", entity->known);
     cJSON_AddBoolToObject(item, "available", entity->available);
     cJSON_AddBoolToObject(item, "on", entity->on);
+    cJSON_AddBoolToObject(item, "code_required", entity->code_required);
+    cJSON_AddBoolToObject(item, "code_arm_required", entity->code_arm_required);
+    cJSON_AddNumberToObject(item, "alarm_features", entity->alarm_features);
     cJSON_AddStringToObject(item, "state", entity->state);
     cJSON_AddStringToObject(item, "display", casa_state_text(entity, display, sizeof(display)));
     cJSON_AddNumberToObject(item, "received_ms", entity->changed_ms);
@@ -144,7 +147,34 @@ static esp_err_t disconnect(httpd_req_t *request)
     return appkit_json(request, out);
 }
 
+static esp_err_t catalog(httpd_req_t *request)
+{
+    if (!appkit_authorized(request)) return appkit_unauthorized(request);
+    if (request->method == HTTP_GET)
+    {
+        const char *query = strchr(request->uri, '?');
+        int job = query && !strncmp(query, "?job=", 5) ? atoi(query + 5) : 0;
+        return appkit_json(request, casa_catalog_poll(job));
+    }
+    char *text = appkit_body(request, 512);
+    cJSON *json = text ? cJSON_Parse(text) : NULL;
+    free(text);
+    const char *type = cJSON_GetStringValue(cJSON_GetObjectItem(json, "type"));
+    const char *path = cJSON_GetStringValue(cJSON_GetObjectItem(json, "url_path"));
+    const cJSON *page = cJSON_GetObjectItem(json, "page");
+    int job = 0;
+    bool ok = type && casa_catalog_request(type, cJSON_IsNumber(page) ? page->valueint : 0, path, &job);
+    cJSON_Delete(json);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "ok", ok);
+    cJSON_AddNumberToObject(out, "job", job);
+    if (!ok) cJSON_AddStringToObject(out, "error", "Attendi il collegamento Home Assistant o la fine dell'importazione in corso");
+    return appkit_json(request, out);
+}
+
 static const httpd_uri_t s_routes[] = {
+    {.uri = "/api/catalog", .method = HTTP_POST, .handler = catalog},
+    {.uri = "/api/catalog", .method = HTTP_GET, .handler = catalog},
     {.uri = "/api/config", .method = HTTP_GET, .handler = snapshot},
     {.uri = "/api/config", .method = HTTP_POST, .handler = configure},
     {.uri = "/api/disconnect", .method = HTTP_POST, .handler = disconnect},

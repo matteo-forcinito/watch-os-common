@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "server": "node server.cjs",
-    "test": "node browser-test.cjs"
+    "test": "node browser-test.cjs && node home-test.cjs"
   },
   "devDependencies": {
     "playwright": "1.64.1",

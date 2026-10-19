@@ -64,6 +64,119 @@ static atomic_int s_registry_id, s_devices_id;
 static atomic_bool s_need_metadata;
 static int s_metadata_cursor;
 static bool s_optional_message;
+static cJSON *s_catalog_request, *s_catalog_result;
+static int s_catalog_job, s_catalog_sequence;
+static atomic_int s_catalog_id, s_catalog_unsubscribe;
+static uint32_t s_catalog_started;
+static bool s_catalog_busy, s_catalog_template;
+static uint32_t now_ms(void);
+
+/* A bounded, server-owned template reads only public entity metadata. Paging
+ * avoids loading the full HA state/registry trees into the panel's RAM. */
+bool casa_catalog_request(const char *type, int page, const char *path, int *job)
+{
+    if (!s_lock || !atomic_load(&s_authenticated) || page < 0 || page > 10000) return false;
+    cJSON *request = cJSON_CreateObject();
+    if (!strcmp(type, "catalog"))
+    {
+        static const char template[] =
+            "{% set items = states | selectattr('domain','in',"
+            "['light','switch','input_boolean','automation','fan','cover','climate','alarm_control_panel',"
+            "'media_player','scene','script','button','input_button','lock','sensor','binary_sensor','weather','person','device_tracker']) | list %}"
+            "{\"total\":{{ items|count }},\"entities\":["
+            "{% for s in items[start:start+64] %}{{ dict(id=s.entity_id,name=s.name,"
+            "area=area_name(s.entity_id) or 'Senza stanza',area_id=area_id(s.entity_id) or '',"
+            "device_id=device_id(s.entity_id) or '',device_name=device_attr(s.entity_id,'name_by_user') or device_attr(s.entity_id,'name') or '',"
+            "device_class=s.attributes.get('device_class',''),state=s.state,unit=s.attributes.get('unit_of_measurement',''),dashboards=[])|tojson }}"
+            "{{ ',' if not loop.last else '' }}{% endfor %}]}";
+        cJSON_AddStringToObject(request, "type", "render_template");
+        cJSON_AddBoolToObject(request, "report_errors", true);
+        cJSON_AddStringToObject(request, "template", template);
+        cJSON_AddNumberToObject(cJSON_AddObjectToObject(request, "variables"), "start", page * 64);
+    }
+    else if (!strcmp(type, "lovelace/dashboards/list") || !strcmp(type, "lovelace/config"))
+    {
+        cJSON_AddStringToObject(request, "type", type);
+        if (path && path[0])
+        {
+            if (strcmp(type, "lovelace/config") || strlen(path) > 128) { cJSON_Delete(request); return false; }
+            cJSON_AddStringToObject(request, "url_path", path);
+        }
+    }
+    else { cJSON_Delete(request); return false; }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_catalog_busy && now_ms() - s_catalog_started < 30000)
+    {
+        xSemaphoreGive(s_lock); cJSON_Delete(request); return false;
+    }
+    cJSON_Delete(s_catalog_request); cJSON_Delete(s_catalog_result);
+    s_catalog_result = NULL;
+    if (s_catalog_template && atomic_load(&s_catalog_id)) atomic_store(&s_catalog_unsubscribe, atomic_load(&s_catalog_id));
+    atomic_store(&s_catalog_id, 0);
+    s_catalog_request = request;
+    s_catalog_busy = true;
+    s_catalog_template = !strcmp(type, "catalog");
+    s_catalog_started = now_ms();
+    *job = s_catalog_job = ++s_catalog_sequence;
+    xSemaphoreGive(s_lock);
+    if (s_task) xTaskNotifyGive(s_task);
+    return true;
+}
+
+cJSON *casa_catalog_poll(int job)
+{
+    cJSON *out = cJSON_CreateObject();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool ready = s_catalog_result != NULL;
+    bool valid = job && job == s_catalog_job;
+    cJSON_AddBoolToObject(out, "ready", ready || !valid || now_ms() - s_catalog_started >= 30000);
+    if (!valid) cJSON_AddStringToObject(out, "error", "Importazione scaduta o sostituita; riprova");
+    else if (ready)
+    {
+        cJSON_AddItemToObject(out, "response", s_catalog_result);
+        s_catalog_result = NULL; s_catalog_busy = false;
+    }
+    else if (now_ms() - s_catalog_started >= 30000)
+    {
+        cJSON_AddStringToObject(out, "error", "Home Assistant non risponde all'importazione");
+        s_catalog_busy = false;
+    }
+    xSemaphoreGive(s_lock);
+    return out;
+}
+
+static void catalog_send(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_catalog_busy && now_ms() - s_catalog_started >= 30000)
+    {
+        if (s_catalog_template) atomic_store(&s_catalog_unsubscribe, atomic_load(&s_catalog_id));
+        atomic_store(&s_catalog_id, 0);
+        cJSON_Delete(s_catalog_request); s_catalog_request = NULL;
+        cJSON_Delete(s_catalog_result); s_catalog_result = NULL;
+        s_catalog_busy = false;
+    }
+    cJSON *request = s_catalog_request; s_catalog_request = NULL;
+    if (request)
+    {
+        int id = atomic_fetch_add(&s_next_id, 1);
+        atomic_store(&s_catalog_id, id);
+        cJSON_AddNumberToObject(request, "id", id);
+    }
+    xSemaphoreGive(s_lock);
+    if (request)
+    {
+        char *text = cJSON_PrintUnformatted(request); cJSON_Delete(request);
+        if (text) { esp_websocket_client_send_text(s_client, text, strlen(text), pdMS_TO_TICKS(10000)); free(text); }
+    }
+    int subscription = atomic_exchange(&s_catalog_unsubscribe, 0);
+    if (subscription)
+    {
+        char text[112];
+        snprintf(text, sizeof(text), "{\"id\":%d,\"type\":\"unsubscribe_events\",\"subscription\":%d}", atomic_fetch_add(&s_next_id, 1), subscription);
+        esp_websocket_client_send_text(s_client, text, strlen(text), pdMS_TO_TICKS(10000));
+    }
+}
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
@@ -86,6 +199,7 @@ const char *casa_type_name(const casa_entity_t *e)
     case CASA_MEDIA: return "Multimedia";
     case CASA_SCENE: return "Scene e azioni";
     case CASA_LOCK: return "Serrature";
+    case CASA_ALARM: return "Allarme";
     case CASA_PERSON: return "Presenze";
     default: return "Altro";
     }
@@ -114,6 +228,7 @@ casa_kind_t casa_kind_of(const char *id)
         {"script.", CASA_SCENE},         {"button.", CASA_SCENE},        {"input_button.", CASA_SCENE},
         {"lock.", CASA_LOCK},            {"sensor.", CASA_SENSOR},       {"binary_sensor.", CASA_SENSOR},
         {"weather.", CASA_SENSOR},       {"person.", CASA_PERSON},       {"device_tracker.", CASA_PERSON},
+        {"alarm_control_panel.", CASA_ALARM},
     };
     for (unsigned i = 0; i < sizeof(map) / sizeof(map[0]); i++)
         if (strncmp(id, map[i].prefix, strlen(map[i].prefix)) == 0)
@@ -212,6 +327,12 @@ const char *casa_state_text(const casa_entity_t *e, char *out, size_t size)
             else
                 snprintf(out, size, "%s", e->state); /* a zone name */
             break;
+        case CASA_ALARM:
+            snprintf(out, size, "%s", !strcmp(e->state, "disarmed") ? "Disinserito" :
+                !strcmp(e->state, "armed_away") ? "Fuori casa" : !strcmp(e->state, "armed_home") ? "In casa" :
+                !strcmp(e->state, "armed_night") ? "Notte" : !strcmp(e->state, "arming") ? "Inserimento..." :
+                !strcmp(e->state, "pending") ? "Ingresso..." : !strcmp(e->state, "triggered") ? "ALLARME" : e->state);
+            break;
         default:
         {
             char *end = NULL;
@@ -262,6 +383,12 @@ static void apply_attributes(casa_entity_t *e, const cJSON *a)
     if (!cJSON_IsObject(a))
         return;
     const cJSON *item;
+    if (e->kind == CASA_ALARM)
+    {
+        if ((item = cJSON_GetObjectItem(a, "code_format"))) e->code_required = cJSON_IsString(item);
+        if ((item = cJSON_GetObjectItem(a, "code_arm_required"))) e->code_arm_required = cJSON_IsTrue(item);
+        if (cJSON_IsNumber(item = cJSON_GetObjectItem(a, "supported_features"))) e->alarm_features = item->valueint;
+    }
     if (!e->name[0] && cJSON_IsString(item = cJSON_GetObjectItem(a, "friendly_name")))
         snprintf(e->name, sizeof(e->name), "%s", item->valuestring);
     if (cJSON_IsString(item = cJSON_GetObjectItem(a, "unit_of_measurement")))
@@ -354,6 +481,7 @@ static void apply_state(casa_entity_t *e, const char *state)
     case CASA_CLIMATE: e->on = strcmp(state, "off") != 0 && e->available; break;
     case CASA_LOCK: e->on = !strcmp(state, "unlocked"); break;
     case CASA_PERSON: e->on = !strcmp(state, "home"); break;
+    case CASA_ALARM: e->on = e->available && strcmp(state, "disarmed"); break;
     default: e->on = !strcmp(state, "on"); break;
     }
     e->changed_ms = now_ms();
@@ -540,6 +668,27 @@ static void handle_message(const char *text)
     cJSON *msg = cJSON_Parse(text);
     const cJSON *type = cJSON_GetObjectItem(msg, "type");
     const char *t = cJSON_IsString(type) ? type->valuestring : "";
+    const cJSON *incoming = cJSON_GetObjectItem(msg, "id");
+    int incoming_id = cJSON_IsNumber(incoming) ? incoming->valueint : 0;
+    if (incoming_id > 0 && incoming_id == atomic_load(&s_catalog_id))
+    {
+        bool event = !strcmp(t, "event");
+        bool failed = cJSON_IsFalse(cJSON_GetObjectItem(msg, "success"));
+        if (event || failed || !s_catalog_template)
+        {
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            if (s_catalog_busy)
+            {
+                cJSON_Delete(s_catalog_result);
+                s_catalog_result = cJSON_Duplicate(msg, true);
+            }
+            xSemaphoreGive(s_lock);
+            if (event) atomic_store(&s_catalog_unsubscribe, incoming_id);
+            atomic_store(&s_catalog_id, 0);
+            if (s_task) xTaskNotifyGive(s_task);
+        }
+        cJSON_Delete(msg); return;
+    }
     if (!strcmp(t, "auth_required"))
     {
         atomic_store(&s_need_auth, true);
@@ -622,7 +771,7 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *event_data
             const char *id_text = strstr(prefix, "\"id\"");
             id_text = id_text ? strchr(id_text, ':') : NULL;
             int request_id = id_text ? atoi(id_text + 1) : 0;
-            s_optional_message = request_id && (request_id == atomic_load(&s_registry_id) || request_id == atomic_load(&s_devices_id));
+            s_optional_message = request_id && (request_id == atomic_load(&s_registry_id) || request_id == atomic_load(&s_devices_id) || request_id == atomic_load(&s_catalog_id));
         }
         if (s_message_len + (size_t)d->data_len < MESSAGE_MAX)
         {
@@ -914,6 +1063,12 @@ void casa_reconnect(void)
 {
     atomic_store(&s_authenticated, false);
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    atomic_store(&s_catalog_id, 0);
+    atomic_store(&s_catalog_unsubscribe, 0);
+    cJSON_Delete(s_catalog_request); s_catalog_request = NULL;
+    cJSON_Delete(s_catalog_result); s_catalog_result = NULL;
+    s_catalog_busy = false;
+    s_catalog_job = 0;
     s_status.connected = false;
     s_status.revision++;
     xSemaphoreGive(s_lock);
@@ -963,6 +1118,12 @@ static void stop_client(void)
     }
     atomic_store(&s_authenticated, false);
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    atomic_store(&s_catalog_id, 0);
+    atomic_store(&s_catalog_unsubscribe, 0);
+    cJSON_Delete(s_catalog_request); s_catalog_request = NULL;
+    cJSON_Delete(s_catalog_result); s_catalog_result = NULL;
+    s_catalog_busy = false;
+    s_catalog_job = 0;
     s_status.connected = false;
     s_status.revision++;
     xSemaphoreGive(s_lock);
@@ -1072,6 +1233,7 @@ static void casa_task(void *arg)
             subscribe();
             atomic_store(&s_need_metadata, true);
         }
+        if (atomic_load(&s_authenticated)) catalog_send();
         if (atomic_load(&s_authenticated) && atomic_exchange(&s_need_metadata, false)) metadata_request();
         /* Outgoing commands. */
         char command[COMMAND_MAX];
@@ -1204,11 +1366,28 @@ bool casa_call(const char *domain, const char *service, const char *entity_id, c
         allowed = " turn_on press "; break;
     case CASA_LOCK:
         allowed = " lock unlock "; break;
+    case CASA_ALARM:
+        allowed = " alarm_disarm alarm_arm_away alarm_arm_home alarm_arm_night alarm_arm_vacation alarm_arm_custom_bypass "; break;
     default:
         return false;
     }
     char needle[64];
     if (snprintf(needle, sizeof(needle), " %s ", service) >= (int)sizeof(needle) || !strstr(allowed, needle)) return false;
+    if (entity.kind == CASA_ALARM)
+    {
+        bool disarm = !strcmp(service, "alarm_disarm");
+        int feature = !strcmp(service, "alarm_arm_home") ? 1 : !strcmp(service, "alarm_arm_away") ? 2 :
+            !strcmp(service, "alarm_arm_night") ? 4 : !strcmp(service, "alarm_arm_custom_bypass") ? 16 : !strcmp(service, "alarm_arm_vacation") ? 32 : 0;
+        if (feature && !(entity.alarm_features & feature)) return false;
+        if (entity.code_required && (disarm || entity.code_arm_required))
+        {
+            cJSON *data = data_json ? cJSON_Parse(data_json) : NULL;
+            const char *code = cJSON_GetStringValue(cJSON_GetObjectItem(data, "code"));
+            bool provided = code && code[0];
+            cJSON_Delete(data);
+            if (!provided) return false;
+        }
+    }
     char command[COMMAND_MAX];
     int n = snprintf(command, sizeof(command),
                      "{\"id\":%d,\"type\":\"call_service\",\"domain\":\"%s\",\"service\":\"%s\","
@@ -1242,6 +1421,9 @@ bool casa_tap(const casa_entity_t *e)
         return casa_call(domain, !strcmp(domain, "button") || !strcmp(domain, "input_button") ? "press" : "turn_on", e->id, NULL);
     case CASA_LOCK:
         return casa_call(domain, strcmp(e->state, "locked") == 0 ? "unlock" : "lock", e->id, NULL);
+    case CASA_ALARM:
+        if (strcmp(e->state, "disarmed") && strcmp(e->state, "armed_away")) return false;
+        return casa_call(domain, !strcmp(e->state, "disarmed") ? "alarm_arm_away" : "alarm_disarm", e->id, NULL);
     default:
         return false;
     }
