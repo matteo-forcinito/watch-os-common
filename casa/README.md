@@ -1,6 +1,6 @@
 # Casa: Home Assistant sul dispositivo e sul PC
 
-Casa è disponibile come app interna con `CONFIG_APPKIT_HOSTED` e mantiene il progetto esterno nella propria cartella. Dalla homepage dell'OS, tenere premuta l'ora per aprirla. Le gesture direzionali esistenti continuano a navigare nell'OS.
+Casa è disponibile come app interna con `CONFIG_APPKIT_HOSTED` e mantiene il progetto esterno nella propria cartella. Dalla homepage dell'OS, tenere premuta l'ora per aprirla. La home di Casa usa uno stile da pannello domotico: orologio, stato del collegamento, riquadri Luci/Clima/Prese/Scene e dispositivi disponibili. Le gesture direzionali esistenti continuano a navigare nell'OS.
 
 ## Configurazione
 
@@ -15,6 +15,13 @@ Il token viene conservato nella NVS del dispositivo, non nel catalogo sulla SD n
 - **Stanze**: area assegnata all'entità, oppure area ereditata dal dispositivo.
 - **Tipi**: termometri, termostati, prese, luci e altre categorie, usando dominio e `device_class`.
 - **Dashboard**: gruppi dashboard/vista ricavati dalle configurazioni Lovelace, incluse schede annidate e schede area. Ogni entità può appartenere a quattro gruppi. Le viste dinamiche e le schede personalizzate che generano entità a runtime non sono ricostruite; la pagina segnala le limitazioni e offre **Apri Home Assistant** per la dashboard originale.
+- **Tutte**: card per dispositivo fisico, usando il `device_id` del registro HA. Temperatura, umidità e batteria della stessa unità compaiono insieme; altre entità e controlli si aprono nei dettagli. Le entità senza dispositivo registrato restano separate. I dispositivi con almeno uno stato disponibile precedono quelli interamente offline; lo stato mancante di una batteria non nasconde temperatura e umidità disponibili.
+
+Il pannello recupera automaticamente il collegamento entità/dispositivo per la selezione salvata, con richieste `config/entity_registry/get_entries` da 24 entità e una lettura del registro dispositivi. Queste richieste sono di sola lettura e non modificano Home Assistant né il catalogo dell'utente. Se l'API non è disponibile, si usano i metadati dell'importazione; un registro opzionale oltre il limite di messaggio viene ignorato senza interrompere gli stati live.
+
+La ricerca nella selezione comprende nome del dispositivo, stanza, identificativo e tipologia del sensore, con sinonimi italiani per temperatura, umidità e batteria. **Seleziona consigliate** privilegia entità disponibili e controlli utili; una selezione già salvata cambia solo con un salvataggio esplicito. La lista visualizza fino a 200 risultati alla volta e invita ad affinare la ricerca per cataloghi grandi.
+
+La home e i gruppi nativi mostrano inizialmente i dispositivi disponibili; **Mostra offline** permette di consultarli tutti. In **Tutte** gli offline sono inclusi e ordinati dopo quelli disponibili. L'interfaccia distingue attesa del primo stato, `unknown` e `unavailable` ricevuti da HA, e mostra i conteggi. Il contatore degli aggiornamenti conta gli eventi HA, non le letture periodiche della pagina PC. Il termostato usa il passo configurato in HA, con quadrante e pulsanti +/−; i comandi sono disabilitati quando il collegamento o l'entità non sono disponibili.
 
 La UI nativa impagina gruppi ed entità a 12 elementi; la pagina PC aggiunge ricerca, filtro disponibilità e accesso a tutte le entità selezionate. Un tocco esegue l'azione principale; una pressione prolungata apre i dettagli. Luci, prese, termostati, tapparelle, ventilatori, media, scene e serrature usano i relativi servizi HA. Le entità indisponibili e i sensori di sola lettura non ricevono comandi; lo sblocco di una serratura richiede conferma nell'interfaccia.
 

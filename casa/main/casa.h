@@ -44,6 +44,8 @@ typedef struct
     char id[CASA_ID];       /* light.kitchen */
     char name[CASA_NAME];   /* from setup, else friendly_name */
     char area[CASA_NAME];
+    char device_id[64];
+    char device_name[CASA_NAME];
     char device_class[24];
     char dashboards[4][CASA_NAME];
     uint8_t kind;           /* casa_kind_t */
@@ -74,6 +76,8 @@ typedef struct
     char ha_version[16];
     int count;
     uint32_t revision;      /* changes on every state change */
+    uint32_t event_count;
+    uint32_t last_event_ms;
 } casa_status_t;
 
 esp_err_t casa_start(void);

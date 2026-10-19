@@ -17,6 +17,8 @@ static cJSON *entity_json(const casa_entity_t *entity, bool configuration)
     cJSON_AddStringToObject(item, "id", entity->id);
     cJSON_AddStringToObject(item, "name", entity->name);
     cJSON_AddStringToObject(item, "area", entity->area);
+    cJSON_AddStringToObject(item, "device_id", entity->device_id);
+    cJSON_AddStringToObject(item, "device_name", entity->device_name);
     cJSON_AddStringToObject(item, "device_class", entity->device_class);
     cJSON_AddStringToObject(item, "category", casa_type_name(entity));
     cJSON *groups = cJSON_AddArrayToObject(item, "dashboards");
@@ -30,6 +32,7 @@ static cJSON *entity_json(const casa_entity_t *entity, bool configuration)
     cJSON_AddBoolToObject(item, "on", entity->on);
     cJSON_AddStringToObject(item, "state", entity->state);
     cJSON_AddStringToObject(item, "display", casa_state_text(entity, display, sizeof(display)));
+    cJSON_AddNumberToObject(item, "received_ms", entity->changed_ms);
     cJSON_AddStringToObject(item, "unit", entity->unit);
     cJSON_AddNumberToObject(item, "brightness", entity->brightness);
     cJSON_AddNumberToObject(item, "position", entity->position);
@@ -55,6 +58,8 @@ static esp_err_t snapshot(httpd_req_t *request)
     cJSON_AddBoolToObject(out, "configured", status.configured);
     cJSON_AddStringToObject(out, "message", status.message);
     cJSON_AddNumberToObject(out, "revision", status.revision);
+    cJSON_AddNumberToObject(out, "event_count", status.event_count);
+    cJSON_AddNumberToObject(out, "last_event_ms", status.last_event_ms);
     cJSON_AddNumberToObject(out, "limit", CASA_ENTITIES);
     char url[160] = "";
     bool has_token = false;
@@ -72,6 +77,14 @@ static esp_err_t snapshot(httpd_req_t *request)
     casa_entity_t *entities = heap_caps_calloc(CASA_ENTITIES, sizeof(*entities), MALLOC_CAP_SPIRAM);
     if (entities == NULL) { cJSON_Delete(out); return appkit_error(request, "503 Service Unavailable", "Memoria insufficiente"); }
     int count = casa_entities(entities, CASA_ENTITIES);
+    int known = 0, available = 0;
+    for (int i = 0; i < count; i++)
+    {
+        known += entities[i].known;
+        available += entities[i].known && entities[i].available;
+    }
+    cJSON_AddNumberToObject(out, "known", known);
+    cJSON_AddNumberToObject(out, "available", available);
     cJSON *list = cJSON_AddArrayToObject(out, configuration ? "favorites" : "entities");
     for (int i = 0; i < count; i++) cJSON_AddItemToArray(list, entity_json(&entities[i], configuration));
     free(entities);

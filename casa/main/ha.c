@@ -60,6 +60,10 @@ static atomic_int s_next_id = 10;
 static atomic_bool s_authenticated, s_reconnect, s_dropped, s_need_auth, s_need_subscribe;
 static char s_url[URL_MAX], s_token[TOKEN_MAX];
 static TaskHandle_t s_task;
+static atomic_int s_registry_id, s_devices_id;
+static atomic_bool s_need_metadata;
+static int s_metadata_cursor;
+static bool s_optional_message;
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
@@ -135,9 +139,9 @@ const char *casa_state_text(const casa_entity_t *e, char *out, size_t size)
 {
     char number[16];
     if (!e->known)
-        snprintf(out, size, "...");
+        snprintf(out, size, "In attesa di HA");
     else if (!e->available)
-        snprintf(out, size, "Non disponibile");
+        snprintf(out, size, !strcmp(e->state, "unknown") ? "Stato sconosciuto in HA" : "Non disponibile in HA");
     else
         switch (e->kind)
         {
@@ -375,7 +379,7 @@ static void apply_event(const cJSON *event)
         e->rgb = 0;
         e->color_temp_kelvin = 0;
         e->media_title[0] = e->media_artist[0] = 0;
-        e->current_temp = e->target_temp = NAN;
+        e->current_temp = e->target_temp = e->min_temp = e->max_temp = e->temp_step = NAN;
         const cJSON *state = cJSON_GetObjectItem(item, "s"), *changed = cJSON_GetObjectItem(item, "lc");
         apply_state(e, cJSON_IsString(state) ? state->valuestring : "unknown");
         e->last_changed = cJSON_IsNumber(changed) ? (int64_t)changed->valuedouble : 0;
@@ -399,6 +403,7 @@ static void apply_event(const cJSON *event)
         }
         apply_attributes(e, cJSON_GetObjectItem(plus, "a"));
         remove_attributes(e, cJSON_GetObjectItem(minus, "a"));
+        e->changed_ms = now_ms();
         finish_colour(e);
     }
     cJSON_ArrayForEach(item, cJSON_GetObjectItem(event, "r"))
@@ -407,6 +412,8 @@ static void apply_event(const cJSON *event)
         if (e)
             e->known = e->available = false;
     }
+    s_status.event_count++;
+    s_status.last_event_ms = now_ms();
     s_status.revision++;
     xSemaphoreGive(s_lock);
 }
@@ -436,6 +443,96 @@ static void subscribe(void)
         send_text(text);
         free(text);
     }
+}
+
+
+/* Read registry metadata only for selected entities, in bounded batches. */
+static void metadata_request(void)
+{
+    cJSON *request = cJSON_CreateObject();
+    int id = atomic_fetch_add(&s_next_id, 1);
+    cJSON_AddNumberToObject(request, "id", id);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_metadata_cursor < s_count)
+    {
+        atomic_store(&s_registry_id, id);
+        cJSON_AddStringToObject(request, "type", "config/entity_registry/get_entries");
+        cJSON *ids = cJSON_AddArrayToObject(request, "entity_ids");
+        int end = s_metadata_cursor + 24;
+        if (end > s_count) end = s_count;
+        while (s_metadata_cursor < end) cJSON_AddItemToArray(ids, cJSON_CreateString(s_entities[s_metadata_cursor++].id));
+    }
+    else
+    {
+        atomic_store(&s_devices_id, id);
+        cJSON_AddStringToObject(request, "type", "config/device_registry/list");
+    }
+    xSemaphoreGive(s_lock);
+    char *serialized = cJSON_PrintUnformatted(request);
+    cJSON_Delete(request);
+    if (serialized) { send_text(serialized); free(serialized); }
+}
+
+static void metadata_result(const cJSON *message, bool devices)
+{
+    if (!cJSON_IsTrue(cJSON_GetObjectItem(message, "success")))
+    {
+        ESP_LOGW(TAG, "Optional HA registry metadata unavailable; imported metadata is retained");
+        return;
+    }
+    const cJSON *result = cJSON_GetObjectItem(message, "result"), *item;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (!devices)
+    {
+        cJSON_ArrayForEach(item, result)
+        {
+            casa_entity_t *entity = item->string ? find(item->string) : NULL;
+            const char *device = cJSON_GetStringValue(cJSON_GetObjectItem(item, "device_id"));
+            if (entity && device && strlen(device) < sizeof(entity->device_id))
+                snprintf(entity->device_id, sizeof(entity->device_id), "%s", device);
+        }
+    }
+    else
+    {
+        cJSON_ArrayForEach(item, result)
+        {
+            const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(item, "id"));
+            const char *name = cJSON_GetStringValue(cJSON_GetObjectItem(item, "name_by_user"));
+            if (!name || !name[0]) name = cJSON_GetStringValue(cJSON_GetObjectItem(item, "name"));
+            if (!id || !name) continue;
+            size_t length = strlen(name);
+            if (length >= CASA_NAME)
+            {
+                length = CASA_NAME - 1;
+                while (length && ((unsigned char)name[length] & 0xC0) == 0x80) length--;
+            }
+            for (int i = 0; i < s_count; i++)
+                if (!strcmp(s_entities[i].device_id, id))
+                {
+                    memcpy(s_entities[i].device_name, name, length);
+                    s_entities[i].device_name[length] = 0;
+                }
+        }
+    }
+    s_status.revision++;
+    xSemaphoreGive(s_lock);
+    if (!devices)
+    {
+        atomic_store(&s_need_metadata, true);
+        if (s_task) xTaskNotifyGive(s_task);
+    }
+}
+
+static void send_command(const char *command)
+{
+    /* Allocate IDs when sending, so registry reads, pings and UI commands always
+     * reach HA in increasing order, including while metadata is still loading. */
+    cJSON *json = cJSON_Parse(command);
+    if (!json) return;
+    cJSON_ReplaceItemInObject(json, "id", cJSON_CreateNumber(atomic_fetch_add(&s_next_id, 1)));
+    char *serialized = cJSON_PrintUnformatted(json);
+    cJSON_Delete(json);
+    if (serialized) { send_text(serialized); free(serialized); }
 }
 
 static void handle_message(const char *text)
@@ -472,6 +569,14 @@ static void handle_message(const char *text)
         apply_event(cJSON_GetObjectItem(msg, "event"));
     else if (!strcmp(t, "result"))
     {
+        const cJSON *request_id = cJSON_GetObjectItem(msg, "id");
+        int id = cJSON_IsNumber(request_id) ? request_id->valueint : 0;
+        if (id && (id == atomic_load(&s_registry_id) || id == atomic_load(&s_devices_id)))
+        {
+            metadata_result(msg, id == atomic_load(&s_devices_id));
+            cJSON_Delete(msg);
+            return;
+        }
         const cJSON *success = cJSON_GetObjectItem(msg, "success");
         if (cJSON_IsFalse(success))
         {
@@ -508,7 +613,17 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *event_data
     {
         /* One message may arrive in several chunks: payload_offset/payload_len. */
         if (d->payload_offset == 0)
+        {
             s_message_len = 0;
+            char prefix[96];
+            size_t length = d->data_len < sizeof(prefix) - 1 ? d->data_len : sizeof(prefix) - 1;
+            memcpy(prefix, d->data_ptr, length);
+            prefix[length] = 0;
+            const char *id_text = strstr(prefix, "\"id\"");
+            id_text = id_text ? strchr(id_text, ':') : NULL;
+            int request_id = id_text ? atoi(id_text + 1) : 0;
+            s_optional_message = request_id && (request_id == atomic_load(&s_registry_id) || request_id == atomic_load(&s_devices_id));
+        }
         if (s_message_len + (size_t)d->data_len < MESSAGE_MAX)
         {
             memcpy(s_message + s_message_len, d->data_ptr, d->data_len);
@@ -516,9 +631,15 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *event_data
         }
         else
         {
+            bool first_overflow = s_message_len < MESSAGE_MAX;
             s_message_len = MESSAGE_MAX;
-            set_message("Risposta HA troppo grande: riduci le entità importate");
-            atomic_store(&s_dropped, true);
+            if (!s_optional_message)
+            {
+                set_message("Risposta HA troppo grande: riduci le entita' importate");
+                atomic_store(&s_dropped, true);
+            }
+            else if (first_overflow)
+                ESP_LOGW(TAG, "Optional registry exceeds the message limit; live states remain connected");
         }
         if (d->payload_offset + d->data_len >= d->payload_len && s_message_len < MESSAGE_MAX)
         {
@@ -624,6 +745,10 @@ static void load_config(void)
         const cJSON *name = cJSON_GetObjectItem(item, "name"), *area = cJSON_GetObjectItem(item, "area");
         snprintf(e->name, sizeof(e->name), "%s", cJSON_IsString(name) ? name->valuestring : "");
         snprintf(e->area, sizeof(e->area), "%s", cJSON_IsString(area) && area->valuestring[0] ? area->valuestring : "Altro");
+        const char *device_id = cJSON_GetStringValue(cJSON_GetObjectItem(item, "device_id"));
+        const char *device_name = cJSON_GetStringValue(cJSON_GetObjectItem(item, "device_name"));
+        snprintf(e->device_id, sizeof(e->device_id), "%s", device_id ? device_id : "");
+        snprintf(e->device_name, sizeof(e->device_name), "%s", device_name ? device_name : "");
         const cJSON *device_class = cJSON_GetObjectItem(item, "device_class");
         snprintf(e->device_class, sizeof(e->device_class), "%s", cJSON_IsString(device_class) ? device_class->valuestring : "");
         const cJSON *dashboard;
@@ -635,7 +760,7 @@ static void load_config(void)
         }
         e->kind = (uint8_t)casa_kind_of(e->id);
         e->brightness = e->position = -1;
-        e->current_temp = e->target_temp = NAN;
+        e->current_temp = e->target_temp = e->min_temp = e->max_temp = e->temp_step = NAN;
     }
     s_status.count = s_count;
     s_status.configured = s_url[0] && s_token[0] && s_count > 0;
@@ -843,6 +968,10 @@ static void stop_client(void)
     xSemaphoreGive(s_lock);
     atomic_store(&s_need_auth, false);
     atomic_store(&s_need_subscribe, false);
+    atomic_store(&s_need_metadata, false);
+    atomic_store(&s_registry_id, 0);
+    atomic_store(&s_devices_id, 0);
+    s_metadata_cursor = 0;
     if (s_commands) xQueueReset(s_commands);
 }
 
@@ -939,11 +1068,15 @@ static void casa_task(void *arg)
             }
         }
         if (atomic_exchange(&s_need_subscribe, false))
+        {
             subscribe();
+            atomic_store(&s_need_metadata, true);
+        }
+        if (atomic_load(&s_authenticated) && atomic_exchange(&s_need_metadata, false)) metadata_request();
         /* Outgoing commands. */
         char command[COMMAND_MAX];
         while (atomic_load(&s_authenticated) && xQueueReceive(s_commands, command, 0) == pdTRUE)
-            send_text(command);
+            send_command(command);
         if (atomic_load(&s_authenticated))
         {
             backoff = 2000;
@@ -1080,7 +1213,7 @@ bool casa_call(const char *domain, const char *service, const char *entity_id, c
     int n = snprintf(command, sizeof(command),
                      "{\"id\":%d,\"type\":\"call_service\",\"domain\":\"%s\",\"service\":\"%s\","
                      "\"target\":{\"entity_id\":\"%s\"}%s%s}",
-                     atomic_fetch_add(&s_next_id, 1), domain, service, entity_id, data_json ? ",\"service_data\":" : "",
+                     0, domain, service, entity_id, data_json ? ",\"service_data\":" : "",
                      data_json ? data_json : "");
     if (n <= 0 || n >= (int)sizeof(command) || !atomic_load(&s_authenticated))
         return false;
