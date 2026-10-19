@@ -41,6 +41,7 @@ typedef struct
     bool has_usb_otg;     /* ESP32 native USB on a connector: USB drive, USB keyboard */
     bool has_buttons;     /* At least one physical navigation button, not just a dial. */
     uint16_t display_corner_radius; /* Visible rectangular panel corner, pixels; 0 = square. */
+    bool draw_buffers_in_psram; /* CPU-copy displays only; DMA displays keep internal buffers. */
 } board_info_t;
 
 /* Bring up the buses and the always-on chips. Call once, early in app_main(). */
