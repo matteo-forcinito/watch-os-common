@@ -389,7 +389,15 @@ esp_err_t casa_web_start(void)
 {
     /* Native home checks ownership frequently. A catalog request can hold the
      * AppKit HTTP lock while reading SD: do not wait on it for an idle check. */
-    return appkit_web_owned_by(&s_config) ? ESP_OK : appkit_web_start(&s_config);
+    esp_err_t err = appkit_web_owned_by(&s_config) ? ESP_OK : appkit_web_start(&s_config);
+    if (err == ESP_OK && settings_get()->homepage == 1)
+    {
+        /* Registering a hosted config does not activate its routes. A native
+         * home has no dashboard page to press: start it after taking ownership. */
+        appkit_web_state_t state = appkit_web_state();
+        if (state == APPKIT_WEB_OFF || state == APPKIT_WEB_FAILED) appkit_web_activate();
+    }
+    return err;
 }
 const char *casa_web_code(void) { return appkit_web_code(); }
 const char *casa_web_address(void)
