@@ -58,6 +58,8 @@ typedef enum
 
 /* Start serving (non-blocking). The config must stay valid while running. */
 esp_err_t appkit_web_start(const appkit_web_config_t *config);
+/* Activate the registered dashboard without opening its app UI (non-blocking). */
+void appkit_web_activate(void);
 void appkit_web_stop(void);
 /* Stop only when the caller still owns the hosted dashboard. LVGL task only. */
 void appkit_web_stop_if(const appkit_web_config_t *config);
