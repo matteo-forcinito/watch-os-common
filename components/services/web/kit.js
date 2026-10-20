@@ -93,6 +93,7 @@
       document.body.append(bar);
     }
     if (!r.ok) throw new Error((await r.text()) || ('Errore ' + r.status));
+    document.getElementById('kit-closed')?.remove();
     if (opt.raw) return r;
     const type = r.headers.get('Content-Type') || '';
     return type.includes('json') ? r.json() : r.text();
