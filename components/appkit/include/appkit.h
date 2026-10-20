@@ -61,6 +61,8 @@ esp_err_t appkit_web_start(const appkit_web_config_t *config);
 void appkit_web_stop(void);
 /* Stop only when the caller still owns the hosted dashboard. LVGL task only. */
 void appkit_web_stop_if(const appkit_web_config_t *config);
+/* Ownership changes only in the LVGL task. This check never waits for HTTP. */
+bool appkit_web_owned_by(const appkit_web_config_t *config);
 appkit_web_state_t appkit_web_state(void);
 
 /* "http://192.168.1.20/" once on, else "". */

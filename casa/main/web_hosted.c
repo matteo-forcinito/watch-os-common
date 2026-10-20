@@ -385,7 +385,12 @@ static const appkit_web_config_t s_config = {
     .route_count = sizeof(s_routes) / sizeof(s_routes[0]),
 };
 
-esp_err_t casa_web_start(void) { return appkit_web_start(&s_config); }
+esp_err_t casa_web_start(void)
+{
+    /* Native home checks ownership frequently. A catalog request can hold the
+     * AppKit HTTP lock while reading SD: do not wait on it for an idle check. */
+    return appkit_web_owned_by(&s_config) ? ESP_OK : appkit_web_start(&s_config);
+}
 const char *casa_web_code(void) { return appkit_web_code(); }
 const char *casa_web_address(void)
 {

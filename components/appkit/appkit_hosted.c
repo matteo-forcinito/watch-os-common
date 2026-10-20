@@ -459,3 +459,8 @@ void appkit_web_stop_if(const appkit_web_config_t *config)
 {
     if (s_config == config) appkit_web_stop();
 }
+
+bool appkit_web_owned_by(const appkit_web_config_t *config)
+{
+    return s_config == config;
+}
