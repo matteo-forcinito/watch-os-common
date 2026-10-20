@@ -64,6 +64,8 @@ typedef struct
 {
     lv_obj_t *screen, *content, *summary, *status, *navigation;
     lv_timer_t *timer;
+    bool embedded;
+    int entry_view;
     int view;
     tile_t tiles[CASA_ENTITIES];
     int tile_count;
@@ -93,7 +95,64 @@ typedef struct
     casa_status_t status_now;
 } casa_ui_t;
 
+/* UI-thread-only context, scoped by render/timer/event dispatch. Each mounted
+ * page owns its widgets, state, callback bindings and timer independently. */
 static casa_ui_t *s_ui;
+static casa_ui_t *s_app_ui;
+typedef struct
+{
+    casa_ui_t *ui;
+    lv_event_cb_t callback;
+    void *data;
+} casa_binding_t;
+
+static void *event_data(lv_event_t *event)
+{
+    return ((casa_binding_t *)lv_event_get_user_data(event))->data;
+}
+
+static void dispatch_event(lv_event_t *event)
+{
+    casa_binding_t *binding = lv_event_get_user_data(event);
+    casa_ui_t *previous = s_ui;
+    lv_event_cb_t callback = binding->callback;
+    s_ui = binding->ui;
+    callback(event); /* The callback may rebuild and delete its own binding. */
+    s_ui = previous;
+}
+
+static void binding_deleted(lv_event_t *event)
+{
+    free(lv_event_get_user_data(event));
+}
+
+static void add_event(lv_obj_t *object, lv_event_cb_t callback, lv_event_code_t code, void *data)
+{
+    if (!callback) return;
+    casa_binding_t *binding = heap_caps_malloc(sizeof(*binding), MALLOC_CAP_SPIRAM);
+    if (!binding) return;
+    *binding = (casa_binding_t){.ui = s_ui, .callback = callback, .data = data};
+    lv_obj_add_event_cb(object, dispatch_event, code, binding);
+    lv_obj_add_event_cb(object, binding_deleted, LV_EVENT_DELETE, binding);
+}
+
+static lv_obj_t *casa_button(lv_obj_t *parent, const char *text, uint32_t color, lv_event_cb_t callback, void *data)
+{
+    lv_obj_t *object = ui_button(parent, text, color, NULL, NULL);
+    add_event(object, callback, LV_EVENT_CLICKED, data);
+    return object;
+}
+
+static lv_obj_t *casa_row(lv_obj_t *parent, const char *icon, uint32_t color, const char *text,
+                          const char *value, lv_event_cb_t callback, void *data)
+{
+    lv_obj_t *object = ui_row(parent, icon, color, text, value, NULL, NULL);
+    lv_obj_set_clickable(object, callback != NULL);
+    if (callback) lv_port_set_focusable(object);
+    add_event(object, callback, LV_EVENT_CLICKED, data);
+    return object;
+}
+
 static void render(casa_ui_t *ui);
 static void all_devices(casa_ui_t *ui, lv_obj_t *page);
 static void make_unit(casa_ui_t *ui, lv_obj_t *parent, tile_t *tile, int width, const casa_entity_t *entity);
@@ -101,6 +160,22 @@ static void home_update(casa_ui_t *ui);
 static void alarm_action(const casa_entity_t *entity, const char *service);
 static void alarm_menu(lv_event_t *event);
 static void alarm_options(lv_obj_t *menu, const casa_entity_t *entity);
+
+static bool open_embedded(casa_ui_t *ui, int view, const char *id)
+{
+#if CONFIG_APPKIT_HOSTED
+    if (ui->embedded)
+    {
+        casa_open_view(view, id);
+        return true;
+    }
+#else
+    (void)ui;
+    (void)view;
+    (void)id;
+#endif
+    return false;
+}
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
@@ -170,6 +245,7 @@ static void find_entity(casa_ui_t *ui, const char *id, casa_entity_t *out, bool 
 
 static void open_detail(casa_ui_t *ui, const char *id)
 {
+    if (open_embedded(ui, DETAIL, id)) return;
     snprintf(ui->selected, sizeof(ui->selected), "%s", id);
     ui->detail_parent = ui->view;
     ui->view = DETAIL;
@@ -178,7 +254,7 @@ static void open_detail(casa_ui_t *ui, const char *id)
 
 static void tile_event(lv_event_t *e)
 {
-    tile_t *t = lv_event_get_user_data(e);
+    tile_t *t = event_data(e);
     casa_entity_t entity;
     bool found;
     find_entity(s_ui, t->id, &entity, &found);
@@ -279,8 +355,8 @@ static lv_obj_t *make_tile(casa_ui_t *ui, lv_obj_t *parent, tile_t *t, int w)
     lv_obj_set_height(t->state, lv_font_get_line_height(UI_FONT_SMALL));
     lv_obj_align(t->state, LV_ALIGN_TOP_LEFT, 0, 60);
     t->tile = tile;
-    lv_obj_add_event_cb(tile, tile_event, LV_EVENT_CLICKED, t);
-    lv_obj_add_event_cb(tile, tile_event, LV_EVENT_LONG_PRESSED, t);
+    add_event(tile, tile_event, LV_EVENT_CLICKED, t);
+    add_event(tile, tile_event, LV_EVENT_LONG_PRESSED, t);
     lv_port_set_focusable(tile);
     (void)ui;
     return tile;
@@ -289,6 +365,7 @@ static lv_obj_t *make_tile(casa_ui_t *ui, lv_obj_t *parent, tile_t *t, int w)
 static void open_settings(lv_event_t *e)
 {
     (void)e;
+    if (open_embedded(s_ui, SETTINGS, NULL)) return;
     s_ui->view = SETTINGS;
     render(s_ui);
 }
@@ -303,7 +380,7 @@ static void summary_text(casa_ui_t *ui, int count, char *out, size_t size)
 static void mode_event(lv_event_t *event)
 {
     s_ui->view = HOME;
-    s_ui->group_mode = (int)(intptr_t)lv_event_get_user_data(event);
+    s_ui->group_mode = (int)(intptr_t)event_data(event);
     snprintf(s_ui->group, sizeof(s_ui->group), "%s", s_ui->group_mode == 3 ? "Tutti" : "");
     if (s_ui->group_mode == 3) s_ui->show_unavailable = true;
     s_ui->page = 0;
@@ -312,7 +389,7 @@ static void mode_event(lv_event_t *event)
 
 static void group_event(lv_event_t *event)
 {
-    const char *name = lv_event_get_user_data(event);
+    const char *name = event_data(event);
     snprintf(s_ui->group, sizeof(s_ui->group), "%s", name);
     s_ui->page = 0;
     render(s_ui);
@@ -320,7 +397,7 @@ static void group_event(lv_event_t *event)
 
 static void page_event(lv_event_t *event)
 {
-    s_ui->page += (int)(intptr_t)lv_event_get_user_data(event);
+    s_ui->page += (int)(intptr_t)event_data(event);
     if (s_ui->page < 0) s_ui->page = 0;
     render(s_ui);
 }
@@ -349,14 +426,15 @@ static void pager(lv_obj_t *page, int count)
     char text[48];
     snprintf(text, sizeof(text), "Pagina %d di %d", s_ui->page + 1, (count + ((s_ui->view == HOME && s_ui->group_mode != 3) || s_ui->view == DEVICE ? 11 : 5)) / ((s_ui->view == HOME && s_ui->group_mode != 3) || s_ui->view == DEVICE ? 12 : 6));
     ui_text(page, text, true);
-    if (s_ui->page) ui_button(page, "Precedenti", C_OFF, page_event, (void *)-1);
-    if ((s_ui->page + 1) * ((s_ui->view == HOME && s_ui->group_mode != 3) || s_ui->view == DEVICE ? 12 : 6) < count) ui_button(page, "Successivi", C_OFF, page_event, (void *)1);
+    if (s_ui->page) casa_button(page, "Precedenti", C_OFF, page_event, (void *)-1);
+    if ((s_ui->page + 1) * ((s_ui->view == HOME && s_ui->group_mode != 3) || s_ui->view == DEVICE ? 12 : 6) < count) casa_button(page, "Successivi", C_OFF, page_event, (void *)1);
 }
 
 
 static void show_overview(lv_event_t *event)
 {
     (void)event;
+    if (s_ui->embedded) { app_home(); return; }
     s_ui->view = OVERVIEW;
     render(s_ui);
 }
@@ -371,7 +449,7 @@ static void show_offline(lv_event_t *event)
 
 static lv_obj_t *panel_button(lv_obj_t *parent, const char *text, uint32_t color, lv_event_cb_t callback, void *data)
 {
-    lv_obj_t *button = ui_button(parent, text, color, callback, data);
+    lv_obj_t *button = casa_button(parent, text, color, callback, data);
     lv_obj_set_height(button, 44);
     lv_obj_set_width(button, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(button, 14, 0);
@@ -383,6 +461,13 @@ static lv_obj_t *panel_button(lv_obj_t *parent, const char *text, uint32_t color
 
 static const casa_entity_t *quick_entity(casa_ui_t *ui, int kind)
 {
+    if (kind == CASA_ALARM)
+    {
+        for (int i = 0; i < ui->status_now.count; i++)
+            if (!strcmp(ui->list[i].id, "alarm_control_panel.alarmo")) return &ui->list[i];
+        for (int i = 0; i < ui->status_now.count; i++)
+            if (ui->list[i].kind == CASA_ALARM && (strstr(ui->list[i].id, "alarmo") || !strcmp(ui->list[i].name, "Alarmo"))) return &ui->list[i];
+    }
     const casa_entity_t *found = NULL;
     for (int i = 0; i < ui->status_now.count; i++)
         if (ui->list[i].kind == kind && (!found || (!found->available && ui->list[i].available))) found = &ui->list[i];
@@ -391,7 +476,7 @@ static const casa_entity_t *quick_entity(casa_ui_t *ui, int kind)
 
 static void quick_event(lv_event_t *event)
 {
-    int index = (int)(intptr_t)lv_event_get_user_data(event);
+    int index = (int)(intptr_t)event_data(event);
     casa_ui_t *ui = s_ui;
     if (index == 0 || index == 2 || index == 4)
     {
@@ -403,6 +488,7 @@ static void quick_event(lv_event_t *event)
     }
     else
     {
+        if (open_embedded(ui, index == 1 ? ENVIRONMENT : ENERGY, NULL)) return;
         ui->view = index == 1 ? ENVIRONMENT : ENERGY;
         ui->page = 0; ui->show_unavailable = true;
         render(ui);
@@ -411,49 +497,39 @@ static void quick_event(lv_event_t *event)
 
 static void navigation_event(lv_event_t *event)
 {
-    int action = (int)(intptr_t)lv_event_get_user_data(event);
+    int action = (int)(intptr_t)event_data(event);
     if (action == 1) app_home();
+#if CONFIG_APPKIT_HOSTED
+    else if (action == 2 && settings_get()->homepage == 1) apps_show_home_tile(1, 2);
+    else if (action == 3) apps_show_home_tile(2, 1);
+    else if (action == 0 && s_ui->embedded)
+    {
+        if (s_ui->view == OVERVIEW) apps_show_home_tile(0, 1);
+        else if (s_ui->group[0] && s_ui->group_mode != 3)
+        {
+            s_ui->group[0] = 0; s_ui->page = 0; render(s_ui);
+        }
+        else app_home();
+    }
+#else
+    else if (action == 3) app_open("launcher.all", NULL);
+#endif
     else if (action == 2)
     {
         s_ui->view = HOME; s_ui->group_mode = 3; s_ui->page = 0; s_ui->show_unavailable = true;
         s_ui->group[0] = 0; render(s_ui);
     }
-    else if (action == 3) app_open("launcher.all", NULL);
-    else if (settings_get()->homepage == 1 && s_ui->view == OVERVIEW)
-    {
-#if CONFIG_APPKIT_HOSTED
-        apps_show_home_tile(0, 1);
-#endif
-    }
     else app_back();
 }
 
-static void overview_gesture(lv_event_t *event)
-{
-    (void)event;
-    if (!s_ui || s_ui->view != OVERVIEW || settings_get()->homepage != 1) return;
-    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
-    lv_indev_wait_release(lv_indev_active());
-#if CONFIG_APPKIT_HOSTED
-    if (dir == LV_DIR_RIGHT) apps_show_home_tile(0, 1);
-    else if (dir == LV_DIR_LEFT) apps_show_home_tile(2, 1);
-    else if (dir == LV_DIR_BOTTOM) apps_show_home_tile(1, 0);
-    else if (dir == LV_DIR_TOP)
-    {
-        s_ui->view = HOME; s_ui->group_mode = 3; s_ui->page = 0; s_ui->show_unavailable = true;
-        s_ui->group[0] = 0; render(s_ui);
-    }
-#endif
-}
-
-static int navigation_height(void) { return board_info()->round ? 36 : 40; }
+static int navigation_height(void) { return board_info()->round ? 48 : 40; }
 
 static void navigation(casa_ui_t *ui)
 {
     int w = board_info()->width, h = navigation_height();
     ui->navigation = plain(ui->screen);
     lv_obj_set_size(ui->navigation, board_info()->round ? w * 52 / 100 : w - 24, h - 4);
-    lv_obj_align(ui->navigation, LV_ALIGN_BOTTOM_MID, 0, board_info()->round ? -10 : -2);
+    lv_obj_align(ui->navigation, LV_ALIGN_BOTTOM_MID, 0, board_info()->round ? -18 : -2);
     lv_obj_set_flex_flow(ui->navigation, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(ui->navigation, 4, 0);
     const char *titles[] = {"Indietro", "Home", "Tutte", "App"};
@@ -584,12 +660,12 @@ static void overview(casa_ui_t *ui)
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(card, 20, 0);
         lv_obj_set_clickable(card, true);
-        lv_obj_add_event_cb(card, quick_event, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        add_event(card, quick_event, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         lv_port_set_focusable(card);
         lv_obj_t *icon = label(card, UI_FONT_ICON, colors[i], icons[i]);
         lv_obj_set_pos(icon, 14, 12);
         lv_obj_set_hidden(icon, round);
-        lv_obj_t *name = label(card, round ? UI_FONT_SMALL : UI_FONT_BODY, C_INK, names[i]);
+        lv_obj_t *name = label(card, round || w < 400 ? UI_FONT_SMALL : UI_FONT_BODY, C_INK, names[i]);
         lv_obj_set_pos(name, 14, round ? 12 : card_height * 36 / 100);
         lv_obj_set_width(name, (width - 10) / 2 - 24);
         lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
@@ -617,7 +693,8 @@ static bool unit_available(casa_ui_t *ui, const char *id)
 
 static void unit_event(lv_event_t *event)
 {
-    tile_t *tile = lv_event_get_user_data(event);
+    tile_t *tile = event_data(event);
+    if (open_embedded(s_ui, DEVICE, tile->id)) return;
     snprintf(s_ui->selected_device, sizeof(s_ui->selected_device), "%.63s", tile->id);
     s_ui->device_parent = s_ui->view;
     s_ui->view = DEVICE;
@@ -671,7 +748,7 @@ static void make_unit(casa_ui_t *ui, lv_obj_t *parent, tile_t *tile, int width, 
     tile->unit = true;
     snprintf(tile->id, sizeof(tile->id), "%s", entity->device_id);
     lv_obj_remove_event_cb(tile->tile, tile_event);
-    lv_obj_add_event_cb(tile->tile, unit_event, LV_EVENT_CLICKED, tile);
+    add_event(tile->tile, unit_event, LV_EVENT_CLICKED, tile);
     lv_obj_set_height(tile->tile, 146);
     lv_label_set_text(tile->glyph, LV_SYMBOL_HOME);
     lv_obj_set_height(tile->state, 56);
@@ -775,7 +852,7 @@ static void home(casa_ui_t *ui)
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_START, b->round ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START,
                           b->round ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START);
     lv_obj_set_clickable(header, true);
-    lv_obj_add_event_cb(header, open_settings, LV_EVENT_CLICKED, NULL);
+    add_event(header, open_settings, LV_EVENT_CLICKED, NULL);
     lv_port_set_focusable(header);
     lv_obj_t *brand = label(header, UI_FONT_SMALL, C_WARM, "CASA  " LV_SYMBOL_SETTINGS);
     lv_obj_set_style_text_letter_space(brand, 3, 0);
@@ -800,7 +877,7 @@ static void home(casa_ui_t *ui)
     const char *labels[] = {"Stanze", "Tipi", "Dashboard", "Tutte"};
     for (int i = 0; i < 4; i++)
     {
-        lv_obj_t *button = ui_button(modes, labels[i], ui->group_mode == i ? C_WARM : C_OFF, mode_event, (void *)(intptr_t)i);
+        lv_obj_t *button = casa_button(modes, labels[i], ui->group_mode == i ? C_WARM : C_OFF, mode_event, (void *)(intptr_t)i);
         lv_obj_set_width(button, LV_SIZE_CONTENT);
         lv_obj_set_height(button, 48);
         lv_obj_t *text = lv_obj_get_child(button, 0);
@@ -830,11 +907,11 @@ static void home(casa_ui_t *ui)
         if (ui->page * 12 >= ui->group_count) ui->page = 0;
         if (!ui->group_count) ui_text(page, "Nessun dispositivo disponibile. Tocca Mostra offline per consultare gli stati ricevuti da HA.", true);
         for (int i = ui->page * 12; i < ui->group_count && i < (ui->page + 1) * 12; i++)
-            ui_row(page, LV_SYMBOL_HOME, C_WARM, ui->groups[i], LV_SYMBOL_RIGHT, group_event, ui->groups[i]);
+            casa_row(page, LV_SYMBOL_HOME, C_WARM, ui->groups[i], LV_SYMBOL_RIGHT, group_event, ui->groups[i]);
         if (ui->group_count > 12) pager(page, ui->group_count);
         return;
     }
-    ui_row(page, LV_SYMBOL_LEFT, C_WARM, ui->group, "Tutti i gruppi", group_event, "");
+    casa_row(page, LV_SYMBOL_LEFT, C_WARM, ui->group, "Tutti i gruppi", group_event, "");
     int inner = b->round ? w * 78 / 100 : w - 28;
     int tile_w = (inner - 10) / 2;
     lv_obj_t *grid = plain(page);
@@ -998,7 +1075,7 @@ static void detail_button(lv_event_t *e)
     casa_entity_t entity;
     if (!casa_entity(ui->selected, &entity))
         return;
-    const char *what = lv_event_get_user_data(e);
+    const char *what = event_data(e);
     char domain[24];
     snprintf(domain, sizeof(domain), "%.*s", (int)strcspn(entity.id, "."), entity.id);
     if (strncmp(what, "rgb:", 4) == 0 || strncmp(what, "k:", 2) == 0)
@@ -1024,10 +1101,9 @@ static void detail_button(lv_event_t *e)
 
 static void lock_confirmed(bool confirmed, void *unused)
 {
-    (void)unused;
     casa_entity_t entity;
-    if (confirmed && casa_entity(s_ui->selected, &entity))
-        casa_tap(&entity);
+    if (confirmed && casa_entity(unused, &entity)) casa_tap(&entity);
+    free(unused);
 }
 
 static void lock_button(lv_event_t *e)
@@ -1037,7 +1113,10 @@ static void lock_button(lv_event_t *e)
     if (!casa_entity(s_ui->selected, &entity))
         return;
     if (strcmp(entity.state, "locked") == 0)
-        ui_confirm("Aprire la serratura?", entity.name, "Apri", 0xFF6B6B, lock_confirmed, NULL);
+        {
+        char *id = strdup(entity.id);
+        if (id) ui_confirm("Aprire la serratura?", entity.name, "Apri", 0xFF6B6B, lock_confirmed, id);
+    }
     else
         casa_tap(&entity);
 }
@@ -1063,7 +1142,7 @@ static void swatch(lv_obj_t *row, uint32_t colour, const char *what)
     lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(s, ui_color(0xFFFFFF), LV_STATE_PRESSED);
     lv_obj_set_style_border_width(s, 3, LV_STATE_PRESSED);
-    lv_obj_add_event_cb(s, detail_button, LV_EVENT_CLICKED, (void *)what);
+    add_event(s, detail_button, LV_EVENT_CLICKED, (void *)what);
     lv_port_set_focusable(s);
 }
 
@@ -1073,7 +1152,7 @@ static void step_dial(lv_event_t *event)
     if (!s_ui->dial || !casa_entity(s_ui->selected, &entity) || !entity.available || !s_ui->status_now.connected) return;
     int32_t step = entity.kind == CASA_CLIMATE ? (int32_t)lroundf((isnan(entity.temp_step) || entity.temp_step <= 0 ? .5f : entity.temp_step) * 10) : 5;
     if (step < 1) step = 1;
-    lv_arc_set_value(s_ui->dial, lv_arc_get_value(s_ui->dial) + step * (int)(intptr_t)lv_event_get_user_data(event));
+    lv_arc_set_value(s_ui->dial, lv_arc_get_value(s_ui->dial) + step * (int)(intptr_t)event_data(event));
     s_ui->pending = lv_arc_get_value(s_ui->dial);
     s_ui->pending_at = now_ms() + 350;
     char text[24];
@@ -1139,7 +1218,7 @@ static void alarm_menu(lv_event_t *event)
 {
     lv_obj_t *menu = lv_event_get_target(event);
     int index = lv_dropdown_get_selected(menu);
-    tile_t *tile = lv_event_get_user_data(event);
+    tile_t *tile = event_data(event);
     casa_entity_t entity;
     if (index > 0 && casa_entity(tile->id, &entity))
         for (int i = 0, option = 0; i < 6; i++)
@@ -1186,8 +1265,8 @@ static void climate_detail(casa_ui_t *ui, const casa_entity_t *entity)
     lv_obj_set_style_arc_color(ui->dial, ui_color(0x72DBD5), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(ui->dial, ui_color(C_INK), LV_PART_KNOB);
     lv_obj_set_style_pad_all(ui->dial, 4, LV_PART_KNOB);
-    lv_obj_add_event_cb(ui->dial, dial_event, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_add_event_cb(ui->dial, dial_event, LV_EVENT_RELEASED, NULL);
+    add_event(ui->dial, dial_event, LV_EVENT_VALUE_CHANGED, NULL);
+    add_event(ui->dial, dial_event, LV_EVENT_RELEASED, NULL);
     ui->dial_value = label(ui->dial, ui_font_big, C_INK, "");
     lv_obj_align(ui->dial_value, LV_ALIGN_CENTER, -48, 0);
     lv_obj_t *caption = label(ui->dial, UI_FONT_SMALL, C_MIST, "Temperatura\ndesiderata");
@@ -1264,8 +1343,8 @@ static void detail(casa_ui_t *ui)
         lv_obj_set_style_arc_rounded(ui->dial, true, LV_PART_INDICATOR);
         lv_obj_set_style_bg_color(ui->dial, ui_color(0xFFFFFF), LV_PART_KNOB);
         lv_obj_set_style_pad_all(ui->dial, 4, LV_PART_KNOB);
-        lv_obj_add_event_cb(ui->dial, dial_event, LV_EVENT_VALUE_CHANGED, NULL);
-        lv_obj_add_event_cb(ui->dial, dial_event, LV_EVENT_RELEASED, NULL);
+        add_event(ui->dial, dial_event, LV_EVENT_VALUE_CHANGED, NULL);
+        add_event(ui->dial, dial_event, LV_EVENT_RELEASED, NULL);
         ui->dial_value = label(ui->dial, ui_font_big, C_INK, "");
         lv_obj_center(ui->dial_value);
         dial_text(&e, value, text, sizeof(text));
@@ -1289,7 +1368,7 @@ static void detail(casa_ui_t *ui)
     case CASA_LIGHT:
     case CASA_SWITCH:
     case CASA_FAN:
-        ui->power_button = ui_button(row, e.on ? "Spegni" : "Accendi", e.on ? 0x2A2E38 : 0x3A6E9E, detail_button, (void *)"tap");
+        ui->power_button = casa_button(row, e.on ? "Spegni" : "Accendi", e.on ? 0x2A2E38 : 0x3A6E9E, detail_button, (void *)"tap");
         if (e.kind == CASA_LIGHT && e.supports_temp)
         {
             lv_obj_t *swatches = button_row(ui->controls);
@@ -1309,14 +1388,14 @@ static void detail(casa_ui_t *ui)
         }
         break;
     case CASA_COVER:
-        ui_button(row, "Apri", 0x3A6E9E, detail_button, (void *)"open_cover");
-        ui_button(row, "Stop", 0x2A2E38, detail_button, (void *)"stop_cover");
-        ui_button(row, "Chiudi", 0x3A6E9E, detail_button, (void *)"close_cover");
+        casa_button(row, "Apri", 0x3A6E9E, detail_button, (void *)"open_cover");
+        casa_button(row, "Stop", 0x2A2E38, detail_button, (void *)"stop_cover");
+        casa_button(row, "Chiudi", 0x3A6E9E, detail_button, (void *)"close_cover");
         break;
     case CASA_MEDIA:
-        ui_button(row, LV_SYMBOL_PREV, 0x2A2E38, detail_button, (void *)"media_previous_track");
-        ui_button(row, e.on ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY, 0xA0457E, detail_button, (void *)"media_play_pause");
-        ui_button(row, LV_SYMBOL_NEXT, 0x2A2E38, detail_button, (void *)"media_next_track");
+        casa_button(row, LV_SYMBOL_PREV, 0x2A2E38, detail_button, (void *)"media_previous_track");
+        casa_button(row, e.on ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY, 0xA0457E, detail_button, (void *)"media_play_pause");
+        casa_button(row, LV_SYMBOL_NEXT, 0x2A2E38, detail_button, (void *)"media_next_track");
         if (e.media_artist[0])
             ui_text(page, e.media_artist, true);
         break;
@@ -1338,7 +1417,7 @@ static void detail(casa_ui_t *ui)
         }
         break;
     case CASA_SCENE:
-        ui_button(row, "Avvia", 0x8C7A2E, detail_button, (void *)"tap");
+        casa_button(row, "Avvia", 0x8C7A2E, detail_button, (void *)"tap");
         break;
     case CASA_ALARM:
     {
@@ -1346,11 +1425,11 @@ static void detail(casa_ui_t *ui)
         snprintf(tile->id, sizeof(tile->id), "%s", e.id);
         lv_obj_t *menu = lv_dropdown_create(row);
         alarm_options(menu, &e);
-        lv_obj_add_event_cb(menu, alarm_menu, LV_EVENT_VALUE_CHANGED, tile);
+        add_event(menu, alarm_menu, LV_EVENT_VALUE_CHANGED, tile);
         break;
     }
     case CASA_LOCK:
-        ui_button(row, strcmp(e.state, "locked") == 0 ? "Apri" : "Chiudi a chiave",
+        casa_button(row, strcmp(e.state, "locked") == 0 ? "Apri" : "Chiudi a chiave",
                   strcmp(e.state, "locked") == 0 ? 0xA0403A : 0x3A6E9E, lock_button, NULL);
         break;
     default:
@@ -1407,7 +1486,7 @@ static void detail_update(casa_ui_t *ui)
 
 static void settings_action(lv_event_t *e)
 {
-    if ((intptr_t)lv_event_get_user_data(e) == 1)
+    if ((intptr_t)event_data(e) == 1)
     {
         casa_reconnect();
         ui_toast("Ricollego");
@@ -1435,14 +1514,16 @@ static void settings(casa_ui_t *ui)
     ui_text(page, casa_web_code(), false);
 #endif
     ui->status = ui_text(page, ui->status_now.message, true);
-    ui_button(page, "Ricollega", 0x2A2E38, settings_action, (void *)1);
-    ui_button(page, "Esci", 0x2A2E38, settings_action, (void *)2);
+    casa_button(page, "Ricollega", 0x2A2E38, settings_action, (void *)1);
+    casa_button(page, "Esci", 0x2A2E38, settings_action, (void *)2);
 }
 
 /* ------------------------------------------------------------ frame */
 
 static void render(casa_ui_t *ui)
 {
+    casa_ui_t *previous = s_ui;
+    s_ui = ui;
     if (ui->content)
         lv_obj_delete(ui->content);
     if (ui->navigation) lv_obj_delete(ui->navigation);
@@ -1486,6 +1567,7 @@ static void render(casa_ui_t *ui)
     else
         settings(ui);
     navigation(ui);
+    s_ui = previous;
 }
 
 /* Rooms and ids in order: when this changes (new setup) the home is rebuilt. */
@@ -1509,9 +1591,8 @@ static void layout_signature(casa_ui_t *ui, char *out, size_t size)
     snprintf(out, size, "%d:%08lx", count, (unsigned long)hash);
 }
 
-static void tick(lv_timer_t *timer)
+static void update(casa_ui_t *ui)
 {
-    casa_ui_t *ui = lv_timer_get_user_data(timer);
     if (ui->view == DETAIL && ui->pending != INT32_MIN && (int32_t)(now_ms() - ui->pending_at) >= 0 &&
         !lv_obj_has_state(ui->dial, LV_STATE_PRESSED))
         send_dial(ui);
@@ -1519,7 +1600,7 @@ static void tick(lv_timer_t *timer)
     bool home_changed = ui->view == OVERVIEW && (ui->alarm_revision != state_get(STATE_ALARM_VERSION) || ui->weather_revision != state_get(STATE_WEATHER_VERSION));
     if (!home_changed && ui->status_now.revision == ui->revision && (ui->view != OVERVIEW || ui->clock_minute == (int)((time(NULL) / 60) % 60)))
         return;
-    if (power_screen() == POWER_SCREEN_OFF || lv_screen_active() != ui->screen)
+    if (power_screen() == POWER_SCREEN_OFF || lv_screen_active() != lv_obj_get_screen(ui->screen) || !lv_obj_is_visible(ui->screen))
         return;
     ui->revision = ui->status_now.revision;
     if (ui->view == HOME || ui->view == OVERVIEW || ui->view == DEVICE || ui->view == ENVIRONMENT || ui->view == ENERGY)
@@ -1542,76 +1623,122 @@ static void tick(lv_timer_t *timer)
         lv_label_set_text(ui->status, ui->status_now.message);
 }
 
+static void tick(lv_timer_t *timer)
+{
+    casa_ui_t *previous = s_ui;
+    casa_ui_t *ui = lv_timer_get_user_data(timer);
+    s_ui = ui;
+#if CONFIG_APPKIT_HOSTED
+    /* Another app may temporarily own AppKit. Reclaim Casa's dashboard when
+     * the native home becomes visible, without reopening the Casa app. */
+    if (ui->embedded && app_current() == NULL && lv_screen_active() == lv_obj_get_screen(ui->screen) && lv_obj_is_visible(ui->screen))
+        casa_web_start();
+#endif
+    update(ui);
+    s_ui = previous;
+}
+
 bool casa_ui_back(void)
 {
-    casa_ui_t *ui = s_ui;
-    if (ui == NULL) return false;
-    if (ui->view == OVERVIEW)
-    {
+    casa_ui_t *ui = s_app_ui;
+    if (!ui || ui->view == OVERVIEW) return false;
 #if CONFIG_APPKIT_HOSTED
-        if (settings_get()->homepage == 1) { power_sleep_now(); return true; }
-        return false;
-#else
-        extapp_return_to_launcher();
-        return true;
+    /* Close an intentional entry page back to the still-mounted shell, while
+     * nested device/detail pages retain their normal in-app back navigation. */
+    if (settings_get()->homepage == 1 && ui->view == ui->entry_view) return false;
 #endif
-    }
-    if (ui->view == DETAIL)
-    {
-        send_dial(ui);
-        ui->view = ui->detail_parent;
-    }
-    else if (ui->view == DEVICE)
-    {
-        ui->view = ui->device_parent; ui->group_mode = 3; ui->page = 0;
-    }
-    else if (ui->view == HOME && ui->group[0] && ui->group_mode != 3)
-    {
-        ui->group[0] = 0; ui->page = 0;
-    }
+    if (ui->view == DETAIL) { send_dial(ui); ui->view = ui->detail_parent; }
+    else if (ui->view == DEVICE) { ui->view = ui->device_parent; ui->page = 0; }
+    else if (ui->view == HOME && ui->group[0] && ui->group_mode != 3) { ui->group[0] = 0; ui->page = 0; }
     else ui->view = OVERVIEW;
     render(ui);
     return true;
 }
 
-bool casa_ui_home_active(void) { return s_ui && s_ui->view == OVERVIEW; }
-
-void casa_ui_home(void)
+void casa_ui_unmount(void *handle)
 {
-    if (!s_ui) return;
-    s_ui->view = OVERVIEW; s_ui->page = 0;
-    render(s_ui);
+    casa_ui_t *ui = handle;
+    if (!ui) return;
+    if (ui->view == DETAIL && ui->pending != INT32_MIN) send_dial(ui);
+    if (ui->timer) lv_timer_delete(ui->timer);
+    /* Shell roots are owned here. Standalone roots are already being deleted
+     * by the app manager; LVGL then releases their widget callback bindings. */
+    if (ui->embedded) lv_obj_delete(ui->screen);
+    free(ui->list);
+    free(ui);
 }
 
 void casa_ui_destroy(void)
 {
-    if (s_ui == NULL) return;
-    if (s_ui->timer) lv_timer_delete(s_ui->timer);
-    free(s_ui->list);
-    free(s_ui);
-    s_ui = NULL;
+    casa_ui_unmount(s_app_ui);
+    s_app_ui = NULL;
+}
+
+void casa_ui_show_all(void *handle)
+{
+    casa_ui_t *ui = handle;
+    if (!ui || (ui->view == HOME && ui->group_mode == 3 && ui->page == 0 && ui->show_unavailable)) return;
+    ui->view = HOME;
+    ui->group_mode = 3;
+    ui->page = 0;
+    ui->group[0] = 0;
+    ui->show_unavailable = true;
+    render(ui);
+}
+
+static casa_ui_t *create_ui(lv_obj_t *screen, bool embedded, int view, const char *id)
+{
+    casa_ui_t *ui = heap_caps_calloc(1, sizeof(*ui), MALLOC_CAP_SPIRAM);
+    if (ui) ui->list = heap_caps_calloc(CASA_ENTITIES, sizeof(casa_entity_t), MALLOC_CAP_SPIRAM);
+    if (!ui || !ui->list)
+    {
+        free(ui);
+        ui_text(ui_page(screen, "Casa"), "Memoria insufficiente", true);
+        return NULL;
+    }
+    ui->screen = screen;
+    ui->embedded = embedded;
+    ui->view = view;
+    ui->entry_view = view;
+    ui->detail_parent = OVERVIEW;
+    ui->device_parent = HOME;
+    ui->group_mode = 3;
+    ui->show_unavailable = true;
+    ui->pending = INT32_MIN;
+    if (id)
+    {
+        snprintf(ui->selected, sizeof(ui->selected), "%s", id);
+        snprintf(ui->selected_device, sizeof(ui->selected_device), "%.63s", id);
+    }
+    lv_obj_set_scrollable(screen, false);
+    lv_obj_set_style_bg_color(screen, ui_color(C_BG), 0);
+    casa_ui_t *previous = s_ui;
+    s_ui = ui;
+    /* Screen root bindings are owned by this instance, including on unmount. */
+    add_event(screen, knob_event, lv_port_knob_event(), NULL);
+    layout_signature(ui, ui->layout, sizeof(ui->layout));
+    render(ui);
+    ui->timer = lv_timer_create(tick, 120, ui);
+    s_ui = previous;
+    return ui;
+}
+
+void *casa_ui_mount(lv_obj_t *parent, bool all)
+{
+    /* An owned root makes unmount remove root event bindings as well. */
+    lv_obj_t *root = plain(parent);
+    lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
+    return create_ui(root, true, all ? HOME : OVERVIEW, NULL);
+}
+
+void casa_ui_create_view(lv_obj_t *screen, int view, const char *id)
+{
+    s_app_ui = create_ui(screen, false, view, id);
 }
 
 void casa_ui_create(lv_obj_t *screen)
 {
-    casa_ui_t *ui = heap_caps_calloc(1, sizeof(*ui), MALLOC_CAP_SPIRAM);
-    if (ui != NULL) ui->list = heap_caps_calloc(CASA_ENTITIES, sizeof(casa_entity_t), MALLOC_CAP_SPIRAM);
-    if (ui == NULL || ui->list == NULL)
-    {
-        free(ui);
-        ui_text(ui_page(screen, "Casa"), "Memoria insufficiente", true);
-        return;
-    }
-    s_ui = ui;
-    ui->screen = screen;
-    ui->view = OVERVIEW;
-    ui->pending = INT32_MIN;
-    lv_obj_set_style_bg_color(screen, ui_color(C_BG), 0);
-    lv_obj_add_event_cb(screen, knob_event, lv_port_knob_event(), NULL);
-    lv_obj_add_event_cb(screen, overview_gesture, LV_EVENT_GESTURE, NULL);
-    layout_signature(ui, ui->layout, sizeof(ui->layout));
-    render(ui);
-    ui->timer = lv_timer_create(tick, 120, ui);
+    casa_ui_create_view(screen, OVERVIEW, NULL);
 }
 
 #if CONFIG_WATCH_DEV_CONSOLE && !CONFIG_APPKIT_HOSTED
@@ -1620,14 +1747,14 @@ void casa_ui_create(lv_obj_t *screen)
 
 bool devcon_app_command(char *line)
 {
-    if (s_ui == NULL)
+    if (s_app_ui == NULL)
         return false;
     bool handled = true;
     lv_port_lock();
     if (strcmp(line, "view home") == 0)
-        s_ui->view = HOME;
+        s_app_ui->view = HOME;
     else if (strcmp(line, "view settings") == 0)
-        s_ui->view = SETTINGS;
+        s_app_ui->view = SETTINGS;
     else if (strncmp(line, "tap ", 4) == 0)
     {
         casa_entity_t entity;
@@ -1638,13 +1765,13 @@ bool devcon_app_command(char *line)
     }
     else if (strncmp(line, "detail ", 7) == 0)
     {
-        snprintf(s_ui->selected, sizeof(s_ui->selected), "%s", line + 7);
-        s_ui->view = DETAIL;
+        snprintf(s_app_ui->selected, sizeof(s_app_ui->selected), "%s", line + 7);
+        s_app_ui->view = DETAIL;
     }
     else
         handled = false;
     if (handled)
-        render(s_ui);
+        render(s_app_ui);
     lv_port_unlock();
     if (handled)
         printf("@OK %s\n", line);

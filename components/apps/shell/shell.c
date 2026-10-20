@@ -7,6 +7,9 @@
 #include "core/state.h"
 #include "services/notify.h"
 #include "ui/ui.h"
+#if CONFIG_APPKIT_HOSTED
+#include "casa.h"
+#endif
 
 #include <stdio.h>
 
@@ -20,6 +23,64 @@
 
 static lv_obj_t *s_tiles = NULL;
 static int s_last_notif_count = 0;
+static lv_obj_t *s_classic, *s_notifications;
+static lv_obj_t *s_casa_home, *s_casa_all;
+static bool s_casa_mode;
+#if CONFIG_APPKIT_HOSTED
+static void *s_home_component, *s_all_component;
+#endif
+
+static void show_bottom(bool notifications)
+{
+    lv_obj_set_hidden(s_notifications, s_casa_mode && !notifications);
+    lv_obj_set_hidden(s_casa_all, !s_casa_mode || notifications);
+}
+
+static lv_obj_t *container(lv_obj_t *parent)
+{
+    lv_obj_t *object = lv_obj_create(parent);
+    lv_obj_remove_style_all(object);
+    lv_obj_set_size(object, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_scrollable(object, false);
+    return object;
+}
+
+static void homepage_changed(lv_observer_t *observer, lv_subject_t *subject)
+{
+    (void)observer;
+    (void)subject;
+    bool casa = false;
+#if CONFIG_APPKIT_HOSTED
+    casa = settings_get()->homepage == 1;
+#endif
+    if (casa == s_casa_mode) return;
+    s_casa_mode = casa;
+    /* Hide the previous face before mounting its replacement. Returning Home
+     * only selects this tile; it never launches or reconstructs the Casa app. */
+    lv_obj_set_hidden(s_classic, casa);
+    lv_obj_set_hidden(s_casa_home, !casa);
+#if CONFIG_APPKIT_HOSTED
+    if (casa)
+    {
+        if (casa_acquire() == ESP_OK)
+        {
+            s_home_component = casa_ui_mount(s_casa_home, false);
+            s_all_component = casa_ui_mount(s_casa_all, true);
+        }
+        else ui_text(ui_page(s_casa_home, "Casa"), "Memoria insufficiente", true);
+    }
+    else
+    {
+        casa_ui_unmount(s_home_component);
+        casa_ui_unmount(s_all_component);
+        s_home_component = s_all_component = NULL;
+        lv_obj_clean(s_casa_home);
+        lv_obj_clean(s_casa_all);
+        casa_release();
+    }
+#endif
+    show_bottom(false);
+}
 
 void apps_show_home_tile(int col, int row)
 {
@@ -29,7 +90,22 @@ void apps_show_home_tile(int col, int row)
     }
 
     app_shell();
+    if (col == 1 && row == 2)
+    {
+        show_bottom(false);
+#if CONFIG_APPKIT_HOSTED
+        casa_ui_show_all(s_all_component);
+#endif
+    }
     lv_tileview_set_tile_by_index(s_tiles, (uint32_t)col, (uint32_t)row, LV_ANIM_OFF);
+}
+
+void apps_show_notifications(void)
+{
+    if (!s_tiles) return;
+    app_shell();
+    show_bottom(true);
+    lv_tileview_set_tile_by_index(s_tiles, 1, 2, LV_ANIM_OFF);
 }
 
 void shell_show_control_center(void)
@@ -46,13 +122,12 @@ static bool home_back(void)
     lv_obj_t *active = lv_tileview_get_tile_active(s_tiles);
     lv_obj_t *face = lv_obj_get_child(s_tiles, 0);
 
-    if (active == face)
-    {
-        return false;   /* already there: the app manager turns the screen off */
-    }
-
-    lv_tileview_set_tile_by_index(s_tiles, FACE_COL, FACE_ROW, LV_ANIM_ON);
-    return true;
+    bool centered = active == face && lv_obj_get_scroll_x(s_tiles) == lv_obj_get_x(face) &&
+                    lv_obj_get_scroll_y(s_tiles) == lv_obj_get_y(face);
+    /* Home also cancels a swipe that has not snapped to its destination yet.
+     * Never reveal a partially scrolled shell while closing an app. */
+    if (!centered) lv_tileview_set_tile_by_index(s_tiles, FACE_COL, FACE_ROW, LV_ANIM_OFF);
+    return !centered;
 }
 
 /* New notification while the screen is on: banner at the top. Call: full screen. */
@@ -87,19 +162,17 @@ static void notifications_changed(lv_observer_t *observer, lv_subject_t *subject
 }
 
 /* Launcher tile shown: pick up apps added to the SD card meanwhile. */
-static void selected_home_async(void *arg)
-{
-    (void)arg;
-    if (settings_get()->homepage == 1 && app_current() == NULL &&
-        lv_tileview_get_tile_active(s_tiles) == lv_obj_get_child(s_tiles, 0)) app_home();
-}
-
 static void tile_changed(lv_event_t *e)
 {
     lv_obj_t *tiles = lv_event_get_target_obj(e);
     lv_obj_t *active = lv_tileview_get_tile_active(tiles);
-    if (active == lv_obj_get_child(tiles, 0) && settings_get()->homepage == 1)
-        lv_async_call(selected_home_async, NULL);
+    if (active == lv_obj_get_child(tiles, 0))
+    {
+        show_bottom(false);
+#if CONFIG_APPKIT_HOSTED
+        casa_ui_show_all(s_all_component);
+#endif
+    }
 
     if (active == lv_obj_get_child(tiles, 3))   /* child 3 = app list (see below) */
     {
@@ -141,9 +214,15 @@ void shell_create(void)
     lv_obj_t *apps = lv_tileview_add_tile(s_tiles, 2, FACE_ROW, LV_DIR_LEFT);
     lv_obj_t *playing = lv_tileview_add_tile(s_tiles, 0, FACE_ROW, LV_DIR_RIGHT);
 
-    watchface_create(face);
+    s_classic = container(face);
+    s_casa_home = container(face);
+    s_notifications = container(notes);
+    s_casa_all = container(notes);
+    lv_obj_set_hidden(s_casa_home, true);
+    lv_obj_set_hidden(s_casa_all, true);
+    watchface_create(s_classic);
     control_center_create(control);
-    notifications_create(notes);
+    notifications_create(s_notifications);
     launcher_create(apps);
     now_playing_create(playing);
 
@@ -153,7 +232,9 @@ void shell_create(void)
     lv_subject_add_observer_obj(state_subject(STATE_NOTIF_VERSION), notifications_changed, s_tiles, NULL);
 
     lv_obj_add_event_cb(home, on_knob, lv_port_knob_event(), NULL);
+    /* Observers run immediately: compose the selected face before loading the
+     * shell, so even the very first frame cannot expose the classic face. */
+    lv_subject_add_observer_obj(state_subject(STATE_SETTINGS_VERSION), homepage_changed, home, NULL);
     app_manager_set_home(home, home_back);
     app_manager_set_aod(watchface_aod_create);
-    if (settings_get()->homepage == 1) app_home();
 }

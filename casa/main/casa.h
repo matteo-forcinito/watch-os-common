@@ -90,8 +90,15 @@ void casa_stop(void);
 void casa_ui_create(lv_obj_t *screen);
 void casa_ui_destroy(void);
 bool casa_ui_back(void);
-void casa_ui_home(void);
-bool casa_ui_home_active(void);
+/* Reusable shell pages, independent of the Casa app stack. LVGL task only. */
+void *casa_ui_mount(lv_obj_t *parent, bool all);
+void casa_ui_unmount(void *handle);
+void casa_ui_show_all(void *handle);
+void casa_ui_create_view(lv_obj_t *screen, int view, const char *id);
+void casa_open_view(int view, const char *id);
+esp_err_t casa_acquire(void);
+void casa_release(void);
+void casa_web_stop(void);
 void casa_status(casa_status_t *out);
 int casa_entities(casa_entity_t *out, int max);
 bool casa_entity(const char *id, casa_entity_t *out);

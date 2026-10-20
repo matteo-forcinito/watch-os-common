@@ -454,3 +454,8 @@ void appkit_web_stop(void)
         }
     }
 }
+
+void appkit_web_stop_if(const appkit_web_config_t *config)
+{
+    if (s_config == config) appkit_web_stop();
+}

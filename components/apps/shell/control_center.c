@@ -113,7 +113,7 @@ static void volume_changed(lv_event_t *e)
 static void open_notifications(lv_event_t *event)
 {
     (void)event;
-    apps_show_home_tile(1, 2);
+    apps_show_notifications();
 }
 
 void control_center_create(lv_obj_t *parent)

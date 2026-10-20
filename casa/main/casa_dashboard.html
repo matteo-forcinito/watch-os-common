@@ -99,6 +99,7 @@ function recommendationRank(entity){const domain=entity.id.split('.')[0];return 
 function recommended(){return catalog.filter(entity=>entity.state!==undefined && !['unavailable','unknown'].includes(entity.state)).sort((a,b)=>recommendationRank(a)-recommendationRank(b)||a.area.localeCompare(b.area,'it')).slice(0,limit);}
 function useRecommended(){const entities=recommended();if(!entities.length)return feedback('Reimporta il catalogo per leggere la disponibilita\u0300 aggiornata.',true);selected=new Map(entities.map(entity=>[entity.id,entity]));drawPicker();feedback(`${selected.size} entita\u0300 disponibili selezionate. Premi Salva per applicarle al pannello.`);}
 function setMode(next,group=''){mode=next;localStorage.casaPanelMode=mode;$('#group').value=group;render();}
+function primaryAlarm(){const alarms=state.entities.filter(e=>e.id.startsWith('alarm_control_panel.'));return alarms.find(e=>e.id==='alarm_control_panel.alarmo')||alarms.find(e=>/alarmo/i.test(e.id+' '+e.name))||alarms.find(isAvailable)||alarms[0];}
 function updatePanel(){
   const now=new Date();$('#panel-clock').textContent=now.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});$('#panel-date').textContent=now.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
   const available=state.entities.filter(isAvailable).length,unknown=state.entities.filter(e=>e.state==='unknown').length,offline=state.entities.filter(e=>e.state==='unavailable').length,waiting=state.entities.filter(e=>!e.known).length;
@@ -107,7 +108,7 @@ function updatePanel(){
   $('#panel-events').textContent=state.connected?(state.event_count?`${state.event_count} aggiornamenti ricevuti`:'Stati ricevuti da Home Assistant'):'Attendo il collegamento';
   $('#state-counts').textContent=state.entities.length?`${available} disponibili · ${offline} non disponibili in HA · ${unknown} con stato sconosciuto${waiting?' · '+waiting+' in attesa':''}`:'Scegli le entita\u0300 dalla configurazione per iniziare.';
   $('#quick-grid').replaceChildren();
-  const alarm=state.entities.find(e=>e.id.startsWith('alarm_control_panel.')),climate=state.entities.find(e=>e.id.startsWith('climate.'));
+  const alarm=primaryAlarm(),climate=state.entities.find(e=>e.id.startsWith('climate.'));
   const environments=physicalUnits(state.entities).filter(u=>u.entities.some(e=>e.device_class==='temperature'));
   const meters=physicalUnits(state.entities).filter(u=>u.entities.some(e=>e.id.startsWith('sensor.')&&['power','current','voltage'].includes(e.device_class)));
   const firstTemp=state.entities.find(e=>e.device_class==='temperature'&&isAvailable(e));
@@ -261,7 +262,7 @@ function entityCard(entity) {
   const info=document.createElement('details');info.className='entity-info';const summary=document.createElement('summary'),id=document.createElement('code');summary.textContent='Dettagli';id.textContent=entity.id;info.append(summary,id);card.append(info);
   return card;
 }
-function openAlarm(){const entity=state.entities.find(e=>e.id.startsWith('alarm_control_panel.'));if(!entity)return;$('#alarm-controls').replaceChildren(entityCard(entity));$('#alarm-dialog').showModal();}
+function openAlarm(){const entity=primaryAlarm();if(!entity)return;$('#alarm-controls').replaceChildren(entityCard(entity));$('#alarm-dialog').showModal();}
 function priorityCards(){
   const section=document.createElement('section');section.className='priority-grid';section.setAttribute('aria-label','Stato della casa');
   const availableFirst=entities=>[...entities].sort((a,b)=>Number(isAvailable(b))-Number(isAvailable(a)));

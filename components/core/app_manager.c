@@ -380,11 +380,6 @@ static void do_back_from(bool user)
 {
     if (s_depth == 0)
     {
-        if (settings_get()->homepage == 1 && app_find("casa"))
-        {
-            app_home();
-            return;
-        }
         if (s_home_back == NULL || !s_home_back())
         {
             power_sleep_now();   /* back at the watch face: like lowering the wrist */
@@ -442,25 +437,10 @@ static void do_shell(void)
 
 static void do_home(void)
 {
-    const app_t *target = settings_get()->homepage == 1 ? app_find("casa") : NULL;
-    if (!target) { do_shell(); return; }
-    int index = stack_index(target);
-    if (index >= 0)
-    {
-        while (s_depth > index + 1)
-        {
-            stack_entry_t entry = s_stack[--s_depth];
-            close_entry(&entry);
-        }
-        if (target->home) target->home();
-        show(s_stack[index].screen, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT);
-    }
-    else
-    {
-        do_shell();
-        /* Normal app dispatch waits for the shell transition and its GC. */
-        app_open_app(target, NULL);
-    }
+    /* Select the real central tile before exposing the shell. Its content is
+     * composed by shell.c; returning home never launches another app. */
+    if (s_home_back) s_home_back();
+    do_shell();
 }
 
 static void execute(const op_t *op)
@@ -695,7 +675,6 @@ static void screen_observer(lv_observer_t *observer, lv_subject_t *subject)
         }
 
         s_sleep_started_us = 0;
-        if (long_sleep && settings_get()->homepage == 1 && app_current() == NULL) app_home();
     }
 }
 
@@ -765,7 +744,6 @@ void app_manager_button(button_id_t button, button_event_t event)
 static bool back_gesture_allowed(void)
 {
     const app_t *app = app_current();
-    if (app && settings_get()->homepage == 1 && app->home_active && app->home_active()) return false;
     return app != NULL && !(app->flags & APP_FLAG_NO_BACK_GESTURE);
 }
 

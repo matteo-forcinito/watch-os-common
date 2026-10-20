@@ -21,6 +21,12 @@ const base='http://127.0.0.1:8769';
     assert.equal(await page.locator('#quick-grid .quick-card').count(),4);
     assert.equal(await page.locator('#cards:visible').count(),0,'Catalog is below the landing page gesture');
     assert.deepEqual(await page.locator('#quick-grid strong').allTextContents(),['Alarmo','Temperatura','Termostato','Consumi']);
+    await page.evaluate(()=>{const alarm=state.entities.find(e=>e.id==='alarm_control_panel.alarmo');state.entities.unshift({...alarm,id:'alarm_control_panel.panel',name:'Other panel'});updatePanel();});
+    await page.getByRole('button',{name:'Apri menu Alarmo'}).click();
+    assert((await page.locator('#alarm-controls').textContent()).includes('Alarmo'),'The quick menu must prefer Alarmo over another alarm panel');
+    assert(!(await page.locator('#alarm-controls').textContent()).includes('Other panel'));
+    await page.locator('#alarm-close').click();
+    await page.evaluate(()=>loadState());
     await page.locator('#panel-home').evaluate(element=>{
       element.dispatchEvent(new PointerEvent('pointerdown',{pointerType:'touch',clientX:200,clientY:350,bubbles:true}));
       element.dispatchEvent(new PointerEvent('pointerup',{pointerType:'touch',clientX:200,clientY:100,bubbles:true}));

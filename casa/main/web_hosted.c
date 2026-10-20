@@ -223,6 +223,7 @@ static esp_err_t home_preferences(httpd_req_t *request)
         settings_t settings = *settings_get();
         settings.homepage = choice->valueint;
         settings_save(&settings);
+        settings_flush();
     }
     cJSON_Delete(json);
     cJSON *out = cJSON_CreateObject();
@@ -392,3 +393,5 @@ const char *casa_web_address(void)
     appkit_web_url(address, sizeof(address));
     return address;
 }
+
+void casa_web_stop(void) { appkit_web_stop_if(&s_config); }
