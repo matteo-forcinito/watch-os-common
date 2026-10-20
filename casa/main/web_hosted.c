@@ -285,13 +285,26 @@ static esp_err_t catalog_cache(httpd_req_t *request)
         if (valid)
         {
             json = cJSON_CreateObject();
-            cJSON_AddItemToObject(json, "entities", cJSON_DetachItemFromObject(incoming, "entities"));
-            cJSON_AddStringToObject(json, "source", source);
-            cJSON_AddNumberToObject(json, "schema", 1);
-            cJSON_AddNumberToObject(json, "saved_at", (double)time(NULL));
+            if (json)
+            {
+                cJSON *owned = cJSON_DetachItemFromObject(incoming, "entities");
+                if (!cJSON_AddItemToObject(json, "entities", owned))
+                {
+                    cJSON_Delete(owned);
+                    cJSON_Delete(json);
+                    json = NULL;
+                }
+            }
+            if (json && (!cJSON_AddStringToObject(json, "source", source) ||
+                         !cJSON_AddNumberToObject(json, "schema", 1) ||
+                         !cJSON_AddNumberToObject(json, "saved_at", (double)time(NULL))))
+            {
+                cJSON_Delete(json);
+                json = NULL;
+            }
         }
         cJSON_Delete(incoming);
-        if (!json) return appkit_error(request, "400 Bad Request", "Catalogo non valido o troppo grande");
+        if (!json) return appkit_error(request, valid ? "503 Service Unavailable" : "400 Bad Request", valid ? "Memoria occupata; riprova" : "Catalogo non valido o troppo grande");
     }
     if (!storage_files_acquire()) { cJSON_Delete(json); return appkit_error(request, "503 Service Unavailable", "Archiviazione occupata; riprova"); }
     bool ok = storage_config_path("casa-catalog.json", path, sizeof(path));
