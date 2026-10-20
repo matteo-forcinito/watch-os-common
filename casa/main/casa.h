@@ -56,6 +56,7 @@ typedef struct
     bool on;                /* on / open / playing / home / unlocked... per kind */
     bool code_required, code_arm_required;
     int alarm_features;
+    uint8_t indoor_mode; /* 0 automatic, 1 explicitly indoors, 2 excluded */
     char state[24];         /* raw state */
     char unit[12];
     int brightness;         /* 0..100, -1 n/a */
@@ -89,6 +90,8 @@ void casa_stop(void);
 void casa_ui_create(lv_obj_t *screen);
 void casa_ui_destroy(void);
 bool casa_ui_back(void);
+void casa_ui_home(void);
+bool casa_ui_home_active(void);
 void casa_status(casa_status_t *out);
 int casa_entities(casa_entity_t *out, int max);
 bool casa_entity(const char *id, casa_entity_t *out);
@@ -113,5 +116,12 @@ esp_err_t casa_web_start(void);
 casa_kind_t casa_kind_of(const char *entity_id);
 const char *casa_state_text(const casa_entity_t *e, char *out, size_t size);
 const char *casa_type_name(const casa_entity_t *e);
+typedef struct
+{
+    float temperature, humidity, power_w;
+    int temperatures, humidities, meters, meters_available;
+} casa_home_stats_t;
+bool casa_is_indoor(const casa_entity_t *e, const casa_entity_t *list, int count);
+void casa_home_stats(const casa_entity_t *list, int count, casa_home_stats_t *out);
 
 #endif

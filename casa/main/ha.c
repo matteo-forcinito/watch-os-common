@@ -900,6 +900,8 @@ static void load_config(void)
         snprintf(e->device_name, sizeof(e->device_name), "%s", device_name ? device_name : "");
         const cJSON *device_class = cJSON_GetObjectItem(item, "device_class");
         snprintf(e->device_class, sizeof(e->device_class), "%s", cJSON_IsString(device_class) ? device_class->valuestring : "");
+        const cJSON *indoor = cJSON_GetObjectItem(item, "indoor");
+        e->indoor_mode = cJSON_IsBool(indoor) ? (cJSON_IsTrue(indoor) ? 1 : 2) : 0;
         const cJSON *dashboard;
         int dashboard_index = 0;
         cJSON_ArrayForEach(dashboard, cJSON_GetObjectItem(item, "dashboards"))
@@ -1091,15 +1093,14 @@ esp_err_t casa_config_clear(void)
         if (result == ESP_OK) result = nvs_commit(nvs);
         nvs_close(nvs);
     }
-    char path[96];
-    if (result == ESP_OK && storage_config_path("casa.json", path, sizeof(path)))
+    const char *files[] = {"casa.json", "casa-catalog.json"};
+    for (int i = 0; result == ESP_OK && i < 2; i++)
     {
-        char other[104];
+        char path[96], other[104];
+        if (!storage_config_path(files[i], path, sizeof(path))) continue;
         remove(path);
-        snprintf(other, sizeof(other), "%s.bak", path);
-        remove(other);
-        snprintf(other, sizeof(other), "%s.tmp", path);
-        remove(other);
+        snprintf(other, sizeof(other), "%s.bak", path); remove(other);
+        snprintf(other, sizeof(other), "%s.tmp", path); remove(other);
     }
     storage_files_release();
     if (result == ESP_OK) casa_reconnect();
@@ -1427,4 +1428,64 @@ bool casa_tap(const casa_entity_t *e)
     default:
         return false;
     }
+}
+
+bool casa_is_indoor(const casa_entity_t *e, const casa_entity_t *list, int count)
+{
+    if (e->indoor_mode) return e->indoor_mode == 1;
+    if (!e->device_id[0]) return false;
+    char description[160];
+    snprintf(description, sizeof(description), "%s %s %s", e->name, e->device_name, e->area);
+    for (char *p = description; *p; p++) *p = (char)tolower((unsigned char)*p);
+    const char *outside[] = {"estern", "outdoor", "outside", "external", "balcon", "terraz", "giardin"};
+    for (unsigned i = 0; i < sizeof(outside) / sizeof(outside[0]); i++) if (strstr(description, outside[i])) return false;
+    /* Auto mode only includes physical environmental sensors, not CPU/diagnostic temperatures. */
+    for (int i = 0; i < count; i++)
+        if (!strcmp(list[i].device_id, e->device_id) && !strcmp(list[i].device_class, "humidity") && !strncmp(list[i].id, "sensor.", 7)) return true;
+    return false;
+}
+
+static bool numeric_state(const casa_entity_t *e, float *out)
+{
+    if (!e->known || !e->available || strncmp(e->id, "sensor.", 7)) return false;
+    char *end;
+    *out = strtof(e->state, &end);
+    return end != e->state && *end == 0 && isfinite(*out);
+}
+
+void casa_home_stats(const casa_entity_t *list, int count, casa_home_stats_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    for (int i = 0; i < count; i++)
+    {
+        const casa_entity_t *e = &list[i];
+        float value;
+        if (!strcmp(e->device_class, "power") && !strncmp(e->id, "sensor.", 7))
+        {
+            out->meters++;
+            if (numeric_state(e, &value))
+            {
+                out->power_w += value * (!strcmp(e->unit, "kW") ? 1000.0f : 1.0f);
+                out->meters_available++;
+            }
+        }
+        if (!numeric_state(e, &value)) continue;
+        if (!strcmp(e->device_class, "temperature") && casa_is_indoor(e, list, count))
+        {
+            if (!strcmp(e->unit, "\xC2\xB0" "F") || !strcmp(e->unit, "F")) value = (value - 32) * 5 / 9;
+            else if (!strcmp(e->unit, "K")) value -= 273.15f;
+            out->temperature += value;
+            out->temperatures++;
+        }
+        else if (!strcmp(e->device_class, "humidity") && value >= 0 && value <= 100)
+        {
+            bool included = false;
+            for (int j = 0; j < count; j++)
+                if (e->device_id[0] && !strcmp(e->device_id, list[j].device_id) && !strcmp(list[j].device_class, "temperature") && casa_is_indoor(&list[j], list, count)) included = true;
+            if (included) { out->humidity += value; out->humidities++; }
+        }
+    }
+    out->temperature = out->temperatures ? out->temperature / out->temperatures : NAN;
+    out->humidity = out->humidities ? out->humidity / out->humidities : NAN;
+    if (!out->meters_available) out->power_w = NAN;
 }

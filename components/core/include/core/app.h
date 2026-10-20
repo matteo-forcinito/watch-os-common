@@ -66,6 +66,8 @@ typedef struct app
     bool (*button)(button_id_t button, button_event_t event);
     /* One or two sentences for the app's details page ("" or NULL = none). */
     const char *about;
+    void (*home)(void); /* reset the selected home app to its landing page */
+    bool (*home_active)(void); /* landing page replaces the watch face gestures */
 } app_t;
 
 void app_register(const app_t *app);
@@ -94,6 +96,8 @@ void app_manager_set_close_confirm(void (*ask)(const app_t *app));
 
 /* Close everything, back to the watch face. */
 void app_home(void);
+/* Show the watch shell explicitly (launcher/control center), ignoring the home preference. */
+void app_shell(void);
 
 /* NULL while the home screen (watch shell) is shown. */
 const app_t *app_current(void);

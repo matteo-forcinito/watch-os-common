@@ -1,5 +1,7 @@
 # Collaudo della dashboard
 
+La home contiene quattro pulsanti, meteo/orologio e prossima sveglia. La suite verifica anche scelta Casa/Classica, accesso a Tutte con scorrimento verso l'alto, estremità dell'arco del termostato sul bordo destro, salvataggio del catalogo dopo il reimport e riapertura senza nuove richieste del catalogo a Home Assistant. Le preferenze dei sensori interni vengono conservate separatamente dal catalogo.
+
 `npm test` esegue anche `home-test.cjs`: reimportazione con credenziali salvate senza WebSocket dal browser, catalogo in due lotti, selezione conservata, sei card per pagina, Alarmo con PIN e annullamento, modalità supportate, corrente/tensione/potenza e termostato nella schermata 480×480. Il PIN di prova viene inviato solo al simulatore.
 
 Da questa cartella, con Node.js:

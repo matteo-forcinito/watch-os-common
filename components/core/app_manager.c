@@ -50,6 +50,7 @@ typedef enum
     OP_BACK_USER,
     OP_CLOSE,
     OP_CLOSE_OTHERS,
+    OP_SHELL,
 } op_type_t;
 
 typedef struct
@@ -379,6 +380,11 @@ static void do_back_from(bool user)
 {
     if (s_depth == 0)
     {
+        if (settings_get()->homepage == 1 && app_find("casa"))
+        {
+            app_home();
+            return;
+        }
         if (s_home_back == NULL || !s_home_back())
         {
             power_sleep_now();   /* back at the watch face: like lowering the wrist */
@@ -418,7 +424,7 @@ static void close_all(void)
     }
 }
 
-static void do_home(void)
+static void do_shell(void)
 {
     if (s_depth == 0)
     {
@@ -432,6 +438,29 @@ static void do_home(void)
 
     close_all();
     show(s_home, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT);
+}
+
+static void do_home(void)
+{
+    const app_t *target = settings_get()->homepage == 1 ? app_find("casa") : NULL;
+    if (!target) { do_shell(); return; }
+    int index = stack_index(target);
+    if (index >= 0)
+    {
+        while (s_depth > index + 1)
+        {
+            stack_entry_t entry = s_stack[--s_depth];
+            close_entry(&entry);
+        }
+        if (target->home) target->home();
+        show(s_stack[index].screen, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT);
+    }
+    else
+    {
+        do_shell();
+        /* Normal app dispatch waits for the shell transition and its GC. */
+        app_open_app(target, NULL);
+    }
 }
 
 static void execute(const op_t *op)
@@ -448,6 +477,9 @@ static void execute(const op_t *op)
 
         case OP_HOME:
             do_home();
+            break;
+        case OP_SHELL:
+            if (s_depth > 0) do_shell();
             break;
 
         case OP_BACK_USER:
@@ -579,6 +611,8 @@ void app_home(void)
     request(OP_HOME, NULL, NULL);
 }
 
+void app_shell(void) { request(OP_SHELL, NULL, NULL); }
+
 const app_t *app_current(void)
 {
     return s_depth > 0 ? s_stack[s_depth - 1].app : NULL;
@@ -661,6 +695,7 @@ static void screen_observer(lv_observer_t *observer, lv_subject_t *subject)
         }
 
         s_sleep_started_us = 0;
+        if (long_sleep && settings_get()->homepage == 1 && app_current() == NULL) app_home();
     }
 }
 
@@ -730,6 +765,7 @@ void app_manager_button(button_id_t button, button_event_t event)
 static bool back_gesture_allowed(void)
 {
     const app_t *app = app_current();
+    if (app && settings_get()->homepage == 1 && app->home_active && app->home_active()) return false;
     return app != NULL && !(app->flags & APP_FLAG_NO_BACK_GESTURE);
 }
 
@@ -737,7 +773,7 @@ static void back_gesture(void)
 {
     const app_t *app = app_current();
 
-    if (app != NULL && !(app->flags & APP_FLAG_NO_BACK_GESTURE))
+    if (back_gesture_allowed() && app != NULL && !(app->flags & APP_FLAG_NO_BACK_GESTURE))
     {
         app_back_user();
     }
@@ -747,6 +783,7 @@ void app_manager_set_focus_cb(void (*changed)(bool on))
 {
     s_focus_changed = changed;
 }
+
 
 void app_manager_set_home(lv_obj_t *home, bool (*home_back)(void))
 {

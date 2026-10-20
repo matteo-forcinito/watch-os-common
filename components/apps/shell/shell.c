@@ -2,6 +2,7 @@
 
 #include "apps/apps.h"
 #include "core/power.h"
+#include "core/settings.h"
 #include "core/lv_port.h"
 #include "core/state.h"
 #include "services/notify.h"
@@ -27,7 +28,7 @@ void apps_show_home_tile(int col, int row)
         return;
     }
 
-    app_home();
+    app_shell();
     lv_tileview_set_tile_by_index(s_tiles, (uint32_t)col, (uint32_t)row, LV_ANIM_OFF);
 }
 
@@ -86,10 +87,19 @@ static void notifications_changed(lv_observer_t *observer, lv_subject_t *subject
 }
 
 /* Launcher tile shown: pick up apps added to the SD card meanwhile. */
+static void selected_home_async(void *arg)
+{
+    (void)arg;
+    if (settings_get()->homepage == 1 && app_current() == NULL &&
+        lv_tileview_get_tile_active(s_tiles) == lv_obj_get_child(s_tiles, 0)) app_home();
+}
+
 static void tile_changed(lv_event_t *e)
 {
     lv_obj_t *tiles = lv_event_get_target_obj(e);
     lv_obj_t *active = lv_tileview_get_tile_active(tiles);
+    if (active == lv_obj_get_child(tiles, 0) && settings_get()->homepage == 1)
+        lv_async_call(selected_home_async, NULL);
 
     if (active == lv_obj_get_child(tiles, 3))   /* child 3 = app list (see below) */
     {
@@ -145,4 +155,5 @@ void shell_create(void)
     lv_obj_add_event_cb(home, on_knob, lv_port_knob_event(), NULL);
     app_manager_set_home(home, home_back);
     app_manager_set_aod(watchface_aod_create);
+    if (settings_get()->homepage == 1) app_home();
 }

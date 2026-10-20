@@ -30,6 +30,8 @@ const app_t casa_app = {
     .create = create,
     .destroy = destroy,
     .back = casa_ui_back,
+    .home = casa_ui_home,
+    .home_active = casa_ui_home_active,
     .about = "Home Assistant locale o via Nabu Casa: stanze, tipologie, dashboard e controlli in tempo reale. "
              "Tieni premuta l'ora sulla homepage per aprire Casa.",
 };

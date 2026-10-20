@@ -18,6 +18,13 @@
 #include "core/clock.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#include "core/settings.h"
+#include "core/state.h"
+#include "services/alarm.h"
+#include "services/weather.h"
+#if CONFIG_APPKIT_HOSTED
+#include "apps/apps.h"
+#endif
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #if CONFIG_APPKIT_HOSTED
@@ -35,7 +42,7 @@
 #include <string.h>
 #include <time.h>
 
-enum { HOME, DETAIL, SETTINGS, OVERVIEW, DEVICE };
+enum { HOME, DETAIL, SETTINGS, OVERVIEW, DEVICE, ENVIRONMENT, ENERGY };
 
 #define C_BG 0x0A0C10
 #define C_TILE 0x15181F
@@ -55,7 +62,7 @@ typedef struct
 
 typedef struct
 {
-    lv_obj_t *screen, *content, *summary, *status;
+    lv_obj_t *screen, *content, *summary, *status, *navigation;
     lv_timer_t *timer;
     int view;
     tile_t tiles[CASA_ENTITIES];
@@ -64,6 +71,11 @@ typedef struct
     bool show_unavailable;
     lv_obj_t *clock_label, *date_label, *category_count[4], *controls, *power_button;
     int clock_minute;
+    lv_obj_t *weather_hero, *weather_art, *weather_label, *quick_values[4];
+    int weather_code;
+    bool weather_night;
+    lv_obj_t *alarm_label;
+    int32_t alarm_revision, weather_revision;
     lv_obj_t *hvac_buttons[6];
     char group[CASA_NAME];
     char groups[CASA_ENTITIES * 4][CASA_NAME];
@@ -335,10 +347,10 @@ static bool in_group(const casa_entity_t *entity)
 static void pager(lv_obj_t *page, int count)
 {
     char text[48];
-    snprintf(text, sizeof(text), "Pagina %d di %d", s_ui->page + 1, (count + (s_ui->view == OVERVIEW ? 5 : 11)) / (s_ui->view == OVERVIEW ? 6 : 12));
+    snprintf(text, sizeof(text), "Pagina %d di %d", s_ui->page + 1, (count + ((s_ui->view == HOME && s_ui->group_mode != 3) || s_ui->view == DEVICE ? 11 : 5)) / ((s_ui->view == HOME && s_ui->group_mode != 3) || s_ui->view == DEVICE ? 12 : 6));
     ui_text(page, text, true);
     if (s_ui->page) ui_button(page, "Precedenti", C_OFF, page_event, (void *)-1);
-    if ((s_ui->page + 1) * (s_ui->view == OVERVIEW ? 6 : 12) < count) ui_button(page, "Successivi", C_OFF, page_event, (void *)1);
+    if ((s_ui->page + 1) * ((s_ui->view == HOME && s_ui->group_mode != 3) || s_ui->view == DEVICE ? 12 : 6) < count) ui_button(page, "Successivi", C_OFF, page_event, (void *)1);
 }
 
 
@@ -369,21 +381,114 @@ static lv_obj_t *panel_button(lv_obj_t *parent, const char *text, uint32_t color
     return button;
 }
 
+static const casa_entity_t *quick_entity(casa_ui_t *ui, int kind)
+{
+    const casa_entity_t *found = NULL;
+    for (int i = 0; i < ui->status_now.count; i++)
+        if (ui->list[i].kind == kind && (!found || (!found->available && ui->list[i].available))) found = &ui->list[i];
+    return found;
+}
+
+static void quick_event(lv_event_t *event)
+{
+    int index = (int)(intptr_t)lv_event_get_user_data(event);
+    casa_ui_t *ui = s_ui;
+    if (index == 0 || index == 2 || index == 4)
+    {
+        const casa_entity_t *entity = quick_entity(ui, index == 2 ? CASA_CLIMATE : CASA_ALARM);
+        if (!entity) { ui_toast("Seleziona l'entita' da Configura sul PC"); return; }
+        if (index == 0 && (!strcmp(entity->state, "disarmed") || !strcmp(entity->state, "armed_away")))
+            alarm_action(entity, !strcmp(entity->state, "disarmed") ? "alarm_arm_away" : "alarm_disarm");
+        else open_detail(ui, entity->id);
+    }
+    else
+    {
+        ui->view = index == 1 ? ENVIRONMENT : ENERGY;
+        ui->page = 0; ui->show_unavailable = true;
+        render(ui);
+    }
+}
+
+static void navigation_event(lv_event_t *event)
+{
+    int action = (int)(intptr_t)lv_event_get_user_data(event);
+    if (action == 1) app_home();
+    else if (action == 2)
+    {
+        s_ui->view = HOME; s_ui->group_mode = 3; s_ui->page = 0; s_ui->show_unavailable = true;
+        s_ui->group[0] = 0; render(s_ui);
+    }
+    else if (action == 3) app_open("launcher.all", NULL);
+    else if (settings_get()->homepage == 1 && s_ui->view == OVERVIEW)
+    {
+#if CONFIG_APPKIT_HOSTED
+        apps_show_home_tile(0, 1);
+#endif
+    }
+    else app_back();
+}
+
+static void overview_gesture(lv_event_t *event)
+{
+    (void)event;
+    if (!s_ui || s_ui->view != OVERVIEW || settings_get()->homepage != 1) return;
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+    lv_indev_wait_release(lv_indev_active());
+#if CONFIG_APPKIT_HOSTED
+    if (dir == LV_DIR_RIGHT) apps_show_home_tile(0, 1);
+    else if (dir == LV_DIR_LEFT) apps_show_home_tile(2, 1);
+    else if (dir == LV_DIR_BOTTOM) apps_show_home_tile(1, 0);
+    else if (dir == LV_DIR_TOP)
+    {
+        s_ui->view = HOME; s_ui->group_mode = 3; s_ui->page = 0; s_ui->show_unavailable = true;
+        s_ui->group[0] = 0; render(s_ui);
+    }
+#endif
+}
+
+static int navigation_height(void) { return board_info()->round ? 36 : 40; }
+
+static void navigation(casa_ui_t *ui)
+{
+    int w = board_info()->width, h = navigation_height();
+    ui->navigation = plain(ui->screen);
+    lv_obj_set_size(ui->navigation, board_info()->round ? w * 52 / 100 : w - 24, h - 4);
+    lv_obj_align(ui->navigation, LV_ALIGN_BOTTOM_MID, 0, board_info()->round ? -10 : -2);
+    lv_obj_set_flex_flow(ui->navigation, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(ui->navigation, 4, 0);
+    const char *titles[] = {"Indietro", "Home", "Tutte", "App"};
+    const char *icons[] = {LV_SYMBOL_LEFT, LV_SYMBOL_HOME, LV_SYMBOL_LIST, LV_SYMBOL_BARS};
+    for (int i = 0; i < 4; i++)
+    {
+        lv_obj_t *button = panel_button(ui->navigation, board_info()->round ? icons[i] : titles[i], C_OFF, navigation_event, (void *)(intptr_t)i);
+        lv_obj_set_height(button, h - 4);
+        lv_obj_set_flex_grow(button, 1);
+        lv_obj_set_width(button, 1);
+        lv_obj_set_style_pad_all(button, 2, 0);
+    }
+}
+
 static void overview_update(casa_ui_t *ui)
 {
-    int count = casa_entities(ui->list, CASA_ENTITIES);
+    casa_entities(ui->list, CASA_ENTITIES);
     char text[128];
-    summary_text(ui, count, text, sizeof(text));
-    if (ui->summary) lv_label_set_text(ui->summary, text);
-    if (ui->status)
+    ui->alarm_revision = state_get(STATE_ALARM_VERSION);
+    ui->weather_revision = state_get(STATE_WEATHER_VERSION);
+    alarm_t next_alarm;
+    time_t alarm_when;
+    if (alarm_next(&next_alarm, &alarm_when))
     {
-        lv_label_set_text(ui->status, ui->status_now.connected ? "Home Assistant  " LV_SYMBOL_OK : ui->status_now.message);
-        lv_obj_set_style_text_color(ui->status, ui_color(ui->status_now.connected ? C_OK : C_WARM), 0);
+        struct tm alarm_time;
+        localtime_r(&alarm_when, &alarm_time);
+        snprintf(text, sizeof(text), LV_SYMBOL_BELL "  %02d:%02d", alarm_time.tm_hour, alarm_time.tm_min);
     }
+    else snprintf(text, sizeof(text), LV_SYMBOL_BELL "  Sveglia off");
+    lv_label_set_text(ui->alarm_label, text);
     time_t now = time(NULL);
     struct tm local;
     localtime_r(&now, &local);
-    if (ui->clock_label && ui->clock_minute != local.tm_min)
+    bool new_minute = ui->clock_minute != local.tm_min;
+    if (new_minute)
     {
         ui->clock_minute = local.tm_min;
         strftime(text, sizeof(text), clock_is_valid() ? "%H:%M" : "--:--", &local);
@@ -391,100 +496,114 @@ static void overview_update(casa_ui_t *ui)
         static const char *days[] = {"Domenica", "Lunedi", "Martedi", "Mercoledi", "Giovedi", "Venerdi", "Sabato"};
         snprintf(text, sizeof(text), "%s %d/%02d", days[local.tm_wday], local.tm_mday, local.tm_mon + 1);
         lv_label_set_text(ui->date_label, clock_is_valid() ? text : "Sincronizzo l'orologio");
+        if (ui->status_now.connected) weather_refresh(7200);
     }
-    home_update(ui);
+    weather_t weather;
+    bool valid = weather_get(&weather);
+    bool night = clock_is_valid() ? local.tm_hour < 7 || local.tm_hour >= 19 : valid && !weather.is_day;
+    int code = valid ? weather.code : 0;
+    if (!ui->weather_art || code != ui->weather_code || night != ui->weather_night)
+    {
+        if (ui->weather_art) lv_obj_delete(ui->weather_art);
+        int side = board_info()->width * 45 / 100;
+        ui->weather_art = ui_weather_icon(ui->weather_hero, code, night, side);
+        lv_obj_align(ui->weather_art, LV_ALIGN_RIGHT_MID, side / 5, -6);
+        lv_obj_move_to_index(ui->weather_art, 0);
+        ui->weather_code = code; ui->weather_night = night;
+        lv_obj_set_style_bg_color(ui->weather_hero, ui_color(night ? 0x202846 : 0x384553), 0);
+        lv_obj_set_style_bg_grad_color(ui->weather_hero, ui_color(night ? 0x101728 : 0x17202C), 0);
+    }
+    if (valid) snprintf(text, sizeof(text), "%.1f C  %s", (double)weather.temp, weather.city);
+    else snprintf(text, sizeof(text), "Meteo in aggiornamento");
+    lv_label_set_text(ui->weather_label, text);
+    const casa_entity_t *alarm = quick_entity(ui, CASA_ALARM), *climate = quick_entity(ui, CASA_CLIMATE);
+    lv_label_set_text(ui->quick_values[0], alarm ? casa_state_text(alarm, text, sizeof(text)) : "Da selezionare");
+    casa_home_stats_t stats;
+    casa_home_stats(ui->list, ui->status_now.count, &stats);
+    if (stats.temperatures && stats.humidities) snprintf(text, sizeof(text), "%.1f C  %.0f %%  " LV_SYMBOL_RIGHT, (double)stats.temperature, (double)stats.humidity);
+    else if (stats.temperatures) snprintf(text, sizeof(text), "Media %.1f C  " LV_SYMBOL_RIGHT, (double)stats.temperature);
+    else snprintf(text, sizeof(text), "Scegli sensori interni");
+    lv_label_set_text(ui->quick_values[1], text);
+    if (!climate) snprintf(text, sizeof(text), "Da selezionare");
+    else if (!climate->known || !climate->available) casa_state_text(climate, text, sizeof(text));
+    else if (!isnan(climate->target_temp)) snprintf(text, sizeof(text), "%s  %.1f C  " LV_SYMBOL_RIGHT, climate->on ? "Acceso" : "Spento", (double)climate->target_temp);
+    else snprintf(text, sizeof(text), "%s  " LV_SYMBOL_RIGHT, climate->on ? "Acceso" : "Spento");
+    lv_label_set_text(ui->quick_values[2], text);
+    if (stats.meters_available) snprintf(text, sizeof(text), "%.0f W  %d/%d online", (double)stats.power_w, stats.meters_available, stats.meters);
+    else snprintf(text, sizeof(text), "%d misuratori offline", stats.meters);
+    lv_label_set_text(ui->quick_values[3], text);
+}
+
+static void open_alarm_clock(lv_event_t *event)
+{
+    (void)event;
+    app_open("alarms", NULL);
 }
 
 static void overview(casa_ui_t *ui)
 {
-    int width = board_info()->round ? board_info()->width * 78 / 100 : board_info()->width - 28;
-    lv_obj_t *page = ui_page(ui->content, NULL);
-    lv_obj_t *header = plain(page);
-    lv_obj_set_size(header, width, 54);
-    ui->clock_label = label(header, UI_FONT_LARGE, C_INK, "--:--");
-    lv_obj_align(ui->clock_label, LV_ALIGN_TOP_LEFT, 0, 0);
-    ui->date_label = label(header, UI_FONT_SMALL, C_MIST, "");
-    lv_obj_align(ui->date_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_t *settings = panel_button(header, LV_SYMBOL_SETTINGS, C_OFF, open_settings, NULL);
-    lv_obj_align(settings, LV_ALIGN_TOP_RIGHT, 0, 0);
-    ui->summary = label(page, UI_FONT_SMALL, C_MIST, "");
-    ui->status = label(page, UI_FONT_SMALL, C_OK, "");
-    lv_obj_set_width(ui->status, width);
-    lv_label_set_long_mode(ui->status, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_t *navigation = plain(page);
-    lv_obj_set_size(navigation, width, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(navigation, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_style_pad_column(navigation, 6, 0);
-    panel_button(navigation, "Stanze", C_OFF, mode_event, (void *)0);
-    panel_button(navigation, "Tipi", C_OFF, mode_event, (void *)1);
-    panel_button(navigation, "Dashboard", C_OFF, mode_event, (void *)2);
-    int count = casa_entities(ui->list, CASA_ENTITIES);
-    if (!count) ui_text(page, "Configura Home Assistant dal PC", true);
-    else
+    int w = board_info()->width, h = board_info()->height - navigation_height();
+    bool round = board_info()->round;
+    int margin = round ? w * 15 / 100 : 14, width = w - margin * 2;
+    int hero_top = round ? h * 12 / 100 : 12;
+    int hero_height = h * (round ? 32 : 42) / 100;
+    lv_obj_t *hero = plain(ui->content);
+    ui->weather_hero = hero;
+    lv_obj_set_pos(hero, margin, hero_top);
+    lv_obj_set_size(hero, width, hero_height);
+    lv_obj_set_style_radius(hero, 24, 0);
+    lv_obj_set_style_clip_corner(hero, true, 0);
+    lv_obj_set_style_bg_opa(hero, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_grad_dir(hero, LV_GRAD_DIR_HOR, 0);
+    ui->clock_label = label(hero, !round && w >= 400 ? ui_font_big : UI_FONT_LARGE, C_INK, "--:--");
+    lv_obj_set_pos(ui->clock_label, 18, hero_height * (round ? 14 : 9) / 100);
+    ui->date_label = label(hero, UI_FONT_SMALL, C_INK, "");
+    lv_obj_set_pos(ui->date_label, 20, hero_height - (round ? 44 : 58));
+    ui->weather_label = label(hero, UI_FONT_SMALL, 0xB9CBDD, "");
+    lv_obj_set_pos(ui->weather_label, 20, hero_height - (round ? 24 : 31));
+    lv_obj_set_width(ui->weather_label, width - 40);
+    lv_label_set_long_mode(ui->weather_label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_t *settings = panel_button(hero, LV_SYMBOL_SETTINGS, C_OFF, open_settings, NULL);
+    lv_obj_align(settings, LV_ALIGN_TOP_RIGHT, -10, 10);
+    lv_obj_t *alarm = panel_button(hero, LV_SYMBOL_BELL, C_OFF, open_alarm_clock, NULL);
+    lv_obj_set_pos(alarm, round ? width - 125 : 20, hero_height - (round ? 64 : 94));
+    lv_obj_set_height(alarm, round ? 22 : 28);
+    lv_obj_set_style_pad_ver(alarm, 0, 0);
+    ui->alarm_label = lv_obj_get_child(alarm, 0);
+    int top = hero_top + hero_height + (round ? 8 : 12), bottom = h - (round ? h * 12 / 100 : 24);
+    int card_height = (bottom - top - 10) / 2;
+    static const char *names[] = {"Alarmo", "Temperatura", "Termostato", "Consumi"};
+    static const char *icons[] = {LV_SYMBOL_WARNING, LV_SYMBOL_TINT, LV_SYMBOL_SETTINGS, LV_SYMBOL_CHARGE};
+    static const uint32_t colors[] = {0xB5A0EF, 0x79D4D4, 0xF3AD7B, 0x83BCEE};
+    for (int i = 0; i < 4; i++)
     {
-        ui_text(page, "La tua casa", false);
-        lv_obj_t *priority = plain(page);
-        lv_obj_set_size(priority, width, LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(priority, LV_FLEX_FLOW_ROW_WRAP);
-        lv_obj_set_style_pad_column(priority, 10, 0);
-        lv_obj_set_style_pad_row(priority, 10, 0);
-        int chosen[6], n = 0;
-        /* Pick available candidates first; keep offline priorities visible too. */
-        for (int kind = 0; kind < 2; kind++)
+        lv_obj_t *card = plain(ui->content);
+        lv_obj_set_pos(card, margin + (i % 2) * ((width + 10) / 2), top + (i / 2) * (card_height + 10));
+        lv_obj_set_size(card, (width - 10) / 2, card_height);
+        lv_obj_set_style_bg_color(card, ui_color(C_TILE), 0);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(card, 20, 0);
+        lv_obj_set_clickable(card, true);
+        lv_obj_add_event_cb(card, quick_event, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_port_set_focusable(card);
+        lv_obj_t *icon = label(card, UI_FONT_ICON, colors[i], icons[i]);
+        lv_obj_set_pos(icon, 14, 12);
+        lv_obj_set_hidden(icon, round);
+        lv_obj_t *name = label(card, round ? UI_FONT_SMALL : UI_FONT_BODY, C_INK, names[i]);
+        lv_obj_set_pos(name, 14, round ? 12 : card_height * 36 / 100);
+        lv_obj_set_width(name, (width - 10) / 2 - 24);
+        lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
+        ui->quick_values[i] = label(card, UI_FONT_SMALL, C_MIST, "");
+        lv_obj_set_pos(ui->quick_values[i], 14, card_height - 32);
+        lv_obj_set_width(ui->quick_values[i], (width - 10) / 2 - 24);
+        lv_label_set_long_mode(ui->quick_values[i], LV_LABEL_LONG_MODE_DOTS);
+        if (i == 0)
         {
-            int candidate = -1;
-            for (int i = 0; i < count; i++)
-                if (ui->list[i].kind == (kind ? CASA_CLIMATE : CASA_ALARM) &&
-                    (candidate < 0 || (!ui->list[candidate].available && ui->list[i].available))) candidate = i;
-            if (candidate >= 0) chosen[n++] = candidate;
+            lv_obj_t *menu = panel_button(card, LV_SYMBOL_DOWN, C_OFF, quick_event, (void *)4);
+            lv_obj_align(menu, LV_ALIGN_TOP_RIGHT, -4, 1);
+            lv_obj_set_height(menu, round ? 22 : 32);
+            if (round) { lv_obj_set_width(menu, 26); lv_obj_set_style_pad_all(menu, 0, 0); }
         }
-        int environments = 0;
-        for (int pass = 0; pass < 2; pass++)
-            for (int i = 0; i < count && environments < 2; i++)
-            {
-                casa_entity_t *e = &ui->list[i];
-                if (strcmp(e->device_class, "temperature") || !e->device_id[0] || e->available != (pass == 0)) continue;
-                bool humidity = false, duplicate = false;
-                for (int j = 0; j < count; j++)
-                    if (!strcmp(ui->list[j].device_id, e->device_id) && !strcmp(ui->list[j].device_class, "humidity")) humidity = true;
-                for (int j = 0; j < n; j++) if (!strcmp(ui->list[chosen[j]].device_id, e->device_id)) duplicate = true;
-                if (humidity && !duplicate) { chosen[n++] = i; environments++; }
-            }
-        for (int type = 0; type < 2 && n < 6; type++)
-            for (int pass = 0, done = 0; pass < 2 && !done; pass++)
-                for (int i = 0; i < count && !done; i++)
-                {
-                    casa_entity_t *e = &ui->list[i];
-                    bool match = type ? !strncmp(e->id, "sensor.", 7) && (!strcmp(e->device_class, "power") || !strcmp(e->device_class, "current") || !strcmp(e->device_class, "voltage")) :
-                        !strncmp(e->id, "binary_sensor.", 14) && (!strcmp(e->device_class, "motion") || !strcmp(e->device_class, "occupancy") || !strcmp(e->device_class, "presence"));
-                    if (match && e->available == (pass == 0)) { chosen[n++] = i; done = 1; }
-                }
-        for (int i = 0; i < n; i++)
-        {
-            casa_entity_t *entity = &ui->list[chosen[i]];
-            tile_t *tile = &ui->tiles[ui->tile_count++];
-            bool unit = entity->device_id[0] && (!strcmp(entity->device_class, "temperature") || !strcmp(entity->device_class, "power") || !strcmp(entity->device_class, "current") || !strcmp(entity->device_class, "voltage"));
-            if (unit) make_unit(ui, priority, tile, (width - 10) / 2, entity);
-            else
-            {
-                snprintf(tile->id, sizeof(tile->id), "%s", entity->id);
-                make_tile(ui, priority, tile, (width - 10) / 2);
-                update_tile(tile, entity);
-                if (entity->kind == CASA_ALARM)
-                {
-                    lv_obj_set_height(tile->tile, 146);
-                    lv_obj_t *menu = lv_dropdown_create(tile->tile);
-                    alarm_options(menu, entity);
-                    lv_obj_set_style_text_font(menu, UI_FONT_SMALL, 0);
-                    lv_obj_set_width(menu, (width - 10) / 2 - 24);
-                    lv_obj_align(menu, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-                    lv_obj_add_event_cb(menu, alarm_menu, LV_EVENT_VALUE_CHANGED, tile);
-                }
-            }
-        }
-        ui_text(page, "Tutti i dispositivi", false);
-        ui->show_unavailable = true;
-        all_devices(ui, page);
     }
     overview_update(ui);
 }
@@ -566,6 +685,9 @@ static void all_devices(casa_ui_t *ui, lv_obj_t *page)
     int count = casa_entities(ui->list, CASA_ENTITIES), heads = 0;
     for (int i = 0; i < count; i++)
     {
+        const casa_entity_t *candidate = &ui->list[i];
+        if (ui->view == ENVIRONMENT && strcmp(candidate->device_class, "temperature") && strcmp(candidate->device_class, "humidity") && strcmp(candidate->device_class, "battery")) continue;
+        if (ui->view == ENERGY && (strncmp(candidate->id, "sensor.", 7) || (strcmp(candidate->device_class, "power") && strcmp(candidate->device_class, "current") && strcmp(candidate->device_class, "voltage")))) continue;
         bool duplicate = false;
         if (ui->list[i].device_id[0])
             for (int j = 0; j < heads; j++)
@@ -578,7 +700,7 @@ static void all_devices(casa_ui_t *ui, lv_obj_t *page)
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_column(grid, 10, 0);
     lv_obj_set_style_pad_row(grid, 10, 0);
-    int page_size = ui->view == OVERVIEW ? 6 : 12;
+    int page_size = 6;
     int filtered = 0;
     for (int h = 0; h < heads; h++)
     {
@@ -1028,7 +1150,7 @@ static void alarm_menu(lv_event_t *event)
 
 static void climate_detail(casa_ui_t *ui, const casa_entity_t *entity)
 {
-    int width = board_info()->width, height = board_info()->height;
+    int width = board_info()->width, height = board_info()->height - navigation_height();
     lv_obj_t *page = plain(ui->content);
     lv_obj_set_size(page, width, height);
     lv_obj_set_style_bg_color(page, ui_color(0x1B232D), 0);
@@ -1048,12 +1170,14 @@ static void climate_detail(casa_ui_t *ui, const casa_entity_t *entity)
     lv_obj_set_width(ui->d_state, width - 48);
     lv_label_set_long_mode(ui->d_state, LV_LABEL_LONG_MODE_DOTS);
     int32_t min, max, value = dial_range(entity, &min, &max);
-    int side = width * 65 / 100;
+    int side = height * 72 / 100;
+    int radius = side / 2 - 5;
     ui->dial = lv_arc_create(page);
     lv_obj_set_size(ui->dial, side, side);
-    lv_obj_set_pos(ui->dial, width * 45 / 100, height * 29 / 100);
-    lv_arc_set_rotation(ui->dial, 135);
-    lv_arc_set_bg_angles(ui->dial, 0, 270);
+    lv_obj_set_pos(ui->dial, width - side / 2 - radius / 2, height * 25 / 100);
+    lv_obj_set_style_pad_all(ui->dial, 0, LV_PART_MAIN);
+    lv_arc_set_rotation(ui->dial, 60);
+    lv_arc_set_bg_angles(ui->dial, 0, 240);
     lv_arc_set_range(ui->dial, min, max);
     lv_arc_set_value(ui->dial, value);
     lv_obj_set_style_arc_width(ui->dial, 9, LV_PART_MAIN);
@@ -1065,10 +1189,10 @@ static void climate_detail(casa_ui_t *ui, const casa_entity_t *entity)
     lv_obj_add_event_cb(ui->dial, dial_event, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(ui->dial, dial_event, LV_EVENT_RELEASED, NULL);
     ui->dial_value = label(ui->dial, ui_font_big, C_INK, "");
-    lv_obj_align(ui->dial_value, LV_ALIGN_CENTER, -12, 0);
+    lv_obj_align(ui->dial_value, LV_ALIGN_CENTER, -48, 0);
     lv_obj_t *caption = label(ui->dial, UI_FONT_SMALL, C_MIST, "Temperatura\ndesiderata");
     lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(caption, LV_ALIGN_CENTER, -12, 56);
+    lv_obj_align(caption, LV_ALIGN_CENTER, -48, 56);
     ui->pending = INT32_MIN;
     ui->controls = plain(page);
     lv_obj_set_pos(ui->controls, 24, height * 36 / 100);
@@ -1321,14 +1445,18 @@ static void render(casa_ui_t *ui)
 {
     if (ui->content)
         lv_obj_delete(ui->content);
+    if (ui->navigation) lv_obj_delete(ui->navigation);
+    ui->navigation = NULL;
     ui->summary = ui->status = ui->dial = ui->dial_value = ui->d_state = ui->d_extra = NULL;
     ui->clock_label = ui->date_label = ui->controls = ui->power_button = NULL;
     memset(ui->hvac_buttons, 0, sizeof(ui->hvac_buttons));
     memset(ui->category_count, 0, sizeof(ui->category_count));
     ui->clock_minute = -1;
+    ui->weather_hero = ui->weather_art = ui->weather_label = NULL;
+    memset(ui->quick_values, 0, sizeof(ui->quick_values));
     ui->tile_count = 0;
     ui->content = plain(ui->screen);
-    lv_obj_set_size(ui->content, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_size(ui->content, board_info()->width, board_info()->height - navigation_height());
     lv_obj_set_style_bg_color(ui->content, ui_color(C_BG), 0);
     lv_obj_set_style_bg_opa(ui->content, LV_OPA_COVER, 0);
     lv_obj_move_to_index(ui->content, 0);
@@ -1340,6 +1468,14 @@ static void render(casa_ui_t *ui)
         home(ui);
         home_update(ui);
     }
+    else if (ui->view == ENVIRONMENT || ui->view == ENERGY)
+    {
+        lv_obj_t *page = ui_page(ui->content, NULL);
+        panel_button(page, LV_SYMBOL_HOME " Casa", C_OFF, show_overview, NULL);
+        ui_title(page, ui->view == ENERGY ? "Consumi" : "Temperatura e umidita'");
+        ui->show_unavailable = true;
+        all_devices(ui, page);
+    }
     else if (ui->view == DEVICE)
         device_page(ui);
     else if (ui->view == DETAIL)
@@ -1349,6 +1485,7 @@ static void render(casa_ui_t *ui)
     }
     else
         settings(ui);
+    navigation(ui);
 }
 
 /* Rooms and ids in order: when this changes (new setup) the home is rebuilt. */
@@ -1379,12 +1516,13 @@ static void tick(lv_timer_t *timer)
         !lv_obj_has_state(ui->dial, LV_STATE_PRESSED))
         send_dial(ui);
     casa_status(&ui->status_now);
-    if (ui->status_now.revision == ui->revision && (ui->view != OVERVIEW || ui->clock_minute == (int)((time(NULL) / 60) % 60)))
+    bool home_changed = ui->view == OVERVIEW && (ui->alarm_revision != state_get(STATE_ALARM_VERSION) || ui->weather_revision != state_get(STATE_WEATHER_VERSION));
+    if (!home_changed && ui->status_now.revision == ui->revision && (ui->view != OVERVIEW || ui->clock_minute == (int)((time(NULL) / 60) % 60)))
         return;
     if (power_screen() == POWER_SCREEN_OFF || lv_screen_active() != ui->screen)
         return;
     ui->revision = ui->status_now.revision;
-    if (ui->view == HOME || ui->view == OVERVIEW || ui->view == DEVICE)
+    if (ui->view == HOME || ui->view == OVERVIEW || ui->view == DEVICE || ui->view == ENVIRONMENT || ui->view == ENERGY)
     {
         char layout[32];
         layout_signature(ui, layout, sizeof(layout));
@@ -1411,6 +1549,7 @@ bool casa_ui_back(void)
     if (ui->view == OVERVIEW)
     {
 #if CONFIG_APPKIT_HOSTED
+        if (settings_get()->homepage == 1) { power_sleep_now(); return true; }
         return false;
 #else
         extapp_return_to_launcher();
@@ -1433,6 +1572,15 @@ bool casa_ui_back(void)
     else ui->view = OVERVIEW;
     render(ui);
     return true;
+}
+
+bool casa_ui_home_active(void) { return s_ui && s_ui->view == OVERVIEW; }
+
+void casa_ui_home(void)
+{
+    if (!s_ui) return;
+    s_ui->view = OVERVIEW; s_ui->page = 0;
+    render(s_ui);
 }
 
 void casa_ui_destroy(void)
@@ -1460,6 +1608,7 @@ void casa_ui_create(lv_obj_t *screen)
     ui->pending = INT32_MIN;
     lv_obj_set_style_bg_color(screen, ui_color(C_BG), 0);
     lv_obj_add_event_cb(screen, knob_event, lv_port_knob_event(), NULL);
+    lv_obj_add_event_cb(screen, overview_gesture, LV_EVENT_GESTURE, NULL);
     layout_signature(ui, ui->layout, sizeof(ui->layout));
     render(ui);
     ui->timer = lv_timer_create(tick, 120, ui);

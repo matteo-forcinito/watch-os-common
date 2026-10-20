@@ -58,6 +58,11 @@ static void set_defaults(settings_t *s)
 
 static void sanitize(settings_t *s)
 {
+    if (s->home_preferences_version != 1 || s->homepage > 1)
+    {
+        s->home_preferences_version = 1;
+        s->homepage = 0;
+    }
     if (s->remote_preferences_version != 1)
     {
         s->remote_ui_enabled = false;

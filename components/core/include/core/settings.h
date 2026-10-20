@@ -72,6 +72,8 @@ typedef struct
     bool remote_ui_enabled;      /* opt-in fallback mirroring; default off */
     uint32_t ecos_preferences_version;
     uint8_t ecos_mode; /* 0 automatic, 1 background, 2 off outside recovery */
+    uint32_t home_preferences_version;
+    uint8_t homepage; /* 0 watch face, 1 Casa */
 } settings_t;
 
 esp_err_t settings_init(void);

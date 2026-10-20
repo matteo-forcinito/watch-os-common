@@ -4,6 +4,13 @@
 #include "appkit.h"
 #include "esp_heap_caps.h"
 #include "nvs.h"
+#include "core/settings.h"
+#include "services/weather.h"
+#include "services/alarm.h"
+#include "services/storage.h"
+#include <time.h>
+#include <unistd.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +27,7 @@ static cJSON *entity_json(const casa_entity_t *entity, bool configuration)
     cJSON_AddStringToObject(item, "device_id", entity->device_id);
     cJSON_AddStringToObject(item, "device_name", entity->device_name);
     cJSON_AddStringToObject(item, "device_class", entity->device_class);
+    if (entity->indoor_mode) cJSON_AddBoolToObject(item, "indoor", entity->indoor_mode == 1);
     cJSON_AddStringToObject(item, "category", casa_type_name(entity));
     cJSON *groups = cJSON_AddArrayToObject(item, "dashboards");
     for (int i = 0; i < 4; i++)
@@ -64,6 +72,26 @@ static esp_err_t snapshot(httpd_req_t *request)
     cJSON_AddNumberToObject(out, "event_count", status.event_count);
     cJSON_AddNumberToObject(out, "last_event_ms", status.last_event_ms);
     cJSON_AddNumberToObject(out, "limit", CASA_ENTITIES);
+    cJSON_AddNumberToObject(out, "homepage", settings_get()->homepage);
+    alarm_t alarm;
+    time_t when;
+    if (alarm_next(&alarm, &when))
+    {
+        struct tm local;
+        localtime_r(&when, &local);
+        char time[8];
+        strftime(time, sizeof(time), "%H:%M", &local);
+        cJSON_AddStringToObject(out, "next_alarm", time);
+    }
+    weather_t weather;
+    if (weather_get(&weather))
+    {
+        cJSON *forecast = cJSON_AddObjectToObject(out, "weather");
+        cJSON_AddNumberToObject(forecast, "code", weather.code);
+        cJSON_AddNumberToObject(forecast, "temperature", weather.temp);
+        cJSON_AddStringToObject(forecast, "city", weather.city);
+        cJSON_AddBoolToObject(forecast, "is_day", weather.is_day);
+    }
     char url[160] = "";
     bool has_token = false;
     nvs_handle_t nvs;
@@ -80,6 +108,16 @@ static esp_err_t snapshot(httpd_req_t *request)
     casa_entity_t *entities = heap_caps_calloc(CASA_ENTITIES, sizeof(*entities), MALLOC_CAP_SPIRAM);
     if (entities == NULL) { cJSON_Delete(out); return appkit_error(request, "503 Service Unavailable", "Memoria insufficiente"); }
     int count = casa_entities(entities, CASA_ENTITIES);
+    casa_home_stats_t stats;
+    casa_home_stats(entities, count, &stats);
+    cJSON *home = cJSON_AddObjectToObject(out, "home");
+    cJSON_AddNumberToObject(home, "temperature", stats.temperature);
+    cJSON_AddNumberToObject(home, "humidity", stats.humidity);
+    cJSON_AddNumberToObject(home, "power_w", stats.power_w);
+    cJSON_AddNumberToObject(home, "temperatures", stats.temperatures);
+    cJSON_AddNumberToObject(home, "humidities", stats.humidities);
+    cJSON_AddNumberToObject(home, "meters", stats.meters);
+    cJSON_AddNumberToObject(home, "meters_available", stats.meters_available);
     int known = 0, available = 0;
     for (int i = 0; i < count; i++)
     {
@@ -172,7 +210,151 @@ static esp_err_t catalog(httpd_req_t *request)
     return appkit_json(request, out);
 }
 
+static esp_err_t home_preferences(httpd_req_t *request)
+{
+    if (!appkit_authorized(request)) return appkit_unauthorized(request);
+    char *text = appkit_body(request, 128);
+    cJSON *json = text ? cJSON_Parse(text) : NULL;
+    free(text);
+    const cJSON *choice = cJSON_GetObjectItem(json, "homepage");
+    bool ok = cJSON_IsNumber(choice) && (choice->valuedouble == 0 || choice->valuedouble == 1);
+    if (ok)
+    {
+        settings_t settings = *settings_get();
+        settings.homepage = choice->valueint;
+        settings_save(&settings);
+    }
+    cJSON_Delete(json);
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(out, "ok", ok);
+    return appkit_json(request, out);
+}
+
+/* Metadata is cached on SD, or the board's internal FAT volume. Live states
+ * remain on the authenticated HA subscription; the cache is never resident. */
+#define CATALOG_BYTES (512 * 1024)
+static bool cache_source(char *url, size_t capacity)
+{
+    nvs_handle_t nvs;
+    if (nvs_open("casa", NVS_READONLY, &nvs) != ESP_OK) return false;
+    esp_err_t result = nvs_get_str(nvs, "url", url, &capacity);
+    nvs_close(nvs);
+    return result == ESP_OK && url[0];
+}
+
+static bool cache_entry(cJSON *entry)
+{
+    const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(entry, "id"));
+    if (!id || !id[0] || strlen(id) > 255 || !strchr(id, '.') || casa_kind_of(id) == CASA_OTHER) return false;
+    for (const char *p = id; *p; p++) if (!isalnum((unsigned char)*p) && *p != '_' && *p != '.') return false;
+    const char *keys[] = {"id", "name", "area", "area_id", "device_id", "device_name", "device_class", "dashboards", "state", "unit"};
+    cJSON *field = entry->child;
+    while (field)
+    {
+        cJSON *next = field->next;
+        bool allowed = false;
+        for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) if (!strcmp(field->string, keys[i])) allowed = true;
+        if (!allowed) cJSON_DeleteItemFromObject(entry, field->string);
+        else if (!strcmp(field->string, "dashboards"))
+        {
+            if (!cJSON_IsArray(field) || cJSON_GetArraySize(field) > 4) return false;
+            const cJSON *group;
+            cJSON_ArrayForEach(group, field) if (!cJSON_IsString(group) || strlen(group->valuestring) > 160) return false;
+        }
+        else if (!cJSON_IsString(field) || strlen(field->valuestring) > 255) return false;
+        field = next;
+    }
+    return true;
+}
+
+static esp_err_t catalog_cache(httpd_req_t *request)
+{
+    if (!appkit_authorized(request)) return appkit_unauthorized(request);
+    char source[160] = "", path[96], temporary[104], backup[104];
+    if (!cache_source(source, sizeof(source))) return appkit_error(request, "404 Not Found", "Collega Home Assistant prima di salvare il catalogo");
+    cJSON *json = NULL;
+    if (request->method == HTTP_POST)
+    {
+        char *body = appkit_body(request, CATALOG_BYTES);
+        cJSON *incoming = body ? cJSON_Parse(body) : NULL;
+        free(body);
+        cJSON *entries = cJSON_GetObjectItem(incoming, "entities");
+        bool valid = cJSON_IsArray(entries) && cJSON_GetArraySize(entries) > 0 && cJSON_GetArraySize(entries) <= 4096;
+        cJSON *entry;
+        cJSON_ArrayForEach(entry, entries) if (valid && !cache_entry(entry)) valid = false;
+        if (valid)
+        {
+            json = cJSON_CreateObject();
+            cJSON_AddItemToObject(json, "entities", cJSON_DetachItemFromObject(incoming, "entities"));
+            cJSON_AddStringToObject(json, "source", source);
+            cJSON_AddNumberToObject(json, "schema", 1);
+            cJSON_AddNumberToObject(json, "saved_at", (double)time(NULL));
+        }
+        cJSON_Delete(incoming);
+        if (!json) return appkit_error(request, "400 Bad Request", "Catalogo non valido o troppo grande");
+    }
+    if (!storage_files_acquire()) { cJSON_Delete(json); return appkit_error(request, "503 Service Unavailable", "Archiviazione occupata; riprova"); }
+    bool ok = storage_config_path("casa-catalog.json", path, sizeof(path));
+    if (ok)
+    {
+        snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+        snprintf(backup, sizeof(backup), "%s.bak", path);
+        if (request->method == HTTP_GET)
+        {
+            if (access(path, F_OK) != 0 && access(backup, F_OK) == 0) rename(backup, path);
+            FILE *file = fopen(path, "rb");
+            char *text = file ? heap_caps_calloc(1, CATALOG_BYTES + 1, MALLOC_CAP_SPIRAM) : NULL;
+            size_t length = text ? fread(text, 1, CATALOG_BYTES, file) : 0;
+            bool overflow = file && text && fgetc(file) != EOF;
+            if (file) fclose(file);
+            json = length && !overflow ? cJSON_Parse(text) : NULL;
+            free(text);
+            const char *saved_source = cJSON_GetStringValue(cJSON_GetObjectItem(json, "source"));
+            ok = saved_source && !strcmp(saved_source, source) && cJSON_IsArray(cJSON_GetObjectItem(json, "entities"));
+        }
+        else
+        {
+            char *text = cJSON_PrintUnformatted(json);
+            size_t length = text ? strlen(text) : 0;
+            FILE *file = length && length <= CATALOG_BYTES ? fopen(temporary, "wb") : NULL;
+            ok = file != NULL;
+            if (file)
+            {
+                ok = fwrite(text, 1, length, file) == length;
+                ok = fflush(file) == 0 && ok;
+                ok = fsync(fileno(file)) == 0 && ok;
+                ok = fclose(file) == 0 && ok;
+                if (ok)
+                {
+                    if (access(path, F_OK) != 0 && access(backup, F_OK) == 0) rename(backup, path);
+                    bool previous = access(path, F_OK) == 0;
+                    remove(backup);
+                    if (previous) ok = rename(path, backup) == 0;
+                    if (ok)
+                    {
+                        ok = rename(temporary, path) == 0;
+                        if (!ok && previous) rename(backup, path);
+                        if (ok && previous) remove(backup);
+                    }
+                }
+                if (!ok) remove(temporary);
+            }
+            free(text);
+        }
+    }
+    storage_files_release();
+    if (!ok) { cJSON_Delete(json); return appkit_error(request, request->method == HTTP_GET ? "404 Not Found" : "503 Service Unavailable", "Catalogo salvato non disponibile; reimporta o verifica l'archiviazione"); }
+    if (request->method == HTTP_GET) return appkit_json(request, json);
+    cJSON_Delete(json);
+    json = cJSON_CreateObject();
+    cJSON_AddBoolToObject(json, "ok", true);
+    return appkit_json(request, json);
+}
+
 static const httpd_uri_t s_routes[] = {
+    {.uri = "/api/catalog/cache", .method = HTTP_GET, .handler = catalog_cache},
+    {.uri = "/api/catalog/cache", .method = HTTP_POST, .handler = catalog_cache},
+    {.uri = "/api/home", .method = HTTP_POST, .handler = home_preferences},
     {.uri = "/api/catalog", .method = HTTP_POST, .handler = catalog},
     {.uri = "/api/catalog", .method = HTTP_GET, .handler = catalog},
     {.uri = "/api/config", .method = HTTP_GET, .handler = snapshot},
