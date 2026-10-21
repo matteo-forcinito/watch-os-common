@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Motore · diagnosi OBD</title>
+<link rel="stylesheet" href="/kit.css">
+<style>
+:root{--accent:#3cf0ff}
+.cockpit{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
+@media(max-width:900px){.cockpit{grid-template-columns:1fr}}
+.dials{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center}
+@media(max-width:520px){.dials{grid-template-columns:1fr}}
+svg.dial{width:100%;max-width:330px;display:block;margin:0 auto;overflow:visible}
+svg.dial .track{fill:none;stroke:var(--panel2);stroke-width:14;stroke-linecap:round}
+svg.dial .fill{fill:none;stroke-width:14;stroke-linecap:round;transition:stroke-dashoffset .35s ease,stroke .35s}
+svg.dial .red{fill:none;stroke:var(--magenta);stroke-width:4}
+svg.dial .tick{stroke:var(--faint);stroke-width:2}
+svg.dial .lbl{fill:var(--faint);font:11px var(--mono);text-anchor:middle}
+svg.dial .needle{stroke:var(--ink);stroke-width:3;stroke-linecap:round;transition:transform .35s ease;transform-origin:150px 150px;filter:drop-shadow(0 0 6px var(--accent))}
+svg.dial .big{fill:var(--ink);font:700 54px var(--display);text-anchor:middle}
+svg.dial .unit{fill:var(--dim);font:12px var(--mono);text-anchor:middle;letter-spacing:.2em}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:520px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+.tile b{display:block;font:700 24px/1.1 var(--display)}.tile span{font:11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.tile.hot{border-color:var(--bad);box-shadow:0 0 18px -6px var(--bad)}
+.status{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.status .dot{width:10px;height:10px;border-radius:50%;background:var(--warn);box-shadow:0 0 12px var(--warn)}
+.status .dot.ok{background:var(--good);box-shadow:0 0 12px var(--good)}.status .dot.bad{background:var(--bad);box-shadow:0 0 12px var(--bad)}
+.mil{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;font-weight:700}
+.mil.on{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad);box-shadow:0 0 22px -6px var(--bad)}
+.mil.off{background:color-mix(in srgb,var(--good) 14%,transparent);color:var(--good)}
+.dtc{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:12px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);margin-bottom:8px}
+.dtc .c{font:700 20px var(--display);color:var(--bad)}.dtc.pend .c{color:var(--warn)}
+.mon{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
+.mon div{padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+canvas.chart{width:100%;height:220px;display:block}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font:12px var(--mono);color:var(--dim)}
+.legend i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+td.num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.console{background:#02040a;border:1px solid var(--line);border-radius:12px;padding:12px;font:13px var(--mono);min-height:200px;max-height:50vh;overflow:auto;white-space:pre-wrap;color:#9ff6ff}
+.found{display:flex;flex-direction:column;gap:8px}
+.found button{text-align:left;justify-content:space-between;width:100%}
+.warnbox{border-left:3px solid var(--warn);padding:10px 14px;background:color-mix(in srgb,var(--warn) 8%,transparent);border-radius:10px}
+</style>
+</head>
+<body>
+<header class="kit-top">
+  <div class="kit-brand"><div class="kit-logo">⚙</div>Motore</div>
+  <nav class="kit-nav">
+    <button data-view="v-cockpit">Cruscotto</button>
+    <button data-view="v-live">Dati live</button>
+    <button data-view="v-diag">Diagnosi<span class="badge" id="dtc-badge" hidden></span></button>
+    <button data-view="v-trip">Viaggio</button>
+    <button data-view="v-link">Collegamento</button>
+    <button data-view="v-car">Auto e sicurezza</button>
+    <button data-view="v-console">Console</button>
+  </nav>
+  <div class="kit-dev"></div>
+</header>
+<main>
+  <div class="card" style="margin-bottom:16px"><div class="status">
+    <span class="dot" id="st-dot"></span><b id="st-phase">—</b><span class="dim" id="st-msg"></span>
+    <span class="grow"></span><span class="mil off" id="st-mil">Spia spenta</span>
+    <span class="tag" id="st-rate"></span>
+  </div></div>
+
+  <!-- COCKPIT -->
+  <section class="view" id="v-cockpit">
+    <div class="cockpit">
+      <div class="card"><h2>Strumenti</h2><div class="dials">
+        <div id="dial-rpm"></div><div id="dial-speed"></div>
+      </div></div>
+      <div class="card"><h2>Motore</h2><div class="tiles" id="tiles"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>Ultimi 2 minuti</h2>
+      <div class="legend" id="legend"></div><canvas class="chart" id="chart"></canvas></div>
+  </section>
+
+  <!-- LIVE -->
+  <section class="view" id="v-live"><div class="card">
+    <div class="row"><h2 class="grow" style="margin:0">Tutti i valori</h2>
+      <button class="btn sm" id="rec">● Registra</button><button class="btn sm" id="csv" disabled>⇩ CSV</button></div>
+    <p class="faint" id="rec-info" style="margin:6px 0 10px">La registrazione resta nel browser: scarica il CSV quando hai finito.</p>
+    <div class="scroll"><table><thead><tr><th>Valore</th><th style="text-align:right">Ora</th><th style="text-align:right">Min</th><th style="text-align:right">Max</th></tr></thead>
+    <tbody id="live-rows"></tbody></table></div></div>
+  </section>
+
+  <!-- DIAGNOSIS -->
+  <section class="view" id="v-diag">
+    <div class="grid g2">
+      <div class="card"><h2>Codici di errore</h2>
+        <div class="row" style="margin-bottom:12px"><span class="mil off" id="dg-mil">Spia spenta</span><span class="grow"></span>
+          <button class="btn sm" id="dg-read">↻ Rileggi</button><button class="btn sm danger" id="dg-clear">Cancella codici</button></div>
+        <div id="dg-codes"></div><p class="faint" id="dg-when"></p></div>
+      <div class="card"><h2>Fermo immagine</h2><div id="dg-freeze"></div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>Test anti-inquinamento (readiness)</h2><div class="mon" id="dg-mon"></div>
+      <p class="faint" style="margin:10px 0 0">Dopo una cancellazione dei codici l'auto rifà questi test guidando: servono tutti «pronti» per la revisione.</p></div>
+  </section>
+
+  <!-- TRIP -->
+  <section class="view" id="v-trip"><div class="card"><div class="row"><h2 class="grow" style="margin:0">Viaggio</h2>
+    <button class="btn sm" id="trip-reset">Azzera</button></div><div class="grid g4" id="trip" style="margin-top:12px"></div>
+    <p class="faint" style="margin:12px 0 0" id="trip-note"></p></div></section>
+
+  <!-- LINK -->
+  <section class="view" id="v-link"><div class="grid g2">
+    <div class="card"><h2>Adattatore</h2>
+      <div class="pill-toggle" id="link-kind"><button data-k="0">Bluetooth LE</button><button data-k="1">Wi-Fi</button></div>
+      <div id="link-ble" style="margin-top:14px">
+        <div class="row"><span class="dim">Scelto:</span><b id="ble-name">—</b><span class="grow"></span><button class="btn sm primary" id="scan">Cerca adattatori</button></div>
+        <div class="found" id="found" style="margin-top:12px"></div>
+      </div>
+      <div id="link-wifi" style="margin-top:14px" hidden>
+        <div class="row"><label class="field grow">Indirizzo<input id="host" placeholder="192.168.0.10"></label>
+          <label class="field" style="width:110px">Porta<input id="port" type="number" placeholder="35000"></label>
+          <button class="btn primary" id="host-save" style="align-self:flex-end">Salva</button></div>
+        <p class="faint">Il dispositivo deve essere collegato alla rete Wi-Fi dell'adattatore (Impostazioni del sistema → Wi-Fi).</p>
+      </div></div>
+    <div class="card"><h2>Auto collegata</h2><table><tbody id="car-info"></tbody></table></div>
+  </div></section>
+
+  <!-- CAR -->
+  <section class="view" id="v-car"><div class="grid g2">
+    <div class="card"><h2>Auto</h2>
+      <div class="row"><label class="field grow">Carburante<select id="fuel"><option value="0">Benzina</option><option value="1">GPL</option><option value="2">Diesel</option></select></label>
+        <label class="field" style="width:140px">Cilindrata (cc)<input id="cc" type="number" min="600" max="8000"></label>
+        <label class="field" style="width:140px">Rendimento vol.<input id="ve" type="number" step="0.01" min="0.5" max="1.1"></label></div>
+      <div class="row" style="margin-top:12px"><button class="btn primary" id="car-save">Salva</button></div>
+      <p class="faint">Servono a stimare i consumi sulle auto senza debimetro (MAF). Con l'impianto GPL l'auto crede di andare a benzina: scegli GPL e i litri saranno di GPL.</p></div>
+    <div class="card"><h2>Sicurezza</h2>
+      <div class="row"><span class="dim">Azioni critiche:</span><b id="lock-state">—</b><span class="grow"></span><button class="btn" id="lock-btn">Sblocca</button></div>
+      <div class="warnbox" style="margin:14px 0">Cancellare i codici scrive sulla centralina: serve il codice, l'auto ferma e il motore spento (quadro acceso). Il blocco torna da solo dopo 10 minuti.</div>
+      <div class="row"><label class="field grow" id="pin-old-l">Codice attuale<input id="pin-old" type="password" inputmode="numeric" autocomplete="off"></label>
+        <label class="field grow">Nuovo codice (4-8 cifre)<input id="pin-new" type="password" inputmode="numeric" autocomplete="off"></label>
+        <button class="btn" id="pin-save" style="align-self:flex-end">Imposta</button></div></div>
+  </div></section>
+
+  <!-- CONSOLE -->
+  <section class="view" id="v-console"><div class="card"><h2>Console esperti (sola lettura)</h2>
+    <p class="faint" style="margin-top:0">Comandi ELM327 e OBD di lettura: <span class="kbd">ATRV</span>, <span class="kbd">ATDP</span>, <span class="kbd">010C</span>, <span class="kbd">0902</span>, <span class="kbd">ATSH7E0</span> poi <span class="kbd">22F190</span>... Le scritture sono rifiutate.</p>
+    <div class="row"><input id="cmd" class="grow kbd" placeholder="010C" autocomplete="off"><button class="btn primary" id="cmd-send">Invia</button></div>
+    <div class="console" id="out" style="margin-top:12px"></div></div></section>
+</main>
+
+<div class="modal" id="pin-modal"><div class="card"><h2>Codice di sicurezza</h2>
+  <input id="pin-ask" type="password" inputmode="numeric" autocomplete="off" style="width:100%;font-size:22px;text-align:center;letter-spacing:.4em">
+  <div class="row end" style="margin-top:14px"><button class="btn" id="pin-cancel">Annulla</button><button class="btn primary" id="pin-ok">Sblocca</button></div></div></div>
+
+<script src="/kit.js"></script>
+<script>
+'use strict';
+const $ = kit.$, el = kit.el;
+const PHASES = ['Da configurare', 'Ricerca', 'Connessione', 'Avvio', 'Collegato', 'Auto spenta', 'Riprovo'];
+const S = {state: null, values: {}, hist: [], rec: null, stats: {}, view: 'v-cockpit'};
+const fmt = (v, d) => v == null || isNaN(v) ? '—' : Number(v).toFixed(d);
+
+/* ------------------------------------------------------------ dials */
+function dial(box, max, red, unit, ticks) {
+  const a0 = 135, span = 270, r = 120, cx = 150, cy = 150;
+  const pt = (deg, rr) => [cx + rr * Math.cos(deg * Math.PI / 180), cy + rr * Math.sin(deg * Math.PI / 180)];
+  const arc = (from, to, rr) => { const [x1, y1] = pt(from, rr), [x2, y2] = pt(to, rr); return `M${x1} ${y1} A${rr} ${rr} 0 ${to - from > 180 ? 1 : 0} 1 ${x2} ${y2}`; };
+  const len = Math.PI * 2 * r * span / 360;
+  let marks = '';
+  for (let i = 0; i <= ticks; i++) {
+    const d = a0 + span * i / ticks, [x1, y1] = pt(d, r - 22), [x2, y2] = pt(d, r - 12), [lx, ly] = pt(d, r - 36);
+    marks += `<line class="tick" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/><text class="lbl" x="${lx}" y="${ly + 4}">${Math.round(max * i / ticks / (max > 1000 ? 1000 : 1))}</text>`;
+  }
+  box.innerHTML = `<svg class="dial" viewBox="0 0 300 290">
+    <defs><linearGradient id="g${unit}" x1="0" x2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--violet)"/></linearGradient></defs>
+    <path class="track" d="${arc(a0, a0 + span, r)}"/>
+    ${red ? `<path class="red" d="${arc(a0 + span * red / max, a0 + span, r + 12)}"/>` : ''}
+    <path class="fill" d="${arc(a0, a0 + span, r)}" stroke="url(#g${unit})" stroke-dasharray="${len}" stroke-dashoffset="${len}"/>
+    ${marks}<line class="needle" x1="150" y1="150" x2="${150 + r - 30}" y2="150"/>
+    <circle cx="150" cy="150" r="7" fill="var(--accent)"/>
+    <text class="big" x="150" y="232">—</text><text class="unit" x="150" y="256">${unit}</text></svg>`;
+  const svg = box.firstChild, fill = svg.querySelector('.fill'), needle = svg.querySelector('.needle'), big = svg.querySelector('.big');
+  return v => {
+    const p = v == null ? 0 : Math.max(0, Math.min(1, v / max));
+    fill.style.strokeDashoffset = len * (1 - p);
+    fill.style.stroke = red && v > red ? 'var(--magenta)' : '';
+    needle.style.transform = `rotate(${a0 + span * p}deg)`;
+    big.textContent = v == null ? '—' : Math.round(v);
+  };
+}
+const rpmDial = dial($('#dial-rpm'), 7000, 5800, 'RPM ×1000', 7);
+const speedDial = dial($('#dial-speed'), 220, 0, 'KM/H', 11);
+
+/* ------------------------------------------------------------ chart */
+const SERIES = [['rpm', 'Giri', 7000, '#3cf0ff'], ['speed', 'Velocità', 220, '#8b5cff'], ['load', 'Carico', 100, '#ff4fd8'], ['throttle', 'Farfalla', 100, '#ffc04d']];
+$('#legend').append(...SERIES.map(s => el('span', {}, el('i', {style: {background: s[3]}}), s[1])));
+function drawChart() {
+  const c = $('#chart'), w = c.clientWidth, h = c.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (!w) return;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  g.strokeStyle = getComputedStyle(document.body).getPropertyValue('--line'); g.lineWidth = 1;
+  for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(0, h * i / 4); g.lineTo(w, h * i / 4); g.stroke(); }
+  const now = Date.now(), span = 120000;
+  for (const [key, , max, color] of SERIES) {
+    g.beginPath(); g.strokeStyle = color; g.lineWidth = 2; g.shadowColor = color; g.shadowBlur = 8;
+    let started = false;
+    for (const p of S.hist) {
+      if (p[key] == null) continue;
+      const x = w - (now - p.t) / span * w, y = h - 4 - Math.min(1, p[key] / max) * (h - 8);
+      if (!started) { g.moveTo(x, y); started = true; } else g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+}
+
+/* ------------------------------------------------------------ state */
+function value(key) { const v = S.values[key]; return v && v.fresh ? v.v : null; }
+
+async function loadState() {
+  const s = S.state = await kit.api('/api/state');
+  S.values = {};
+  s.values.forEach(v => { S.values[v.key] = v; });
+  const live = s.phase === 4;
+  $('#st-dot').className = 'dot' + (live ? ' ok' : s.phase === 0 || s.phase === 6 ? ' bad' : '');
+  $('#st-phase').textContent = PHASES[s.phase] || '—';
+  $('#st-msg').textContent = s.message + (s.hotspot ? ' · hotspot ' + s.hotspot : '');
+  for (const id of ['#st-mil', '#dg-mil']) { $(id).className = 'mil ' + (s.mil ? 'on' : 'off'); $(id).textContent = s.mil ? '⚠ Spia motore accesa' : 'Spia spenta'; }
+  $('#st-rate').textContent = live ? s.polls + ' letture/s' : '';
+  const badge = $('#dtc-badge'); badge.hidden = !s.dtcs; badge.textContent = s.dtcs;
+  const point = {t: Date.now()};
+  SERIES.forEach(([k]) => { point[k] = value(k); });
+  S.hist.push(point);
+  while (S.hist.length && Date.now() - S.hist[0].t > 125000) S.hist.shift();
+  if (S.rec) { const row = {t: new Date().toISOString()}; s.values.forEach(v => { row[v.key] = v.fresh ? v.v : ''; }); S.rec.push(row); $('#rec-info').textContent = S.rec.length + ' campioni registrati'; }
+  s.values.forEach(v => { if (!v.fresh) return; const st = S.stats[v.key] || (S.stats[v.key] = {min: v.v, max: v.v}); st.min = Math.min(st.min, v.v); st.max = Math.max(st.max, v.v); });
+  render();
+}
+
+function render() {
+  const s = S.state;
+  if (!s) return;
+  if (S.view === 'v-cockpit') {
+    rpmDial(value('rpm')); speedDial(value('speed'));
+    const lph = value('fuel_rate'), kmh = value('speed');
+    const tiles = [['coolant', 'Refrigerante', v => v > 105], ['intake', 'Aria aspirata'], ['battery', 'Batteria', v => v < 11.8],
+      ['load', 'Carico'], ['throttle', 'Farfalla'], ['map', 'Collettore'], ['stft', 'Corr. breve'], ['ltft', 'Corr. lunga', v => Math.abs(v) > 15], ['timing', 'Anticipo']];
+    const box = $('#tiles'); box.innerHTML = '';
+    const cons = lph == null ? '—' : kmh > 5 ? fmt(lph * 100 / kmh, 1) + ' l/100' : fmt(lph, 2) + ' l/h';
+    box.append(el('div', {class: 'tile'}, el('b', {}, cons), el('span', {}, 'Consumo')));
+    for (const [k, name, hot] of tiles) {
+      const v = S.values[k];
+      if (!v) continue;
+      const fresh = v.fresh && v.v != null;
+      box.append(el('div', {class: 'tile' + (fresh && hot && hot(v.v) ? ' hot' : '')}, el('b', {}, fresh ? fmt(v.v, v.decimals) + ' ' + v.unit : '—'), el('span', {}, name)));
+    }
+    drawChart();
+  }
+  if (S.view === 'v-live') {
+    const rows = $('#live-rows'); rows.innerHTML = '';
+    for (const v of s.values) {
+      const st = S.stats[v.key];
+      rows.append(el('tr', {}, el('td', {}, v.name), el('td', {class: 'num'}, v.v == null ? '—' : el('b', {class: v.fresh ? '' : 'faint'}, fmt(v.v, v.decimals) + ' ' + v.unit)),
+        el('td', {class: 'num dim'}, st ? fmt(st.min, v.decimals) : '—'), el('td', {class: 'num dim'}, st ? fmt(st.max, v.decimals) : '—')));
+    }
+  }
+  if (S.view === 'v-trip') {
+    const t = s.trip, avg = t.km > 0.5 ? t.litres * 100 / t.km : null, hm = Math.floor(t.seconds / 3600) + ':' + String(Math.floor(t.seconds / 60) % 60).padStart(2, '0');
+    const k = (v, l) => el('div', {class: 'card kpi'}, el('b', {}, v), el('span', {}, l));
+    $('#trip').replaceChildren(k(fmt(t.km, 1) + ' km', 'Distanza'), k(hm, 'Tempo motore acceso'), k(fmt(t.litres, 2) + ' l', 'Carburante stimato'),
+      k(avg == null ? '—' : fmt(avg, 1) + ' l/100', 'Consumo medio'), k(t.seconds ? fmt(t.km * 3600 / t.seconds, 0) + ' km/h' : '—', 'Velocità media'),
+      k(fmt(t.max_speed, 0) + ' km/h', 'Velocità massima'), k(fmt(t.max_rpm, 0) + ' rpm', 'Giri massimi'), k(t.seconds ? Math.round(t.idle_seconds * 100 / t.seconds) + '%' : '—', 'Tempo al minimo'));
+    $('#trip-note').textContent = ['Benzina', 'GPL', 'Diesel'][s.settings.fuel_type] + ': consumi stimati dall\'aria aspirata' + (S.values.maf ? ' (debimetro)' : ' (pressione collettore, cilindrata ' + s.settings.displacement_cc + ' cc)') + '.';
+  }
+  if (S.view === 'v-link') renderLink();
+  if (S.view === 'v-car') renderCar();
+}
+
+/* ------------------------------------------------------------ diagnosis */
+async function loadCodes() {
+  const c = await kit.api('/api/codes');
+  const box = $('#dg-codes'); box.innerHTML = '';
+  if (!c.codes.length) box.append(el('div', {class: 'empty'}, '✓ Nessun codice di errore'));
+  for (const d of c.codes) box.append(el('div', {class: 'dtc' + (d.kind === 'in attesa' ? ' pend' : '')}, el('span', {class: 'c'}, d.code),
+    el('div', {}, el('b', {}, d.text), el('div', {class: 'faint'}, d.system)), el('span', {class: 'tag ' + (d.kind === 'in attesa' ? 'warn' : 'bad')}, d.kind)));
+  $('#dg-when').textContent = c.read_ago >= 0 ? 'Letti ' + Math.round(c.read_ago) + ' s fa' : 'Non ancora letti';
+  const fz = $('#dg-freeze'); fz.innerHTML = '';
+  if (!c.freeze.length) fz.append(el('p', {class: 'faint'}, 'Nessun fermo immagine: la centralina lo salva quando memorizza un codice.'));
+  else { fz.append(el('p', {class: 'dim', style: {marginTop: 0}}, 'Valori al momento di ' + c.freeze_code + ':'));
+    fz.append(el('table', {}, el('tbody', {}, c.freeze.map(f => el('tr', {}, el('td', {}, f.name), el('td', {class: 'num'}, fmt(f.v, f.decimals) + ' ' + f.unit)))))); }
+  const mon = $('#dg-mon'); mon.innerHTML = '';
+  if (!c.monitors.length) mon.append(el('p', {class: 'faint'}, 'Non disponibili.'));
+  for (const m of c.monitors) mon.append(el('div', {}, m.name, el('span', {class: 'tag ' + (m.complete ? 'good' : 'warn')}, m.complete ? 'pronto' : 'da completare')));
+}
+$('#dg-read').onclick = () => kit.try(() => kit.api('/api/codes/read', {body: {}}), 'Rilettura in corso').then(() => setTimeout(loadCodes, 2500));
+$('#dg-clear').onclick = async () => {
+  if (!S.state.settings.pin_set) { kit.toast('Imposta prima un codice in Auto e sicurezza', 'bad'); kit.show('v-car'); return; }
+  if (!S.state.unlocked && !await askPin()) return;
+  if (!confirm('Cancellare i codici di errore?\n\nSpegne la spia e azzera i test anti-inquinamento: l\'auto li rifarà guidando.\nAuto ferma, motore spento, quadro acceso.')) return;
+  const r = await kit.api('/api/codes/clear', {body: {}});
+  kit.toast(r.message, r.ok ? 'good' : 'bad');
+  loadCodes();
+};
+
+/* ------------------------------------------------------------ safety */
+function askPin() {
+  return new Promise(resolve => {
+    const m = $('#pin-modal'), input = $('#pin-ask');
+    input.value = ''; m.classList.add('on'); setTimeout(() => input.focus(), 50);
+    const done = ok => { m.classList.remove('on'); resolve(ok); };
+    $('#pin-cancel').onclick = () => done(false);
+    $('#pin-ok').onclick = async () => {
+      const r = await kit.api('/api/unlock', {body: {pin: input.value}});
+      if (!r.ok) { kit.toast('Codice errato', 'bad'); input.value = ''; return; }
+      kit.toast('Sbloccato per 10 minuti', 'good'); await loadState(); done(true);
+    };
+    input.onkeydown = e => { if (e.key === 'Enter') $('#pin-ok').click(); };
+  });
+}
+function renderCar() {
+  const s = S.state.settings;
+  if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
+    $('#fuel').value = s.fuel_type; $('#cc').value = s.displacement_cc; $('#ve').value = (+s.volumetric).toFixed(2);
+  }
+  $('#lock-state').textContent = S.state.unlocked ? 'sbloccate' : 'bloccate';
+  $('#lock-state').className = S.state.unlocked ? 'warn' : 'good';
+  $('#lock-btn').textContent = S.state.unlocked ? 'Blocca ora' : 'Sblocca';
+  $('#pin-old-l').hidden = !s.pin_set;
+}
+$('#car-save').onclick = () => kit.try(() => kit.api('/api/settings', {body: {fuel_type: +$('#fuel').value, displacement_cc: +$('#cc').value, volumetric: +$('#ve').value}}), 'Salvato');
+$('#lock-btn').onclick = async () => {
+  if (S.state.unlocked) { await kit.api('/api/lock', {body: {}}); await loadState(); }
+  else if (!S.state.settings.pin_set) kit.toast('Imposta prima un codice', 'bad');
+  else askPin();
+};
+$('#pin-save').onclick = async () => {
+  const ok = await kit.try(() => kit.api('/api/settings', {body: {pin: $('#pin-new').value, pin_old: $('#pin-old').value}}), 'Codice salvato');
+  if (ok) { $('#pin-new').value = ''; $('#pin-old').value = ''; loadState(); }
+};
+
+/* ------------------------------------------------------------ link */
+function renderLink() {
+  const s = S.state, k = s.settings.link;
+  $$('#link-kind button').forEach(b => b.classList.toggle('on', +b.dataset.k === k));
+  $('#link-ble').hidden = k !== 0; $('#link-wifi').hidden = k !== 1;
+  $('#ble-name').textContent = s.settings.ble_name || 'nessuno';
+  if (document.activeElement.id !== 'host' && document.activeElement.id !== 'port') { $('#host').value = s.settings.host; $('#port').value = s.settings.port; }
+  const row = (a, b) => el('tr', {}, el('td', {class: 'dim'}, a), el('td', {}, b || '—'));
+  $('#car-info').replaceChildren(row('Adattatore', s.adapter), row('Protocollo', s.protocol), row('Telaio (VIN)', s.vin), row('Valori disponibili', String(s.values.length)));
+}
+const $$ = kit.$$;
+$('#link-kind').onclick = e => { const b = e.target.closest('button'); if (b) kit.try(() => kit.api('/api/settings', {body: {link: +b.dataset.k}}), 'Salvato').then(loadState); };
+$('#host-save').onclick = () => kit.try(() => kit.api('/api/settings', {body: {host: $('#host').value.trim(), port: +$('#port').value || 35000}}), 'Salvato, mi collego');
+async function loadScan() {
+  const r = await kit.api('/api/scan');
+  const box = $('#found'); box.innerHTML = '';
+  $('#scan').textContent = r.scanning ? 'Ricerca...' : 'Cerca adattatori';
+  for (const f of r.found) {
+    const b = el('button', {class: 'btn'}, el('span', {}, (f.likely ? '✓ ' : '') + f.name), el('span', {class: 'faint kbd'}, f.rssi + ' dBm'));
+    b.onclick = () => kit.try(() => kit.api('/api/choose', {body: {addr: f.addr, name: f.name}}), 'Adattatore scelto: mi collego').then(loadState);
+    box.append(b);
+  }
+  if (!r.found.length) box.append(el('p', {class: 'faint'}, r.scanning ? 'Cerco...' : 'Adattatore nella presa OBD (sotto il volante), quadro acceso, poi «Cerca».'));
+  return r.scanning;
+}
+$('#scan').onclick = async () => {
+  await kit.api('/api/scan', {body: {}});
+  const t = setInterval(async () => { if (!await loadScan().catch(() => false)) clearInterval(t); }, 1500);
+};
+
+/* ------------------------------------------------------------ live recording */
+$('#rec').onclick = () => {
+  if (S.rec) { S.rec = null; $('#rec').textContent = '● Registra'; $('#rec').classList.remove('danger'); return; }
+  S.rec = []; $('#rec').textContent = '■ Ferma'; $('#rec').classList.add('danger'); $('#csv').disabled = false;
+};
+$('#csv').onclick = () => {
+  const rows = S.rec && S.rec.length ? S.rec : S.last;
+  if (!rows || !rows.length) return;
+  const keys = Object.keys(rows[0]);
+  const text = [keys.join(';')].concat(rows.map(r => keys.map(k => r[k] === '' || r[k] == null ? '' : String(r[k]).replace('.', ',')).join(';'))).join('\n');
+  const a = el('a', {href: URL.createObjectURL(new Blob([text], {type: 'text/csv'})), download: 'motore-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.csv'});
+  document.body.append(a); a.click(); a.remove();
+  S.last = rows;
+};
+
+/* ------------------------------------------------------------ console */
+async function send() {
+  const c = $('#cmd').value.trim();
+  if (!c) return;
+  const out = $('#out');
+  out.textContent += '> ' + c + '\n';
+  try { const r = await kit.api('/api/console', {body: {cmd: c}}); out.textContent += (r.out || '(vuoto)') + '\n\n'; }
+  catch (e) { out.textContent += e.message + '\n\n'; }
+  out.scrollTop = out.scrollHeight; $('#cmd').select();
+}
+$('#cmd-send').onclick = send;
+$('#cmd').onkeydown = e => { if (e.key === 'Enter') send(); };
+$('#trip-reset').onclick = () => kit.try(() => kit.api('/api/trip/reset', {body: {}}), 'Viaggio azzerato');
+
+/* ------------------------------------------------------------ boot */
+kit.views(id => {
+  S.view = id;
+  if (id === 'v-diag') loadCodes().catch(() => {});
+  if (id === 'v-link') loadScan().catch(() => {});
+  render();
+});
+window.addEventListener('resize', drawChart);
+kit.start({onReady: () => {
+  kit.poll(loadState, 500);
+  kit.poll(() => S.view === 'v-diag' ? loadCodes() : Promise.resolve(), 5000);
+}});
+</script>
+</body>
+</html>

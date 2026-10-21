@@ -100,6 +100,11 @@ appkit_web_state_t appkit_web_state(void)
     return (appkit_web_state_t)atomic_load(&s_state);
 }
 
+void appkit_web_hotspot(char *out, size_t size)
+{
+    if (size > 0) out[0] = 0;   /* internal apps share the system server, never their own hotspot */
+}
+
 void appkit_web_url(char *out, size_t size)
 {
     if (atomic_load(&s_state) != APPKIT_WEB_ON)

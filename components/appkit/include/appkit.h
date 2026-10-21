@@ -45,6 +45,7 @@ typedef struct
     const char *page_end;
     const httpd_uri_t *routes;   /* the app's own API (check appkit_authorized()) */
     size_t route_count;
+    bool hotspot;                /* no known network: open the device's own hotspot (in the car) */
 } appkit_web_config_t;
 
 typedef enum
@@ -69,6 +70,8 @@ appkit_web_state_t appkit_web_state(void);
 
 /* "http://192.168.1.20/" once on, else "". */
 void appkit_web_url(char *out, size_t size);
+/* The hotspot's network name while the dashboard runs on it, else "". */
+void appkit_web_hotspot(char *out, size_t size);
 /* Six digits, new at every start. */
 const char *appkit_web_code(void);
 /* Forget the paired browsers (a new token). */

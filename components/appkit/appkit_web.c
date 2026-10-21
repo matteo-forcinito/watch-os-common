@@ -45,6 +45,8 @@ static atomic_int s_state = APPKIT_WEB_OFF;
 static atomic_bool s_stop;
 static atomic_uint s_hits;
 static bool s_wifi_held;
+static bool s_ap_held;              /* own hotspot (config->hotspot, no known network) */
+static char s_ap_name[33];
 static bool s_mdns;
 static char s_token[33];
 static char s_code[7];
@@ -145,6 +147,11 @@ unsigned appkit_web_hits(void)
 appkit_web_state_t appkit_web_state(void)
 {
     return (appkit_web_state_t)atomic_load(&s_state);
+}
+
+void appkit_web_hotspot(char *out, size_t size)
+{
+    snprintf(out, size, "%s", s_ap_held ? s_ap_name : "");
 }
 
 void appkit_web_url(char *out, size_t size)
@@ -307,6 +314,11 @@ static void web_task(void *arg)
             s_wifi_held = true;
             break;
         }
+        if (s_config->hotspot && wifi_start_access_point(s_ap_name, sizeof(s_ap_name)) == ESP_OK)
+        {
+            s_ap_held = true;   /* in the car: the phone joins the device */
+            break;
+        }
         atomic_store(&s_state, APPKIT_WEB_FAILED);
         for (int i = 0; i < 300 && !atomic_load(&s_stop); i++)
         {
@@ -410,6 +422,12 @@ void appkit_web_stop(void)
     {
         wifi_release();
         s_wifi_held = false;
+    }
+    if (s_ap_held)
+    {
+        wifi_stop_access_point();
+        s_ap_held = false;
+        s_ap_name[0] = 0;
     }
     atomic_store(&s_state, APPKIT_WEB_OFF);
     s_config = NULL;
