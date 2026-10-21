@@ -295,7 +295,8 @@ static void start_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
-    bool ok = web_server_start_wifi_only() == ESP_OK;
+    /* Opened from the companion over Bluetooth: serve the bridge, no Wi-Fi. */
+    bool ok = (web_server_local_only() ? web_server_start_local() : web_server_start_wifi_only()) == ESP_OK;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     bool current = generation == atomic_load(&s_generation) && s_config != NULL;
     if (ok && current)

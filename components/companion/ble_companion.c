@@ -1,4 +1,5 @@
 #include "companion/ble_companion.h"
+#include "ble_bridge.h"
 
 #include "core/clock.h"
 #include "core/power.h"
@@ -40,7 +41,7 @@ static const char *TAG = "ble";
 /* NimBLE store (bonds in NVS); declared here because its header does not. */
 void ble_store_config_init(void);
 
-#define BLE_LINE_MAX            1536
+#define BLE_LINE_MAX            2048   /* bridge requests carry up to 1400 bytes of body */
 #define ADV_FAST_MIN        160     /* x 0.625 ms = 100 ms: easy to find while pairing */
 #define ADV_FAST_MAX        240     /* 150 ms */
 #define ADV_SLOW_MIN        1600    /* 1.0 s: cheap, the phone reconnects anyway */
@@ -78,28 +79,55 @@ static void start_advertising(void);
 
 /* ------------------------------------------------------------- sending */
 
-static void send_text(const char *text)
+static SemaphoreHandle_t s_send_lock;   /* one line at a time: chunks never interleave */
+
+/* Sends a line in MTU-sized notifications. With retries, waits for free
+ * buffers instead of dropping the rest (bridge answers stream several KB). */
+static bool send_chunks(const char *text, int retries)
 {
     uint16_t conn = s_conn;
 
-    if (conn == BLE_HS_CONN_HANDLE_NONE || s_tx_handle == 0)
+    if (conn == BLE_HS_CONN_HANDLE_NONE || s_tx_handle == 0 || s_send_lock == NULL)
     {
-        return;
+        return false;
     }
 
+    xSemaphoreTake(s_send_lock, portMAX_DELAY);
     size_t length = strlen(text);
     size_t chunk = ble_att_mtu(conn) > 3 ? ble_att_mtu(conn) - 3 : 20;
+    bool ok = true;
 
-    for (size_t sent = 0; sent < length; sent += chunk)
+    for (size_t sent = 0; ok && sent < length; sent += chunk)
     {
         size_t n = length - sent < chunk ? length - sent : chunk;
-        struct os_mbuf *om = ble_hs_mbuf_from_flat(text + sent, (uint16_t)n);
-
-        if (om == NULL || ble_gatts_notify_custom(conn, s_tx_handle, om) != 0)
+        for (int attempt = 0;; attempt++)
         {
-            break;
+            /* The stack frees the buffer even when the notify fails. */
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(text + sent, (uint16_t)n);
+            if (om != NULL && ble_gatts_notify_custom(conn, s_tx_handle, om) == 0)
+            {
+                break;
+            }
+            if (attempt >= retries || s_conn != conn)
+            {
+                ok = false;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
+    xSemaphoreGive(s_send_lock);
+    return ok;
+}
+
+static void send_text(const char *text)
+{
+    send_chunks(text, 0);
+}
+
+static bool bridge_send(const char *line)
+{
+    return send_chunks(line, 50);
 }
 
 static void send_json(cJSON *json)
@@ -142,6 +170,7 @@ static void send_version(void)
     cJSON_AddStringToObject(json, "t", "ver");
     cJSON_AddStringToObject(json, "fw", fw_update_running_version());
     cJSON_AddNumberToObject(json, "control", 1);
+    cJSON_AddNumberToObject(json, "bridge", 1);   /* app API over Bluetooth, see ble_bridge.c */
     cJSON_AddStringToObject(json, "hw", board_info()->name);
     send_json(json);
 }
@@ -346,6 +375,20 @@ static void handle_gb(const cJSON *msg)
     const char *type = json_string(msg, "t");
 
     if (strcmp(type, "control") == 0) { control_request(msg); }
+    else if (strcmp(type, "api") == 0)
+    {
+        /* The whole API, like the paired browser: only across an encrypted bond. */
+        struct ble_gap_conn_desc desc;
+        uint16_t conn = s_conn;
+        if (ble_gap_conn_find(conn, &desc) == 0 && desc.sec_state.encrypted && desc.sec_state.bonded)
+        {
+            ble_bridge_request(msg, conn);
+        }
+        else
+        {
+            ble_gap_security_initiate(conn);
+        }
+    }
     else if (strcmp(type, "notify") == 0)
     {
         notify_t n = {0};
@@ -950,6 +993,9 @@ esp_err_t ble_companion_init(void)
 {
     if (s_control_guard == NULL) s_control_guard = xSemaphoreCreateMutex();
     if (s_control_guard == NULL) return ESP_ERR_NO_MEM;
+    if (s_send_lock == NULL) s_send_lock = xSemaphoreCreateMutex();
+    if (s_send_lock == NULL) return ESP_ERR_NO_MEM;
+    ble_bridge_init(bridge_send);
     s_line = malloc(BLE_LINE_MAX);
 
     if (s_line == NULL)

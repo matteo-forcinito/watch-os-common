@@ -63,6 +63,8 @@ static httpd_handle_t s_server = NULL;
 static bool s_recovery_sta;
 static int64_t s_recovery_next_join;
 static int s_users;                      /* web_server_start() calls not yet stopped */
+static bool s_local;                     /* up for the Bluetooth bridge only: no Wi-Fi reference */
+static bool s_mdns;
 static SemaphoreHandle_t s_lock;
 static void lock_init(void);
 
@@ -1031,16 +1033,9 @@ static esp_err_t start_httpd(void)
     return ESP_OK;
 }
 
-static void shutdown_server(void);
-
-static esp_err_t start_locked(bool allow_ap)
+/* Joins a known network or, when allowed, opens the hotspot. */
+static esp_err_t network_up(bool allow_ap)
 {
-    if (s_server != NULL)
-    {
-        return ESP_OK;
-    }
-
-    s_error[0] = '\0';
     s_ap_mode = wifi_acquire(15000) != ESP_OK;
 
     if (s_ap_mode && !allow_ap)
@@ -1068,6 +1063,60 @@ static esp_err_t start_locked(bool allow_ap)
             ESP_LOGW(TAG, "No captive DNS: open http://%s by hand", ip);
         }
     }
+    return ESP_OK;
+}
+
+static void announce(void)
+{
+    if (!s_mdns && mdns_init() == ESP_OK)
+    {
+        s_mdns = true;
+        mdns_hostname_set(sys_hostname());   /* "tamiro.local" */
+        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    }
+
+    ESP_LOGI(TAG, "Web page running (%s)", s_ap_mode ? s_ap_name : "Wi-Fi");
+    if (recovery_active())
+    {
+        char url[80];
+        web_server_url(url, sizeof(url));
+        ESP_LOGW(TAG, "RECOVERY: %s accesso locale automatico, senza codice", url);
+    }
+}
+
+static void shutdown_server(void);
+
+/* local: serve only this device (127.0.0.1, for the Bluetooth bridge), radio off. */
+static esp_err_t start_locked(bool allow_ap, bool local)
+{
+    s_error[0] = '\0';
+
+    if (s_server != NULL)
+    {
+        if (local || !s_local)
+        {
+            return ESP_OK;
+        }
+        /* Up for the bridge only, and now a dashboard needs the network. */
+        esp_err_t err = network_up(allow_ap);
+        if (err != ESP_OK)
+        {
+            return err;
+        }
+        s_local = false;
+        announce();
+        return ESP_OK;
+    }
+
+    if (!local)
+    {
+        esp_err_t err = network_up(allow_ap);
+        if (err != ESP_OK)
+        {
+            return err;
+        }
+    }
+    s_local = local;
 
     esp_err_t err = start_httpd();
 
@@ -1079,18 +1128,13 @@ static esp_err_t start_locked(bool allow_ap)
         return err;
     }
 
-    if (mdns_init() == ESP_OK)
+    if (local)
     {
-        mdns_hostname_set(sys_hostname());   /* "tamiro.local" */
-        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+        ESP_LOGI(TAG, "Web service running for the Bluetooth bridge (no Wi-Fi)");
     }
-
-    ESP_LOGI(TAG, "Web page running (%s)", s_ap_mode ? s_ap_name : "Wi-Fi");
-    if (recovery_active())
+    else
     {
-        char url[80];
-        web_server_url(url, sizeof(url));
-        ESP_LOGW(TAG, "RECOVERY: %s accesso locale automatico, senza codice", url);
+        announce();
     }
 
     return ESP_OK;
@@ -1107,11 +1151,11 @@ static void lock_init(void)
     taskEXIT_CRITICAL(&mux);
 }
 
-static esp_err_t start_counted(bool allow_ap)
+static esp_err_t start_counted(bool allow_ap, bool local)
 {
     lock_init();
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    esp_err_t err = start_locked(allow_ap);
+    esp_err_t err = start_locked(allow_ap, local);
     if (err == ESP_OK)
     {
         s_users++;
@@ -1122,12 +1166,27 @@ static esp_err_t start_counted(bool allow_ap)
 
 esp_err_t web_server_start(void)
 {
-    return start_counted(true);
+    return start_counted(true, false);
 }
 
 esp_err_t web_server_start_wifi_only(void)
 {
-    return start_counted(false);
+    return start_counted(false, false);
+}
+
+esp_err_t web_server_start_local(void)
+{
+    return start_counted(false, true);
+}
+
+bool web_server_local_key(char out[33])
+{
+    lock_init();
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool ok = s_server != NULL && strlen(s_token) == 32;
+    snprintf(out, 33, "%s", ok ? s_token : "");
+    xSemaphoreGive(s_lock);
+    return ok;
 }
 
 /* Called only by the recovery worker. Keep the server and its credentials alive
@@ -1245,6 +1304,10 @@ static void shutdown_server(void)
     {
         httpd_stop(s_server);
         s_server = NULL;
+    }
+    if (s_mdns)
+    {
+        s_mdns = false;
         mdns_free();
     }
 
@@ -1267,10 +1330,11 @@ static void shutdown_server(void)
             wifi_release();
         }
     }
-    else
+    else if (!s_local)
     {
         wifi_release();
     }
+    s_local = false;
 }
 
 const char *web_server_last_error(void)
@@ -1278,9 +1342,15 @@ const char *web_server_last_error(void)
     return s_error[0] != '\0' ? s_error : "Errore sconosciuto";
 }
 
+bool web_server_local_only(void)
+{
+    return s_server != NULL && s_local;
+}
+
+/* Reachable from the network (not only by the Bluetooth bridge). */
 bool web_server_running(void)
 {
-    return s_server != NULL;
+    return s_server != NULL && !s_local;
 }
 
 void web_server_url(char *out, size_t size)

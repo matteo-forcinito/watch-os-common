@@ -26,6 +26,13 @@ esp_err_t web_server_start(void);
 /* Same, but never the access point: internal apps' dashboards (the access
  * point costs ~30 KB of internal RAM and takes the watch off the home Wi-Fi). */
 esp_err_t web_server_start_wifi_only(void);
+/* Same server with the radio off, reachable only from this device
+ * (http://127.0.0.1): the Bluetooth bridge runs the companion's API calls
+ * through it. A later web_server_start() brings the network up as usual. */
+esp_err_t web_server_start_local(void);
+/* The paired token, for requests made by this device to itself (the bridge).
+ * False when the server is not running. */
+bool web_server_local_key(char out[33]);
 /* Recovery worker only: fallback hotspot and bounded network retry. */
 void web_server_recovery_poll(void);
 void web_server_stop(void);
@@ -34,7 +41,11 @@ void web_server_stop(void);
  * web_server_stop()). Never waits, so request handlers may call it; false when
  * the server is not running or is being started/stopped. */
 bool web_server_retain(void);
+/* Reachable from the network: false while up only for the Bluetooth bridge. */
 bool web_server_running(void);
+/* Up only for the Bluetooth bridge: an app opened from the companion joins
+ * it with web_server_start_local() and the radio stays off. */
+bool web_server_local_only(void);
 
 /* Why the last start failed (for the screen). */
 const char *web_server_last_error(void);

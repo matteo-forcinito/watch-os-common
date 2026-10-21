@@ -2,6 +2,7 @@
 idf_component_register(
     SRCS
         "ble_companion.c"
+        "ble_bridge.c"
     INCLUDE_DIRS
         "include"
     REQUIRES
@@ -12,4 +13,6 @@ idf_component_register(
         bt
         esp_timer
         cjson
+        esp_http_client
+        mbedtls
 )
