@@ -202,8 +202,26 @@
   kit.views = function (onShow) {
     const nav = kit.$('.kit-nav');
     if (!nav) return;
+    /* Phones: the sections fold into this button (see .kit-menu in kit.css). */
+    const top = nav.closest('.kit-top');
+    const menu = kit.el('button', {class: 'kit-menu', 'aria-expanded': 'false', title: 'Sezioni'});
+    const label = kit.el('span', {}, '');
+    menu.append(kit.el('b', {}, '☰'), label);
+    menu.onclick = () => {
+      const open = top.classList.toggle('open');
+      menu.setAttribute('aria-expanded', String(open));
+    };
+    if (top) top.insertBefore(menu, nav);
     const show = id => {
-      kit.$$('.kit-nav button').forEach(b => b.classList.toggle('on', b.dataset.view === id));
+      kit.$$('.kit-nav button').forEach(b => {
+        const on = b.dataset.view === id;
+        b.classList.toggle('on', on);
+        if (on) {
+          label.textContent = b.firstChild ? b.firstChild.textContent.trim() : b.textContent.trim();
+          if (b.scrollIntoView && !(top && top.classList.contains('open'))) b.scrollIntoView({block: 'nearest', inline: 'nearest'});
+        }
+      });
+      if (top) { top.classList.remove('open'); menu.setAttribute('aria-expanded', 'false'); }
       kit.$$('.view').forEach(v => v.classList.toggle('on', v.id === id));
       try { sessionStorage.setItem('appkit-view', id); } catch (e) { /* ignore */ }
       if (onShow) onShow(id);
