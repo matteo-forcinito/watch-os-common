@@ -94,6 +94,8 @@ void app_manager_set_close_confirm(void (*ask)(const app_t *app));
 
 /* Close everything, back to the watch face. */
 void app_home(void);
+/* Show the watch shell explicitly (launcher/control center), ignoring the home preference. */
+void app_shell(void);
 
 /* NULL while the home screen (watch shell) is shown. */
 const app_t *app_current(void);

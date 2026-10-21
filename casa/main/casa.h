@@ -14,13 +14,15 @@
 #define CASA_H
 
 #include "esp_err.h"
+#include "cJSON.h"
+#include "lvgl.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define CASA_ENTITIES 40
-#define CASA_ID 64
+#define CASA_ENTITIES 256
+#define CASA_ID 256 /* Home Assistant entity IDs: up to 255 characters plus NUL. */
 #define CASA_NAME 40
 
 typedef enum
@@ -36,6 +38,7 @@ typedef enum
     CASA_SENSOR,   /* sensor, binary_sensor, weather... read only */
     CASA_PERSON,   /* person, device_tracker */
     CASA_OTHER,
+    CASA_ALARM,
 } casa_kind_t;
 
 typedef struct
@@ -43,10 +46,17 @@ typedef struct
     char id[CASA_ID];       /* light.kitchen */
     char name[CASA_NAME];   /* from setup, else friendly_name */
     char area[CASA_NAME];
+    char device_id[64];
+    char device_name[CASA_NAME];
+    char device_class[24];
+    char dashboards[4][CASA_NAME];
     uint8_t kind;           /* casa_kind_t */
     bool known;             /* a state arrived */
     bool available;
     bool on;                /* on / open / playing / home / unlocked... per kind */
+    bool code_required, code_arm_required;
+    int alarm_features;
+    uint8_t indoor_mode; /* 0 automatic, 1 explicitly indoors, 2 excluded */
     char state[24];         /* raw state */
     char unit[12];
     int brightness;         /* 0..100, -1 n/a */
@@ -71,9 +81,24 @@ typedef struct
     char ha_version[16];
     int count;
     uint32_t revision;      /* changes on every state change */
+    uint32_t event_count;
+    uint32_t last_event_ms;
 } casa_status_t;
 
 esp_err_t casa_start(void);
+void casa_stop(void);
+void casa_ui_create(lv_obj_t *screen);
+void casa_ui_destroy(void);
+bool casa_ui_back(void);
+/* Reusable shell pages, independent of the Casa app stack. LVGL task only. */
+void *casa_ui_mount(lv_obj_t *parent, bool all);
+void casa_ui_unmount(void *handle);
+void casa_ui_show_all(void *handle);
+void casa_ui_create_view(lv_obj_t *screen, int view, const char *id);
+void casa_open_view(int view, const char *id);
+esp_err_t casa_acquire(void);
+void casa_release(void);
+void casa_web_stop(void);
 void casa_status(casa_status_t *out);
 int casa_entities(casa_entity_t *out, int max);
 bool casa_entity(const char *id, casa_entity_t *out);
@@ -85,7 +110,11 @@ bool casa_tap(const casa_entity_t *e);
 
 /* Configuration (web.c stores it). */
 esp_err_t casa_config_store(const char *json, char *error, size_t error_size);
+esp_err_t casa_config_clear(void);
 void casa_reconnect(void);
+/* Restricted, paged catalog reads over the existing authenticated connection. */
+bool casa_catalog_request(const char *type, int page, const char *path, int *job);
+cJSON *casa_catalog_poll(int job);
 const char *casa_web_address(void);
 const char *casa_web_code(void);
 esp_err_t casa_web_start(void);
@@ -93,5 +122,13 @@ esp_err_t casa_web_start(void);
 /* Helpers shared by the UI. */
 casa_kind_t casa_kind_of(const char *entity_id);
 const char *casa_state_text(const casa_entity_t *e, char *out, size_t size);
+const char *casa_type_name(const casa_entity_t *e);
+typedef struct
+{
+    float temperature, humidity, power_w;
+    int temperatures, humidities, meters, meters_available;
+} casa_home_stats_t;
+bool casa_is_indoor(const casa_entity_t *e, const casa_entity_t *list, int count);
+void casa_home_stats(const casa_entity_t *list, int count, casa_home_stats_t *out);
 
 #endif

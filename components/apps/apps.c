@@ -52,6 +52,7 @@ static const app_t *const s_apps[] = {
     &news_app,
     &giornata_app,
     &pieno_app,
+    &casa_app,
     &copertura_app,
     &bilancio_app,
     &sentinel_app,
@@ -310,6 +311,7 @@ void apps_init(void)
     appkit_hosted_register("News", "news");
     appkit_hosted_register("Giornata", "giornata");
     appkit_hosted_register("Pieno", "pieno");
+    appkit_hosted_register("Casa", "casa");
     appkit_hosted_register("Copertura", "copertura");
     appkit_hosted_register("Bilancio", "bilancio");
     appkit_hosted_register("Sentinel", "sentinel");

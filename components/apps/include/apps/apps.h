@@ -26,5 +26,7 @@ void apps_init(void);
  * 1/2 = notifications. Closes the open apps first.
  */
 void apps_show_home_tile(int col, int row);
+/* Open notifications from controls, including when Casa occupies the lower tile. */
+void apps_show_notifications(void);
 
 #endif

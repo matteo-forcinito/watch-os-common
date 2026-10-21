@@ -1058,15 +1058,19 @@ static esp_err_t init_port(bool headless)
     lv_init();
     lv_tick_set_cb(tick_cb);
 
-    /* Two partial buffers in internal DMA RAM: LVGL draws one while the other is sent. */
+    /* DMA displays need internal buffers. CPU-copy displays may render in PSRAM. */
     const size_t buffer_bytes = (size_t)width * CONFIG_BOARD_DRAW_BUFFER_LINES * sizeof(uint16_t);
-    uint32_t caps = headless ? MALLOC_CAP_SPIRAM : (MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    uint32_t caps = (headless || board_info()->draw_buffers_in_psram)
+                        ? MALLOC_CAP_SPIRAM
+                        : (MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     void *buf1 = heap_caps_malloc(buffer_bytes, caps);
     void *buf2 = heap_caps_malloc(buffer_bytes, caps);
 
     if (buf1 == NULL || buf2 == NULL)
     {
-        ESP_LOGE(TAG, "No internal RAM for the draw buffers");
+        heap_caps_free(buf1);
+        heap_caps_free(buf2);
+        ESP_LOGE(TAG, "No RAM for the draw buffers (caps 0x%lx)", (unsigned long)caps);
         return ESP_ERR_NO_MEM;
     }
 

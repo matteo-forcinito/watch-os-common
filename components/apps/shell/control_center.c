@@ -1,4 +1,5 @@
 #include "apps_internal.h"
+#include "apps/apps.h"
 
 #include "core/lv_port.h"
 #include "core/power.h"
@@ -109,6 +110,12 @@ static void volume_changed(lv_event_t *e)
     settings_save(&s);
 }
 
+static void open_notifications(lv_event_t *event)
+{
+    (void)event;
+    apps_show_notifications();
+}
+
 void control_center_create(lv_obj_t *parent)
 {
     lv_obj_t *page = ui_page(parent, NULL);
@@ -132,6 +139,8 @@ void control_center_create(lv_obj_t *parent)
 
     ui_slider_row(page, LV_SYMBOL_IMAGE, "Luminosità", 10, 255, settings_get()->brightness, brightness_changed, NULL);
     ui_slider_row(page, LV_SYMBOL_VOLUME_MAX, "Volume", 0, 100, settings_get()->volume, volume_changed, NULL);
+
+    ui_row(page, LV_SYMBOL_BELL, UI_COLOR_BLUE, "Notifiche", NULL, open_notifications, NULL);
 
     ui_row(page, LV_SYMBOL_SETTINGS, UI_COLOR_GRAY, "Impostazioni", NULL, apps_open_cb, (void *)"settings");
     ui_row(page, LV_SYMBOL_POWER, UI_COLOR_RED, "Spegni / riavvia", NULL, apps_open_cb, (void *)"system.power");

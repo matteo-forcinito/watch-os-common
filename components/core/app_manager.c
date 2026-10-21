@@ -50,6 +50,7 @@ typedef enum
     OP_BACK_USER,
     OP_CLOSE,
     OP_CLOSE_OTHERS,
+    OP_SHELL,
 } op_type_t;
 
 typedef struct
@@ -418,7 +419,7 @@ static void close_all(void)
     }
 }
 
-static void do_home(void)
+static void do_shell(void)
 {
     if (s_depth == 0)
     {
@@ -432,6 +433,14 @@ static void do_home(void)
 
     close_all();
     show(s_home, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT);
+}
+
+static void do_home(void)
+{
+    /* Select the real central tile before exposing the shell. Its content is
+     * composed by shell.c; returning home never launches another app. */
+    if (s_home_back) s_home_back();
+    do_shell();
 }
 
 static void execute(const op_t *op)
@@ -448,6 +457,9 @@ static void execute(const op_t *op)
 
         case OP_HOME:
             do_home();
+            break;
+        case OP_SHELL:
+            if (s_depth > 0) do_shell();
             break;
 
         case OP_BACK_USER:
@@ -578,6 +590,8 @@ void app_home(void)
 {
     request(OP_HOME, NULL, NULL);
 }
+
+void app_shell(void) { request(OP_SHELL, NULL, NULL); }
 
 const app_t *app_current(void)
 {
@@ -737,7 +751,7 @@ static void back_gesture(void)
 {
     const app_t *app = app_current();
 
-    if (app != NULL && !(app->flags & APP_FLAG_NO_BACK_GESTURE))
+    if (back_gesture_allowed() && app != NULL && !(app->flags & APP_FLAG_NO_BACK_GESTURE))
     {
         app_back_user();
     }
@@ -747,6 +761,7 @@ void app_manager_set_focus_cb(void (*changed)(bool on))
 {
     s_focus_changed = changed;
 }
+
 
 void app_manager_set_home(lv_obj_t *home, bool (*home_back)(void))
 {

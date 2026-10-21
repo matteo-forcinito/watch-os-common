@@ -61,6 +61,7 @@ void news_service_start(void);
 extern const app_t giornata_app;        /* CONFIG_APPKIT_HOSTED: agenda (watch-os-common/giornata) */
 void giornata_service_start(void);
 extern const app_t pieno_app;
+extern const app_t casa_app;
 extern const app_t ombra_app;           /* CONFIG_APPKIT_HOSTED: Bluetooth trackers (watch-os-common/ombra) */
 extern const app_t copertura_app;
 extern const app_t bilancio_app;         /* CONFIG_APPKIT_HOSTED: money (watch-os-common/bilancio) */

@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Casa · Home Assistant</title>
+<link rel="stylesheet" href="/kit.css"><script src="/kit.js"></script>
+<style>
+:root{--muted:var(--dim);--accent:#ffd28b;--accent-ink:#231908;--positive:#88e0b4;--negative:#ffacac}
+@media(prefers-color-scheme:light){:root:not([data-theme=dark]){--accent:#965800;--accent-ink:#fff;--positive:#177749;--negative:#af2525}}
+:root[data-theme=light]{--accent:#965800;--accent-ink:#fff;--positive:#177749;--negative:#af2525}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,sans-serif}
+button,input,select{font:inherit}button{cursor:pointer;border:1px solid var(--line);border-radius:12px;padding:10px 16px;background:var(--panel2);color:var(--ink)}button:disabled{opacity:.4;cursor:default}button.active,.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+input,select{background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--ink);padding:10px;max-width:100%}input[type=range]{width:100%;padding:8px 0;accent-color:var(--accent)}input[type=checkbox]{accent-color:var(--accent);width:18px;height:18px}
+a{color:var(--accent)}main{max-width:1380px;margin:auto;padding:32px 24px 80px}header,.row,.tabs{display:flex;gap:12px;align-items:center;flex-wrap:wrap}header{justify-content:space-between;margin-bottom:24px}h1{margin:0;font-size:34px;letter-spacing:-1px}h2{font-size:18px}p{margin:6px 0 14px}.dim{color:var(--muted)}.badge{border:1px solid var(--line);border-radius:30px;padding:7px 12px;font-size:13px}.good{color:var(--positive)}.bad{color:var(--negative)}
+.panel{padding:22px;background:var(--panel);border:1px solid var(--line);border-radius:20px;margin-bottom:20px}.hidden{display:none!important}.toolbar{display:grid;grid-template-columns:1fr minmax(160px,240px) minmax(160px,280px);gap:12px;margin-bottom:24px}.tabs{margin-bottom:18px}.section-title{font-size:19px;margin:28px 0 12px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}.entity{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;min-width:0}.entity.on{border-color:color-mix(in srgb,var(--accent) 50%,var(--line));background:color-mix(in srgb,var(--accent) 10%,var(--panel))}.entity h3{font-size:15px;margin:0 0 6px;overflow-wrap:anywhere}.value{font-size:23px;margin:8px 0;min-height:34px}.entity .dim{font-size:12px;overflow-wrap:anywhere}.entity .row{margin-top:14px}.entity button{padding:7px 11px}.empty{padding:48px 20px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:18px}
+label.field{display:block;margin-bottom:16px}label.field input{display:block;width:100%;margin-top:5px}.setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.picker{max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:12px;margin:14px 0}.pick-row{display:flex;align-items:center;gap:12px;padding:11px;border-bottom:1px solid var(--line);cursor:pointer}.pick-row span{flex:1}.pick-row small{display:block;color:var(--muted)}.note{font-size:13px;color:var(--muted)}#import-message{white-space:pre-line}#feedback{min-height:24px}details{margin:16px 0}summary{cursor:pointer;color:var(--accent)}
+@media(max-width:760px){main{padding:20px 14px 60px}.toolbar,.setup-grid{grid-template-columns:1fr}h1{font-size:28px}.panel{padding:16px}.grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}
+
+/* Native panel vocabulary: graphite, amber, large tiles and circular controls. */
+body{background:var(--bg)}main{max-width:1280px}header{margin-bottom:18px}.tabs button{border-radius:14px}.panel-hero{position:relative;isolation:isolate;overflow:hidden;min-height:240px;border-radius:26px;padding:28px 32px;background:linear-gradient(115deg,#343e4c,#151c27);color:#f7f8fa;display:flex;justify-content:space-between;gap:20px;align-items:flex-end}.hero-glow{position:absolute;z-index:-1;right:-65px;top:-85px;width:360px;height:360px;border-radius:50%;background:linear-gradient(150deg,#ffe4a7,#ff9b46 65%,#da622d);box-shadow:0 0 85px #f9b95b35}.hero-kicker{text-transform:uppercase;letter-spacing:.2em;color:#ffd997;font-size:12px}.panel-clock{display:block;font-size:76px;line-height:1.2;font-weight:300;letter-spacing:-4px;font-variant-numeric:tabular-nums}.hero-date{font-size:18px;margin:8px 0}.hero-health{max-width:460px;font-size:14px;color:#c4cbd5}.hero-badge{background:#101722d9;border:1px solid #ffffff24;border-radius:16px;padding:15px 18px;max-width:220px}.hero-badge strong{display:block;font-size:24px;font-weight:500}.quick-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0 28px}.quick-card{position:relative;min-height:130px;text-align:left;border-radius:21px;padding:18px;background:var(--panel);display:grid;grid-template-columns:44px 1fr;gap:8px 10px;align-items:center}.quick-card .quick-value{grid-column:1/-1;font-size:13px;color:var(--muted)}.quick-card strong{font-size:18px;font-weight:500}.device-icon{display:inline-grid;place-items:center;width:42px;height:42px;border-radius:14px;background:color-mix(in srgb,var(--device-color,#f8bf65) 15%,transparent);color:var(--device-color,#d18c2f)}.device-icon svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.entity{padding:21px;border-radius:23px;position:relative}.entity .card-heading{display:flex;gap:12px;align-items:center;margin-bottom:16px}.entity .card-heading h3{margin:0}.entity .value{font-size:26px;font-weight:400;letter-spacing:-.5px}.entity.offline{opacity:.7}.state-note{font-size:12px;color:var(--muted)}.entity-info{margin:14px 0 0;font-size:12px;overflow-wrap:anywhere}.entity-info summary{color:var(--muted)}.entity-info code{display:block;margin-top:6px}.thermo-dial{--dial-color:#f7b66b;position:relative;display:grid;place-items:center;width:210px;height:210px;border-radius:50%;margin:12px auto 20px;background:conic-gradient(from 225deg,var(--dial-color) 0deg,var(--dial-color) var(--angle,140deg),var(--line) var(--angle,140deg),var(--line) 270deg,transparent 270deg);isolation:isolate}.thermo-dial:before{content:"";position:absolute;inset:12px;border-radius:50%;background:var(--panel);z-index:-1}.thermo-dial strong{display:block;font-size:49px;font-weight:300;letter-spacing:-2px}.thermo-dial small{display:block;text-align:center;color:var(--muted);font-size:12px}.stepper{display:flex;justify-content:center;align-items:center;gap:14px;margin:6px 0 16px}.stepper button{width:54px;height:48px;font-size:23px}.stepper span{color:var(--muted);font-size:12px}.light-orb{display:grid;place-items:center;margin:14px auto 24px;width:100px;height:100px;border-radius:50%;background:color-mix(in srgb,var(--line) 50%,var(--panel));color:var(--muted)}.light-orb .device-icon{width:70px;height:70px;background:none;color:inherit}.light-orb .device-icon svg{width:45px;height:45px}.entity.on .light-orb{background:#ffd48a;color:#55390e;box-shadow:0 0 38px #fac66c35}.entity .row>button{flex:1;min-height:44px;border-radius:13px}.entity.on{background:var(--panel);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}.grid{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}.setup-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.tabs{margin-top:24px}.state-counts{font-size:13px;color:var(--muted);margin:10px 0 20px}.pick-row input{flex-shrink:0}#feedback:empty{display:none}.empty{background:var(--panel)}
+@media(max-width:760px){.panel-hero{padding:24px;min-height:235px;align-items:flex-start;flex-direction:column}.hero-glow{right:-155px;top:-35px}.panel-clock{font-size:66px}.hero-badge{max-width:none;padding:8px 12px}.hero-badge strong{font-size:16px;display:inline;margin-right:8px}.quick-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.quick-card{padding:14px;min-height:112px;grid-template-columns:35px 1fr;gap:6px}.quick-card strong{font-size:16px}.quick-card .device-icon{width:34px;height:34px}.quick-card .quick-value{font-size:12px}.setup-grid{grid-template-columns:1fr}.grid{grid-template-columns:minmax(0,1fr)}.panel-hero .hero-health{font-size:12px}.hero-date{font-size:16px}}
+
+.unit-card{border-radius:23px;background:var(--panel);border:1px solid var(--line);padding:22px;min-width:0}.unit-card.offline{opacity:.65}.unit-heading{display:flex;align-items:center;gap:12px}.unit-heading h3{font-size:17px;margin:0;font-weight:500;overflow-wrap:anywhere}.unit-heading p{font-size:12px;color:var(--muted);margin:4px 0}.unit-count{display:inline-block;margin:14px 0 18px;padding:4px 9px;border-radius:20px;background:var(--panel2);color:var(--positive);font-size:11px}.unit-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:2px 0 20px}.unit-metric{background:var(--panel2);padding:13px 8px;border-radius:14px;min-width:0;text-align:center}.unit-metric span{display:block;font-size:10px;color:var(--muted);margin-bottom:8px}.unit-metric strong{display:block;font-size:22px;font-weight:400;letter-spacing:-.7px;overflow-wrap:anywhere}.unit-metric.missing strong{font-size:12px;letter-spacing:0;color:var(--muted)}.unit-preview{color:var(--ink);font-size:20px;min-height:56px}.device-details{margin:0}.device-details>summary{font-size:12px;cursor:pointer;color:var(--muted)}.device-children{display:grid;gap:12px;margin-top:16px}.device-children .entity{padding:14px;border-radius:16px}.device-children .entity .thermo-dial{width:180px;height:180px}.picker-toolbar{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin-bottom:10px}.picker-toolbar input{width:100%}#picker-count{font-size:12px;color:var(--muted);margin-top:8px}
+</style>
+<style>.grid{align-items:start}.unit-metric strong{font-size:18px;white-space:nowrap}.unit-metric.missing strong{font-size:12px;white-space:normal}.unit-preview{overflow-wrap:anywhere}.toolbar.all-mode{grid-template-columns:1fr minmax(160px,280px)}@media(max-width:760px){.toolbar.all-mode{grid-template-columns:1fr}}</style>
+<style>
+.pagination{display:flex;align-items:center;justify-content:center;gap:16px;margin:14px 0 20px}.pagination span{font-size:13px;color:var(--muted)}.priority-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:12px;margin:24px 0}.priority-card .value{font-size:21px}.motion-card .value{font-size:18px}.energy-card{--device-color:#80d7ce}.climate-open{margin-bottom:12px;color:var(--accent)}
+#climate-dialog{padding:0;border:1px solid #38424f;border-radius:24px;width:min(480px,100vw);max-width:100vw;max-height:100dvh;color:#f0f3f7;background:#181f29;overflow:hidden}#climate-dialog::backdrop{background:#000b;backdrop-filter:blur(8px)}.climate-screen{position:relative;width:100%;height:min(478px,calc(100dvh - 2px));overflow:hidden;background:radial-gradient(ellipse at 90% 50%,#303b43,#181f29 70%)}.climate-screen header{display:flex;gap:12px;margin:0;padding:14px 18px;align-items:center;font-size:12px}.climate-screen header button{padding:1px 12px;font-size:27px}.climate-screen time{margin-left:auto}.climate-screen h2{font-size:19px;margin:15px 24px 8px;max-width:85%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#climate-ambient{color:#75e4e1;margin-left:24px;font-size:16px}#climate-modes{position:absolute;z-index:2;left:24px;top:165px;width:142px;display:grid;gap:9px;max-height:228px;overflow:auto}#climate-modes button{height:52px;text-align:left;padding-left:18px;border-radius:12px;background:#313842;border-color:#495360;color:white}#climate-modes .selected{background:linear-gradient(110deg,#a164e7,#31c8f4);border-color:#b1a1ed;box-shadow:0 0 24px #7653c233}#climate-ring{position:absolute;right:-59px;top:126px;width:310px;height:310px;margin:0;background:conic-gradient(from 135deg,#77dfcf var(--angle),#39414b 0deg 270deg,transparent 270deg);transform:rotate(0)}#climate-ring>div{gap:12px}#climate-ring strong{font-size:49px}#climate-ring small{font-size:12px}.climate-steps{position:absolute;bottom:18px;left:24px;display:flex;gap:12px}.climate-steps button{width:60px;height:44px;font-size:25px}.panel-hero{min-height:150px}.panel-clock{font-size:62px}
+@media(max-width:380px){#climate-ring{width:250px;height:250px;right:-90px;top:143px}#climate-modes{left:16px;width:120px}.priority-grid{grid-template-columns:1fr}#climate-ring strong{font-size:35px}}
+</style><style>#climate-ring:before{background:#1b232d}#climate-ring small{color:#a8b3c2}.metric-meter{height:4px;background:var(--line);border-radius:4px;margin-top:12px;overflow:hidden}.metric-meter i{display:block;height:100%;border-radius:inherit}.unit-metric:first-child strong{color:#82d9df}</style><style>
+#panel-home{height:min(700px,calc(100dvh - 180px));min-height:450px;display:grid;grid-template-rows:minmax(175px,1fr) minmax(220px,1fr);gap:12px}.panel-hero{min-height:0;margin:0;padding:22px 28px}.hero-glow{width:260px;height:260px;right:-50px;top:-48px;background:radial-gradient(circle at 35% 30%,#ffe7b3,#ffba60 68%,#ff8e3b)}#hero-weather-art{position:absolute;z-index:-1;right:22px;top:2px;font-size:160px;line-height:1;color:#fff1c0;text-shadow:0 0 34px #e9b56a66}.night .panel-hero{background:linear-gradient(115deg,#313d65,#10182b)}.night .hero-glow{background:radial-gradient(circle at 35% 30%,#c7c9ef,#606bba 70%,#323c6b)}.night #hero-weather-art{color:#ececff;text-shadow:0 0 45px #b1c3ff66}.hero-badge{display:none}.quick-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));margin:0;gap:12px}.quick-card{display:block;min-height:0;padding:0;overflow:hidden}.quick-main{border:0;background:transparent;width:100%;height:100%;padding:16px;text-align:left;display:grid;grid-template-columns:42px 1fr;align-content:center;align-items:center;gap:8px 12px}.quick-main .quick-value{grid-column:1/-1}.quick-menu{position:absolute;right:8px;top:8px;padding:0 10px;z-index:2}#alarm-dialog{max-width:min(480px,95vw);border:1px solid var(--line);border-radius:22px;padding:18px;background:var(--panel);color:var(--ink)}#alarm-dialog::backdrop{background:#000b}#alarm-controls .entity{border:0}.climate-arc{position:absolute;inset:0;width:360px;height:360px;fill:none;stroke-width:9;stroke-linecap:round}#climate-track{stroke:#39434e}#climate-arc-value{stroke:url(#climate-gradient);stroke-dasharray:100;stroke-dashoffset:50}#climate-knob{fill:#fff;stroke:none}#climate-ring{width:360px;height:360px;right:-95px;top:112px;background:none!important;isolation:auto}#climate-ring:before{display:none}#climate-ring>div{position:relative;right:43px;z-index:1;pointer-events:none}#climate-ring strong{text-align:center}#climate-ring small{max-width:180px}
+@media(max-width:760px){#panel-home{height:calc(100dvh - 210px);min-height:430px}.panel-hero{padding:16px 20px}.panel-clock{font-size:60px}.hero-date{font-size:14px}.hero-kicker{font-size:10px}.hero-health{font-size:12px}.quick-main{padding:14px;grid-template-columns:32px 1fr;gap:7px}.quick-main .device-icon{width:30px;height:30px}.quick-main strong{font-size:16px}.quick-main .quick-value{font-size:12px}.hero-glow{width:215px;height:215px;right:-56px}#hero-weather-art{font-size:125px;right:0}.quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style><style>#home-alarm-clock{display:inline-block;color:#f6d49d;background:#121d30c9;padding:3px 9px;margin-top:8px;border-radius:10px;font-size:12px;text-decoration:none}</style></head>
+<body><main>
+<header><div><h1>Casa</h1><div class="dim">Home Assistant sul pannello e sul PC</div></div><div class="row"><span id="status" class="badge">Collegamento al pannello…</span><a id="original" target="_blank" rel="noopener noreferrer" class="hidden">Apri Home Assistant ↗</a><button id="setup-toggle">Configura</button></div></header>
+<div id="feedback" role="status" aria-live="polite"></div>
+<section id="setup" class="panel hidden">
+<h2>Collega Home Assistant</h2><p class="dim">Il pannello si collega direttamente al tuo server, anche quando è su un’altra rete tramite Nabu Casa.</p>
+<div class="setup-grid"><div>
+<label class="field">Indirizzo Home Assistant<input id="ha-url" type="url" placeholder="https://….ui.nabu.casa" autocomplete="url"></label>
+<label class="field">Token di accesso a lunga durata<input id="ha-token" type="password" autocomplete="off" placeholder="Incolla il token qui"></label>
+<p class="note">Crealo dal tuo profilo Home Assistant → Sicurezza → Token di accesso a lunga durata. Usa l’URL di accesso remoto alla tua istanza, non quello del portale account Nabu Casa.</p>
+<div class="row"><button id="import" class="primary">Leggi entità, stanze e dashboard</button><button id="disconnect">Scollega</button></div>
+<p id="import-message" class="note" role="status"></p>
+</div><div>
+<h3>Homepage del dispositivo</h3><div class="row"><select id="home-choice" aria-label="Homepage del dispositivo"><option value="0">Classica</option><option value="1">Casa</option></select><button id="save-home">Salva homepage</button></div><p class="note">La scelta vale all’avvio e quando torni a Home. Destra: app; alto: controlli rapidi; basso dalla home Casa: Tutte.</p><h2>Catalogo sul pannello</h2><p class="note">Scegli fino a <span id="limit">256</span> entità. Stati e comandi funzionano anche dopo aver chiuso il browser. Il token viene conservato sul dispositivo e non viene restituito dalla dashboard.</p>
+<h3>Seleziona dispositivi e sensori</h3><div class="picker-toolbar"><label class="field">Cerca nella selezione<input id="pick-filter" type="search" placeholder="Dispositivo, stanza, temperatura, batteria..." aria-label="Cerca entità da importare"></label></div><div class="row"><button id="select-recommended">Seleziona consigliate</button><button id="select-visible">Seleziona risultati</button><button id="clear-selection">Deseleziona risultati</button></div>
+<h3>Media dei sensori interni</h3><p class="note">Scegli tra i termometri selezionati. La media usa solo valori disponibili; umidità dagli stessi dispositivi. In automatico sono esclusi i dispositivi esterni e i sensori diagnostici senza umidità.</p><div id="indoor-picker"></div><div id="cache-status" class="note"></div><div id="picker-count"></div><div id="picker" class="picker"></div><div class="row"><strong id="selected-count">0 selezionate</strong><button id="save" class="primary">Salva sul pannello</button></div>
+</div></div>
+<details><summary>Come vengono importate le dashboard?</summary><p class="note">Vengono ricavati i gruppi dalle entità e dalle aree esplicite nelle viste Home Assistant. Schede personalizzate, modelli e viste generate automaticamente possono richiedere la dashboard originale. Per ogni entità vengono conservati fino a quattro gruppi dashboard. Le modifiche a nomi, stanze e composizione si aggiornano ripetendo l’importazione.</p></details>
+</section>
+<section id="panel-home"><div class="panel-hero"><div class="hero-glow" aria-hidden="true"></div><div id="hero-weather-art" aria-hidden="true"></div><div><div class="hero-kicker">La tua casa, a colpo d'occhio</div><time class="panel-clock" id="panel-clock">--:--</time><div class="hero-date" id="panel-date"></div><div class="hero-health" id="panel-health"></div><div id="panel-weather" class="hero-health"></div><a id="home-alarm-clock" href="/#v-alarms">Sveglia off</a></div><div class="hero-badge"><strong id="panel-online">In collegamento</strong><span id="panel-events">Attendo gli stati</span></div></div><div id="quick-grid" class="quick-grid"></div></section><div id="state-counts" class="state-counts" aria-live="polite"></div>
+<nav class="tabs" aria-label="Raggruppamento"><button class="active" data-mode="overview">Home</button><button data-mode="area">Stanze</button><button data-mode="category">Tipologie</button><button data-mode="dashboards">Dashboard</button><button data-mode="all">Tutte</button><button data-mode="environment">Ambiente</button><button data-mode="energy">Consumi</button></nav>
+<div class="toolbar"><input id="search" type="search" placeholder="Cerca un dispositivo o un sensore…" aria-label="Cerca nel pannello"><select id="group" aria-label="Gruppo"><option value="">Tutti i gruppi</option></select><select id="availability" aria-label="Disponibilità"><option value="available">Disponibili</option><option value="all">Tutte le entità</option><option value="unavailable">Non disponibili</option></select></div>
+<div id="cards"><div class="empty">Apri Configura per collegare la tua casa.</div></div>
+<p class="note">Accesso rapido sul dispositivo: tieni premuta l’ora della homepage.</p>
+</main>
+<dialog id="climate-dialog" aria-labelledby="climate-title"><div class="climate-screen">
+<header><button id="climate-close" aria-label="Chiudi termostato">‹</button><span id="climate-room"></span><time id="climate-time"></time></header>
+<h2 id="climate-title"></h2><div id="climate-ambient"></div>
+<div id="climate-modes"></div><div class="thermo-dial" id="climate-ring"><svg class="climate-arc" viewBox="0 0 360 360" aria-hidden="true"><defs><linearGradient id="climate-gradient" x1="0" y1="1" x2="0" y2="0"><stop stop-color="#7de0c8"/><stop offset=".5" stop-color="#72cbe4"/><stop offset="1" stop-color="#bb87ee"/></linearGradient></defs><path id="climate-track" d="M 265 327.224 A 170 170 0 1 1 265 32.776"/><path id="climate-arc-value" pathLength="100" d="M 265 327.224 A 170 170 0 1 1 265 32.776"/><circle id="climate-knob" r="7"/></svg><div><small id="climate-mode"></small><strong id="climate-target"></strong><small>Temperatura desiderata</small></div></div>
+<div class="climate-steps"><button id="climate-minus" aria-label="Riduci temperatura a schermo intero">−</button><button id="climate-plus" aria-label="Aumenta temperatura a schermo intero">+</button></div>
+</div></dialog><dialog id="alarm-dialog" aria-label="Controlli Alarmo"><button id="alarm-close">Chiudi</button><div id="alarm-controls"></div></dialog>
+<script>
+if(!localStorage.getItem('appkit-theme'))document.documentElement.dataset.theme='dark';
+'use strict';
+const $ = selector => document.querySelector(selector);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const SUPPORTED = new Set(['light','switch','input_boolean','automation','fan','cover','climate','alarm_control_panel','media_player','scene','script','button','input_button','lock','sensor','binary_sensor','weather','person','device_tracker']);
+let state = {connected:false,entities:[]}, catalog = [], selected = new Map(), limit = 256, mode = localStorage.casaPanelMode || 'overview';
+let dragging = false, loadingCatalog = false, configurationLoaded = false, savedCredentials = false, savedUrl = '', cacheDirty = false, unitPage = 0, unitFilter = '', climateId = '';
+const UNIT_PAGE_SIZE=6;
+const clip = (value, bytes = 39) => { const chars = Array.from(String(value || '')); while (new TextEncoder().encode(chars.join('')).length > bytes) chars.pop(); return chars.join(''); };
+function feedback(text, bad = false) { $('#feedback').textContent = text; $('#feedback').className = bad ? 'bad' : 'good'; }
+function category(entity) {
+  const domain = entity.id.split('.')[0], dc = entity.device_class;
+  if (domain === 'sensor' || domain === 'binary_sensor' || domain === 'weather') return ({temperature:'Termometri',humidity:'Umidità',power:'Energia',energy:'Energia'})[dc] || 'Sensori';
+  return ({light:'Luci',switch:dc === 'outlet' ? 'Prese' : 'Interruttori',input_boolean:'Interruttori',automation:'Interruttori',climate:'Termostati',alarm_control_panel:'Allarme',cover:'Tapparelle',fan:'Ventilazione',media_player:'Multimedia',scene:'Scene e azioni',script:'Scene e azioni',button:'Scene e azioni',input_button:'Scene e azioni',lock:'Serrature',person:'Presenze',device_tracker:'Presenze'})[domain] || 'Altro';
+}
+function groups(entity) {
+  if (mode === 'area') return [entity.area || 'Senza stanza'];
+  if (mode === 'category') return [entity.category || category(entity)];
+  if (mode === 'dashboards') return entity.dashboards?.length ? entity.dashboards : ['Senza dashboard'];
+  return ['Tutte le entità'];
+}
+const searchable=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('it');
+function matches(entity,query){const aliases=({temperature:'temperatura termometro',humidity:'umidita',battery:'batteria',outlet:'presa',power:'potenza consumo watt',current:'corrente ampere',voltage:'tensione volt'})[entity.device_class]||'';return !query||searchable([entity.id,entity.name,entity.device_name,entity.area,entity.category,entity.device_class,aliases,...(entity.dashboards||[])].join(' ')).includes(searchable(query));}
+
+const iconPaths = {
+  light:'<path d="M9 18h6m-5 3h4M8.5 14a6 6 0 1 1 7 0L15 16H9z"/>',
+  climate:'<path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0Z"/><path d="M12 8v10m5-12h3m-3 4h2"/>',
+  plug:'<path d="M8 3v5m8-5v5M6 8h12v4a6 6 0 0 1-12 0zm6 10v4"/>',
+  scene:'<path d="m13 2-9 12h7l-1 8 10-13h-7z"/>',
+  other:'<rect x="4" y="4" width="16" height="16" rx="5"/><path d="M8 12h8m-4-4v8"/>'
+};
+function deviceIcon(domain){const key=domain==='light'?'light':domain==='climate'?'climate':['switch','input_boolean'].includes(domain)?'plug':['scene','script','button','input_button'].includes(domain)?'scene':'other';return `<span class="device-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${iconPaths[key]}</svg></span>`;}
+function isAvailable(entity){return entity.known!==false && entity.available!==false && !['unavailable','unknown'].includes(entity.state);}
+function recommendationRank(entity){const domain=entity.id.split('.')[0];return ({alarm_control_panel:-1,climate:0,light:1,cover:3,fan:4,scene:5,script:5})[domain]??(domain==='switch'?(entity.device_class==='outlet'?2:7):['temperature','humidity'].includes(entity.device_class)?6:10);}
+function recommended(){return catalog.filter(entity=>entity.state!==undefined && !['unavailable','unknown'].includes(entity.state)).sort((a,b)=>recommendationRank(a)-recommendationRank(b)||a.area.localeCompare(b.area,'it')).slice(0,limit);}
+function useRecommended(){const entities=recommended();if(!entities.length)return feedback('Reimporta il catalogo per leggere la disponibilita\u0300 aggiornata.',true);selected=new Map(entities.map(entity=>[entity.id,entity]));drawPicker();feedback(`${selected.size} entita\u0300 disponibili selezionate. Premi Salva per applicarle al pannello.`);}
+function setMode(next,group=''){mode=next;localStorage.casaPanelMode=mode;$('#group').value=group;render();}
+function primaryAlarm(){const alarms=state.entities.filter(e=>e.id.startsWith('alarm_control_panel.'));return alarms.find(e=>e.id==='alarm_control_panel.alarmo')||alarms.find(e=>/alarmo/i.test(e.id+' '+e.name))||alarms.find(isAvailable)||alarms[0];}
+function updatePanel(){
+  const now=new Date();$('#panel-clock').textContent=now.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});$('#panel-date').textContent=now.toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
+  const available=state.entities.filter(isAvailable).length,unknown=state.entities.filter(e=>e.state==='unknown').length,offline=state.entities.filter(e=>e.state==='unavailable').length,waiting=state.entities.filter(e=>!e.known).length;
+  $('#panel-health').textContent=state.connected?'Collegato direttamente a Home Assistant':'Collegamento Home Assistant non attivo';
+  $('#panel-online').textContent=`${available} / ${state.entities.length} disponibili`;
+  $('#panel-events').textContent=state.connected?(state.event_count?`${state.event_count} aggiornamenti ricevuti`:'Stati ricevuti da Home Assistant'):'Attendo il collegamento';
+  $('#state-counts').textContent=state.entities.length?`${available} disponibili · ${offline} non disponibili in HA · ${unknown} con stato sconosciuto${waiting?' · '+waiting+' in attesa':''}`:'Scegli le entita\u0300 dalla configurazione per iniziare.';
+  $('#quick-grid').replaceChildren();
+  const alarm=primaryAlarm(),climate=state.entities.find(e=>e.id.startsWith('climate.'));
+  const environments=physicalUnits(state.entities).filter(u=>u.entities.some(e=>e.device_class==='temperature'));
+  const meters=physicalUnits(state.entities).filter(u=>u.entities.some(e=>e.id.startsWith('sensor.')&&['power','current','voltage'].includes(e.device_class)));
+  const firstTemp=state.entities.find(e=>e.device_class==='temperature'&&isAvailable(e));
+  for(const [title,domain,color,value,action] of [
+    ['Alarmo','alarm_control_panel','#b7a4f0',alarm?(alarm.display||alarm.state):'Da selezionare',()=>{if(alarm){if(['disarmed','armed_away'].includes(alarm.state))command(alarm);else openAlarm();}}],
+    ['Temperatura','climate','#80d7d3',state.home?.temperature!=null?(Number(state.home.temperature).toLocaleString('it-IT',{maximumFractionDigits:1})+' °C'+(state.home.humidity!=null?' · '+Math.round(state.home.humidity)+' %':'')):'Scegli sensori interni',()=>setMode('environment')],
+    ['Termostato','climate','#f0ad7c',climate?(!isAvailable(climate)?climate.display||'Non disponibile':(climate.on?'Acceso':'Spento')+(climate.target_temp==null?'':' · '+climate.target_temp+'°')):'Da selezionare',()=>{if(climate)openClimate(climate.id);}],
+    ['Consumi','plug','#80b6ee',state.home?.power_w!=null?(Math.round(state.home.power_w)+' W · '+state.home.meters_available+'/'+state.home.meters+' online'):meters.length+' misuratori',()=>setMode('energy')]
+  ]){
+    const card=document.createElement('article');card.className='quick-card';card.style.setProperty('--device-color',color);
+    const button=document.createElement('button');button.className='quick-main';button.innerHTML=deviceIcon(domain)+`<strong>${title}</strong><span class="quick-value">${esc(value)}</span>`;button.onclick=action;
+    card.append(button);
+    if(title==='Alarmo'){button.disabled=!alarm||!state.connected||!isAvailable(alarm);const menu=document.createElement('button');menu.className='quick-menu';menu.textContent='⌄';menu.setAttribute('aria-label','Apri menu Alarmo');menu.onclick=openAlarm;menu.disabled=!alarm;card.append(menu);}
+    $('#quick-grid').append(card);
+  }
+  const night=now.getHours()<7||now.getHours()>=19,weather=state.weather;
+  $('#panel-home').classList.toggle('night',night);
+  const code=weather?.code??0;let art=night?'☾':'☀';
+  if(weather&&code>=1&&code<=3)art=night?'☁':'☀';
+  if(weather&&code>=45)art=code>=95?'ϟ':code>=71&&code<=77?'❄':code>=51?'☂':'☁';
+  $('#hero-weather-art').textContent=art;
+  $('#panel-weather').textContent=weather?`${weather.temperature.toLocaleString('it-IT')} °C · ${weather.city||'Meteo'}`:'Meteo in aggiornamento';
+  $('#home-alarm-clock').textContent='◷ Sveglia '+(state.next_alarm||'off');
+
+}
+const categoryOf=category;
+
+const openUnits=new Set();
+function physicalUnits(entities){
+  const map=new Map();for(const entity of entities){const key=entity.device_id?'device:'+entity.device_id:'entity:'+entity.id;if(!map.has(key))map.set(key,{key,name:entity.device_name||entity.name||entity.id,area:entity.area,entities:[]});const group=map.get(key);group.entities.push(entity);if(entity.device_name)group.name=entity.device_name;}
+  return [...map.values()].sort((a,b)=>Number(b.entities.some(isAvailable))-Number(a.entities.some(isAvailable))||a.name.localeCompare(b.name,'it'));
+}
+function unitCard(unit,query){
+  if(!unit.entities[0].device_id)return entityCard(unit.entities[0]);
+  const online=unit.entities.filter(isAvailable),card=document.createElement('article');card.className='unit-card'+(!online.length?' offline':'');card.dataset.deviceId=unit.entities[0].device_id;
+  const energy=unit.entities.some(e=>e.id.startsWith('sensor.')&&['current','voltage','power'].includes(e.device_class));
+  const sensor=unit.entities.some(e=>['temperature','humidity','battery'].includes(e.device_class));
+  const heading=document.createElement('div');heading.className='unit-heading';heading.innerHTML=deviceIcon(sensor?'climate':'other')+`<div><h3>${esc(unit.name)}</h3><p>${esc([...new Set(unit.entities.map(e=>e.area))].join(' · '))}</p></div>`;card.append(heading);
+  const badge=document.createElement('span');badge.className='unit-count';badge.textContent=`${online.length} / ${unit.entities.length} entita\u0300 disponibili`;card.append(badge);
+  if(sensor||energy){const metrics=document.createElement('div');metrics.className='unit-metrics';for(const [dc,title] of (energy?[['power','Potenza'],['voltage','Tensione'],['current','Corrente']]:[['temperature','Temperatura'],['humidity','Umidita\u0300'],['battery','Batteria']])){
+    const members=unit.entities.filter(e=>e.device_class===dc&&((energy||dc==='battery')?e.id.startsWith('sensor.'):true)).sort((a,b)=>Number(isAvailable(b))-Number(isAvailable(a))),entity=members[0],metric=document.createElement('div');metric.className='unit-metric'+(!entity||!isAvailable(entity)?' missing':'');const label=document.createElement('span'),value=document.createElement('strong');label.textContent=title;value.textContent=!entity?'—':!entity.known?'In attesa':entity.state==='unavailable'?'Offline':entity.state==='unknown'?'Sconosciuto':entity.display||entity.state;value.title=!entity?'Entita\u0300 non selezionata':entity.name;metric.append(label,value);
+    if(entity&&isAvailable(entity)&&['humidity','battery'].includes(dc)&&Number.isFinite(Number(entity.state))){const bar=document.createElement('div');bar.className='metric-meter';const fill=document.createElement('i');fill.style.width=Math.max(0,Math.min(100,Number(entity.state)))+'%';fill.style.background=dc==='battery'&&Number(entity.state)<=20?'#ee8c78':dc==='battery'?'#87d9a5':'#7acbd8';bar.append(fill);metric.append(bar);}metrics.append(metric);}card.append(metrics);}
+  else{const first=[...unit.entities].sort((a,b)=>Number(isAvailable(b))-Number(isAvailable(a))||recommendationRank(a)-recommendationRank(b))[0],preview=document.createElement('div');preview.className='unit-preview';preview.textContent=isAvailable(first)?first.display||first.state:'Non disponibile in HA';card.append(preview);}
+  const details=document.createElement('details');details.className='device-details';const summary=document.createElement('summary');summary.textContent=`Mostra ${unit.entities.length} entita\u0300 e controlli`;details.append(summary);let built=false;const build=()=>{if(built)return;built=true;const children=document.createElement('div');children.className='device-children';[...unit.entities].sort((a,b)=>Number(isAvailable(b))-Number(isAvailable(a))||recommendationRank(a)-recommendationRank(b)).forEach(entity=>children.append(entityCard(entity)));details.append(children);};details.ontoggle=()=>{if(!details.isConnected)return;if(details.open){openUnits.add(unit.key);build();}else openUnits.delete(unit.key);};if(query||openUnits.has(unit.key)){build();details.open=true;}card.append(details);return card;
+}
+function render() {
+  if (dragging || $('#cards').contains(document.activeElement) && document.activeElement.matches('input,select')) return;
+  updatePanel();
+  $('#panel-home').classList.toggle('hidden',mode!=='overview');
+  $('.toolbar').classList.toggle('hidden',mode==='overview');
+  $('#cards').classList.toggle('hidden',mode==='overview');
+  if(mode==='overview'){$('#cards').replaceChildren();return;}
+  $('.toolbar').classList.toggle('all-mode',['all','environment','energy'].includes(mode));
+  $('#group').classList.toggle('hidden',['all','environment','energy'].includes(mode));
+  document.querySelectorAll('[data-mode]').forEach(button => button.classList.toggle('active', button.dataset.mode === mode));
+  const previous = $('#group').value, names = [...new Set(state.entities.flatMap(groups))];
+  $('#group').replaceChildren(new Option('Tutti i gruppi',''), ...names.map(name => new Option(name,name)));
+  $('#group').value = names.includes(previous) ? previous : '';
+  const chosenGroup = $('#group').value, query = $('#search').value.trim().toLocaleLowerCase('it'), availability = $('#availability').value;
+  let entities = state.entities.filter(entity => matches(entity,query) && (availability === 'all' || (availability === 'available') === isAvailable(entity)));
+  if(mode==='overview') entities=state.entities.filter(isAvailable).sort((a,b)=>recommendationRank(a)-recommendationRank(b)).slice(0,6);
+  entities.sort((a,b)=>Number(isAvailable(b))-Number(isAvailable(a)));
+  if(['all','environment','energy'].includes(mode)){
+    const filter=[mode,query,availability].join('|');if(filter!==unitFilter){unitFilter=filter;unitPage=0;}
+    const units=physicalUnits(state.entities).filter(unit=>(mode!=='environment'||unit.entities.some(e=>['temperature','humidity','battery'].includes(e.device_class)))&&(mode!=='energy'||unit.entities.some(e=>e.id.startsWith('sensor.')&&['power','voltage','current'].includes(e.device_class)))).filter(unit=>unit.entities.some(entity=>matches(entity,query))&&(['environment','energy'].includes(mode)||availability==='all'||(availability==='available')===unit.entities.some(isAvailable)));
+    unitPage=Math.max(0,Math.min(unitPage,Math.ceil(units.length/UNIT_PAGE_SIZE)-1));
+    $('#cards').replaceChildren();
+    if(mode==='all'&&!query)$('#cards').append(priorityCards());
+    const heading=document.createElement('h2');heading.className='section-title';heading.textContent=`${mode==='energy'?'Consumi':mode==='environment'?'Ambiente':'Tutti i dispositivi'} · ${units.length}`;
+    const grid=document.createElement('div');grid.className='grid all-devices';units.slice(unitPage*UNIT_PAGE_SIZE,(unitPage+1)*UNIT_PAGE_SIZE).forEach(unit=>grid.append(unitCard(unit,query)));
+    const pagination=document.createElement('nav');pagination.className='pagination';pagination.setAttribute('aria-label','Pagine dispositivi');
+    for(const [text,delta] of [['Precedenti',-1],[`Pagina ${unitPage+1} / ${Math.max(1,Math.ceil(units.length/UNIT_PAGE_SIZE))}`,0],['Successivi',1]]){
+      const button=document.createElement(delta?'button':'span');button.textContent=text;
+      if(delta){button.disabled=delta<0?unitPage===0:(unitPage+1)*UNIT_PAGE_SIZE>=units.length;button.onclick=()=>{unitPage+=delta;render();};}pagination.append(button);
+    }
+    $('#cards').append(heading,pagination,grid);
+    if(!units.length){const empty=document.createElement('p');empty.className='empty';empty.textContent='Nessun dispositivo corrisponde alla ricerca.';$('#cards').append(empty);}
+    refreshClimate();return;
+  }
+  const sections = new Map();
+  entities.forEach(entity => (mode==='overview'?['Dispositivi disponibili']:groups(entity)).filter(group => !chosenGroup || group === chosenGroup).forEach(group => {
+    if (!sections.has(group)) sections.set(group, []);
+    sections.get(group).push(entity);
+  }));
+  $('#cards').replaceChildren();
+  if (!sections.size) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = state.entities.length ? 'Nessun dispositivo disponibile con questi filtri. Scegli Tutte le entità per vedere gli stati offline, oppure aggiorna la selezione da Configura.' : 'Nessuna entità importata. Apri Configura per iniziare.'; $('#cards').append(empty); }
+  for (const [group, items] of sections) {
+    const heading = document.createElement('h2'); heading.className = 'section-title'; heading.textContent = `${group} · ${items.length}`;
+    const grid = document.createElement('div'); grid.className = 'grid'; items.forEach(entity => grid.append(entityCard(entity)));
+    $('#cards').append(heading,grid);
+  }
+}
+async function command(entity, service, data) {
+  if (!state.connected || !entity.known || !entity.available) return feedback('Entità non disponibile: attendo Home Assistant.',true);
+  if (service === 'unlock' && !confirm(`Aprire la serratura «${entity.name || entity.id}»?`)) return;
+  if(entity.id.startsWith('alarm_control_panel.')){
+    if(!service){if(!['disarmed','armed_away'].includes(entity.state))return feedback('Scegli la modalità dal menu Allarme.',true);service=entity.state==='disarmed'?'alarm_arm_away':'alarm_disarm';}
+    if(entity.code_required&&(service==='alarm_disarm'||entity.code_arm_required)){const code=prompt('Codice Alarmo richiesto da Home Assistant');if(!code)return;data={...data,code};}
+  }
+  try {
+    const result = await kit.api('/api/action',{body:{id:entity.id,...(service ? {service} : {}),...(data ? {data} : {})}});
+    feedback(result.message || (result.ok ? 'Comando inviato' : 'Comando non inviato'), !result.ok);
+  } catch (error) { feedback(error.message,true); }
+}
+function entityCard(entity) {
+  const domain = entity.id.split('.')[0];
+  const card = document.createElement('article'); card.className = 'entity kind-'+domain + (entity.on ? ' on' : '')+(!isAvailable(entity)?' offline':'');
+  const status=!entity.known?'In attesa di HA':entity.state==='unknown'?'Stato sconosciuto in HA':entity.state==='unavailable'?'Non disponibile in HA':entity.display||entity.state;
+  card.innerHTML = `<div class="card-heading">${deviceIcon(domain)}<div><h3>${esc(entity.name || entity.id)}</h3><div class="dim">${esc(entity.area)} · ${esc(entity.category || category(entity))}</div></div></div><div class="value">${esc(status)}</div>`;
+  if(domain==='light'){const orb=document.createElement('div');orb.className='light-orb';orb.innerHTML=deviceIcon('light');card.append(orb);}
+  if(domain==='climate'){
+    const cta=document.createElement('button');cta.className='climate-open';cta.textContent='Regola termostato ↗';cta.onclick=()=>openClimate(entity.id);card.append(cta);
+    const dial=document.createElement('div');dial.className='thermo-dial';if(entity.state==='cool')dial.style.setProperty('--dial-color','#7ab8ef');
+    const target=entity.target_temp,minimum=entity.min_temp??7,maximum=entity.max_temp??35,angle=target==null?0:Math.max(0,Math.min(270,(target-minimum)/(maximum-minimum||1)*270));dial.style.setProperty('--angle',angle+'deg');
+    const value=document.createElement('div'),big=document.createElement('strong'),small=document.createElement('small');big.textContent=target==null?'—':Number(target).toLocaleString('it-IT')+'°';small.textContent=entity.current_temp==null?'Temperatura desiderata':'Ambiente '+Number(entity.current_temp).toLocaleString('it-IT')+'°';value.append(big,small);dial.append(value);card.append(dial);
+  }
+  const controls = document.createElement('div'); controls.className = 'row';
+  const enabled = state.connected && entity.known && entity.available;
+  const button = (label,service,data) => { const element = document.createElement('button'); element.textContent = label; element.disabled = !enabled; element.onclick = () => command(entity,service,data); controls.append(element); };
+  const slider = (label,value,min,max,step,service,key,scale=1) => {
+    const wrap = document.createElement('label'); wrap.className = 'field'; wrap.textContent = `${label}: ${value ?? '—'}`;
+    const input = document.createElement('input'); input.type = 'range'; input.min = min; input.max = max; input.step = step; input.value = value ?? min; input.disabled = !enabled;
+    input.oninput = () => { wrap.firstChild.textContent = `${label}: ${input.value}`; };
+    input.onchange = async () => { await command(entity,service,{[key]:Number(input.value)*scale}); input.blur(); };
+    wrap.append(input); card.append(wrap);
+  };
+  if (['light','switch','input_boolean','automation','fan'].includes(domain)) button(entity.on ? 'Spegni' : 'Accendi');
+  if (domain === 'light' && entity.supports_brightness) slider('Luminosità %',entity.brightness,1,100,1,'turn_on','brightness_pct');
+  if (domain === 'fan' && entity.position >= 0) slider('Velocità %',entity.position,0,100,1,'set_percentage','percentage');
+  if (domain === 'climate') {
+    if(entity.target_temp!=null){const stepper=document.createElement('div');stepper.className='stepper';for(const [label,delta,title] of [['−',-1,'Riduci temperatura'],['+',1,'Aumenta temperatura']]){const button=document.createElement('button');button.textContent=label;button.setAttribute('aria-label',title);button.disabled=!enabled;button.onclick=()=>{const step=entity.temp_step||.5,value=Math.max(entity.min_temp??7,Math.min(entity.max_temp??35,entity.target_temp+delta*step));command(entity,'set_temperature',{temperature:Math.round(value*100)/100});};stepper.append(button);}card.append(stepper);}
+    if (entity.target_temp != null) slider('Temperatura',entity.target_temp,entity.min_temp ?? 7,entity.max_temp ?? 35,entity.temp_step || .5,'set_temperature','temperature');
+    if (entity.hvac_modes?.length) {
+      const select = document.createElement('select'); select.setAttribute('aria-label','Modalità termostato'); select.disabled = !enabled;
+      entity.hvac_modes.forEach(value => select.add(new Option(value,value))); select.value = entity.state;
+      select.onchange = async () => { await command(entity,'set_hvac_mode',{hvac_mode:select.value}); select.blur(); }; controls.append(select);
+    }
+  }
+  if (domain === 'cover') { button('Apri','open_cover'); button('Ferma','stop_cover'); button('Chiudi','close_cover'); if (entity.position >= 0) slider('Apertura %',entity.position,0,100,1,'set_cover_position','position'); }
+  if (domain === 'media_player') { button('▶ / Ⅱ','media_play_pause'); button('Avanti','media_next_track'); if (entity.position >= 0) slider('Volume %',entity.position,0,100,1,'volume_set','volume_level',.01); }
+  if (['scene','script','button','input_button'].includes(domain)) button('Esegui');
+  if(domain==='alarm_control_panel'){
+    button(entity.state==='disarmed'?'Inserisci fuori casa':entity.state==='armed_away'?'Disinserisci':'Scegli modalità');
+    const select=document.createElement('select');select.setAttribute('aria-label','Modalità Alarmo');select.add(new Option('Cambia stato…',''));
+    for(const [value,title,feature] of [['alarm_disarm','Disinserito',0],['alarm_arm_away','Fuori casa',2],['alarm_arm_home','In casa',1],['alarm_arm_night','Notte',4],['alarm_arm_vacation','Vacanza',32],['alarm_arm_custom_bypass','Personalizzato',16]])if(!feature||(entity.alarm_features&feature))select.add(new Option(title,value));
+    select.disabled=!enabled;select.onchange=async()=>{if(select.value)await command(entity,select.value);select.value='';select.blur();};controls.append(select);
+  }
+  if (domain === 'lock') button(entity.state === 'locked' ? 'Apri serratura' : 'Chiudi a chiave',entity.state === 'locked' ? 'unlock' : 'lock');
+  if (controls.children.length) card.append(controls);
+  if(!isAvailable(entity)){const note=document.createElement('p');note.className='state-note';note.textContent=entity.known?'Questo stato arriva da Home Assistant. Verifica il dispositivo o la sua integrazione in HA.':'Attendo il primo stato dal server.';card.append(note);}
+  const info=document.createElement('details');info.className='entity-info';const summary=document.createElement('summary'),id=document.createElement('code');summary.textContent='Dettagli';id.textContent=entity.id;info.append(summary,id);card.append(info);
+  return card;
+}
+function openAlarm(){const entity=primaryAlarm();if(!entity)return;$('#alarm-controls').replaceChildren(entityCard(entity));$('#alarm-dialog').showModal();}
+function priorityCards(){
+  const section=document.createElement('section');section.className='priority-grid';section.setAttribute('aria-label','Stato della casa');
+  const availableFirst=entities=>[...entities].sort((a,b)=>Number(isAvailable(b))-Number(isAvailable(a)));
+  const alarms=availableFirst(state.entities.filter(e=>e.id.startsWith('alarm_control_panel.'))),climates=availableFirst(state.entities.filter(e=>e.id.startsWith('climate.')));
+  for(const entity of [...alarms.slice(0,1),...climates.slice(0,1)]){
+    const card=entityCard(entity);card.classList.add('priority-card');
+    if(entity.id.startsWith('climate.')){card.querySelector('.thermo-dial')?.remove();card.querySelector('.stepper')?.remove();card.querySelectorAll('label.field,.row').forEach(e=>e.remove());card.querySelector('.value').textContent=!isAvailable(entity)?entity.display||'Non disponibile':(entity.on?'Acceso':'Spento')+(entity.target_temp==null?'':' · Obiettivo '+entity.target_temp+'°');}
+    section.append(card);
+  }
+  if(!alarms.length){const card=document.createElement('article');card.className='entity priority-card';card.innerHTML='<h3>Alarmo</h3><p class="dim">Seleziona l’entità allarme da Configura → Reimporta catalogo.</p>';section.append(card);}
+  const units=physicalUnits(state.entities);
+  const environments=units.filter(u=>u.entities.some(e=>e.device_class==='temperature')&&u.entities.some(e=>e.device_class==='humidity')&&!u.entities.some(e=>e.id.startsWith('climate.')));
+  // Bound priority widgets too; remaining rooms/meters are on the paged catalog.
+  for(const unit of environments.slice(0,2))section.append(unitCard(unit,''));
+  const motion=availableFirst(state.entities.filter(e=>e.id.startsWith('binary_sensor.')&&['motion','occupancy','presence'].includes(e.device_class)))[0];
+  if(motion){const card=entityCard(motion);card.classList.add('motion-card');card.querySelector('.value').textContent=isAvailable(motion)?(motion.on?'Movimento rilevato':'Nessun movimento'):motion.display||motion.state;section.append(card);}
+  const meters=units.filter(u=>u.entities.some(e=>e.id.startsWith('sensor.')&&['current','voltage','power'].includes(e.device_class)));
+  if(meters[0]){const card=unitCard(meters[0],'');card.classList.add('energy-card');section.append(card);}
+  return section;
+}
+function openClimate(id){climateId=id;$('#climate-dialog').showModal();refreshClimate();}
+function refreshClimate(){
+  if(!climateId||!$('#climate-dialog').open)return;
+  const entity=state.entities.find(e=>e.id===climateId);if(!entity)return;
+  const dialog=$('#climate-dialog'),enabled=state.connected&&isAvailable(entity);
+  $('#climate-title').textContent=entity.name;$('#climate-room').textContent=entity.area;
+  $('#climate-time').textContent=new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+  const candidates=physicalUnits(state.entities).filter(unit=>unit.entities.some(e=>e.device_class==='temperature')&&unit.entities.some(e=>e.device_class==='humidity')&&
+    (entity.device_id&&unit.entities[0].device_id===entity.device_id||entity.area&&entity.area!=='Senza stanza'&&unit.entities.some(e=>e.area===entity.area)));
+  // Do not combine unrelated temperature/humidity sensors from an unassigned area.
+  const environment=candidates.length===1?candidates[0].entities:[];
+  const ambient=entity.current_temp??environment.find(e=>e.device_class==='temperature'&&isAvailable(e))?.state;
+  const humidity=environment.find(e=>e.device_class==='humidity'&&isAvailable(e));
+  $('#climate-ambient').textContent=(ambient==null?'Ambiente —':Number(ambient).toLocaleString('it-IT')+' °C')+(humidity?' · '+humidity.state+' %':'');
+  $('#climate-target').textContent=entity.target_temp==null?'—':Number(entity.target_temp).toLocaleString('it-IT')+'°';
+  $('#climate-mode').textContent=!isAvailable(entity)?'Non disponibile':entity.on?'Acceso · '+entity.state:'Spento';
+  const angle=entity.target_temp==null?0:Math.max(0,Math.min(270,(entity.target_temp-(entity.min_temp??7))/((entity.max_temp??35)-(entity.min_temp??7))*270));
+  $('#climate-ring').style.setProperty('--angle',angle+'deg');
+  const fraction=angle/270,theta=(60+240*fraction)*Math.PI/180;$('#climate-arc-value').style.strokeDashoffset=100*(1-fraction);$('#climate-knob').setAttribute('cx',180+170*Math.cos(theta));$('#climate-knob').setAttribute('cy',180+170*Math.sin(theta));
+  const controls=$('#climate-modes');controls.replaceChildren();
+  const button=(text,callback,active=false)=>{const b=document.createElement('button');b.textContent=text;b.disabled=!enabled;b.classList.toggle('selected',active);b.onclick=callback;controls.append(b);};
+  for(const value of entity.hvac_modes||[])button(({off:'Spento',heat:'Riscalda',cool:'Raffresca',auto:'Auto',heat_cool:'Auto',dry:'Deumidifica',fan_only:'Ventola'})[value]||value,()=>command(entity,'set_hvac_mode',{hvac_mode:value}),entity.state===value);
+  for(const [selector,delta] of [['#climate-minus',-1],['#climate-plus',1]]){const b=$(selector);b.disabled=!enabled||entity.target_temp==null;b.onclick=()=>command(entity,'set_temperature',{temperature:Math.round(Math.max(entity.min_temp??7,Math.min(entity.max_temp??35,entity.target_temp+delta*(entity.temp_step||.5)))*100)/100});}
+}
+async function loadState() {
+  state = await kit.api('/api/state'); state.entities ||= []; limit = state.limit || 256; $('#limit').textContent = limit;
+  $('#status').textContent = state.connected ? '● Home Assistant collegato' : state.message || 'Home Assistant non collegato';
+  $('#status').className = 'badge ' + (state.connected ? 'good' : '');
+  if (state.url && /^https?:\/\//.test(state.url)) { $('#original').href = state.url; $('#original').classList.remove('hidden'); }
+  else { $('#original').removeAttribute('href'); $('#original').classList.add('hidden'); }
+  updatePanel();refreshClimate();
+  if (state.message?.startsWith('Home Assistant:')) feedback(state.message,true);
+  if (!configurationLoaded) {
+    const configuration = await kit.api('/api/config'); configurationLoaded = true;
+    $('#home-choice').value=String(configuration.homepage||0);
+    $('#ha-url').value = configuration.url || ''; selected = new Map((configuration.favorites || []).map(entity => [entity.id,entity]));
+    catalog = [...selected.values()];
+    try{const cached=await kit.api('/api/catalog/cache');if(Array.isArray(cached.entities)&&cached.entities.length){catalog=cached.entities;const byId=new Map(catalog.map(e=>[e.id,e]));for(const e of selected.values()){if(!byId.has(e.id))catalog.push(e);else if(typeof e.indoor==='boolean')byId.get(e.id).indoor=e.indoor;}$('#cache-status').textContent='Catalogo caricato dall’archiviazione locale. Ultima importazione: '+new Date(cached.saved_at*1000).toLocaleString('it-IT');}}catch{}
+    drawPicker();
+    savedCredentials = !!configuration.has_token; savedUrl = configuration.url || '';
+    if (savedCredentials) { $('#ha-token').placeholder = 'Già salvato sul pannello'; $('#import').textContent = 'Reimporta catalogo dal pannello'; }
+    if (!configuration.has_token) $('#setup').classList.remove('hidden');
+  }
+  if(!loadingCatalog)for(const entity of state.entities){const chosen=selected.get(entity.id);if(chosen&&entity.device_id){chosen.device_id=entity.device_id;chosen.device_name=entity.device_name||chosen.device_name||'';}}
+  render();
+}
+class PanelImport {
+  async connect() { if(!state.connected)throw new Error('Attendi il collegamento del pannello a Home Assistant.'); }
+  async call(type,parameters={}) {
+    const job=await kit.api('/api/catalog',{body:{type,...parameters}});
+    if(!job.ok)throw new Error(job.error||'Importazione non avviata');
+    const deadline=Date.now()+32000;
+    while(Date.now()<deadline){
+      await new Promise(resolve=>setTimeout(resolve,250));
+      const status=await kit.api('/api/catalog?job='+job.job);
+      if(!status.ready)continue;
+      if(status.error)throw new Error(status.error);
+      const response=status.response;
+      if(response?.success===false)throw new Error(response.error?.message||'Lettura non disponibile');
+      if(response?.event?.error)throw new Error(response.event.error);
+      return type==='catalog'?(typeof response.event.result==='string'?JSON.parse(response.event.result):response.event.result):response.result;
+    }
+    throw new Error('Importazione scaduta: riprova');
+  }
+  close() {}
+}
+class HomeAssistantImport {
+  constructor(url,token) { this.url = url; this.token = token; this.pending = new Map(); this.id = 0; }
+  connect() {
+    return new Promise((resolve,reject) => {
+      const timeout = setTimeout(() => { reject(new Error('Home Assistant non risponde. Verifica URL remoto e accesso Nabu Casa.')); this.close(); },20000);
+      const ws = this.socket = new WebSocket(this.url.replace(/^http/,'ws').replace(/\/+$/,'') + '/api/websocket');
+      ws.onerror = () => reject(new Error('Connessione a Home Assistant non riuscita. Verifica URL e certificato.'));
+      ws.onclose = () => { clearTimeout(timeout); reject(new Error('Collegamento Home Assistant chiuso')); this.pending.forEach(item => { clearTimeout(item.timeout); item.reject(new Error('Collegamento Home Assistant chiuso')); }); this.pending.clear(); };
+      ws.onmessage = event => {
+        let message; try { message = JSON.parse(event.data); } catch { return; }
+        if (message.type === 'auth_required') ws.send(JSON.stringify({type:'auth',access_token:this.token}));
+        else if (message.type === 'auth_invalid') { reject(new Error('Token rifiutato da Home Assistant')); this.close(); }
+        else if (message.type === 'auth_ok') { clearTimeout(timeout); resolve(); }
+        else if (message.type === 'result' && this.pending.has(message.id)) {
+          const item = this.pending.get(message.id); this.pending.delete(message.id); clearTimeout(item.timeout);
+          message.success ? item.resolve(message.result) : item.reject(new Error(message.error?.message || 'Comando Home Assistant non disponibile'));
+        }
+      };
+    });
+  }
+  call(type,parameters={}) {
+    return new Promise((resolve,reject) => {
+      const id = ++this.id, timeout = setTimeout(() => { this.pending.delete(id); reject(new Error(`Nessuna risposta: ${type}`)); },20000);
+      this.pending.set(id,{resolve,reject,timeout}); this.socket.send(JSON.stringify({id,type,...parameters}));
+    });
+  }
+  close() { this.token = ''; if (this.socket) this.socket.close(); }
+}
+function collectReferences(value, known, areaEntities, output) {
+  if (typeof value === 'string') { if (known.has(value)) output.add(value); return; }
+  if (Array.isArray(value)) { value.forEach(item => collectReferences(item,known,areaEntities,output)); return; }
+  if (!value || typeof value !== 'object') return;
+  for (const [key,item] of Object.entries(value)) {
+    if ((key === 'area' || key === 'area_id') && typeof item === 'string') (areaEntities.get(item) || []).forEach(id => output.add(id));
+    collectReferences(item,known,areaEntities,output);
+  }
+}
+async function importCatalog() {
+  if (loadingCatalog) return;
+  let url; try { url = new URL($('#ha-url').value.trim()); } catch { return feedback('Inserisci un indirizzo Home Assistant valido.',true); }
+  if (!['http:','https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return feedback('Usa l’indirizzo http:// o https:// della tua istanza.',true);
+  const token = $('#ha-token').value.trim(); if (!token && !savedCredentials) return feedback('Per leggere il catalogo inserisci il token Home Assistant.',true);
+  if(!token&&savedCredentials&&url.href.replace(/\/+$/,'')!==savedUrl.replace(/\/+$/,''))return feedback('Hai cambiato server: inserisci il token per il nuovo indirizzo.',true);
+  const useSaved = !token && savedCredentials, client = useSaved ? new PanelImport() : new HomeAssistantImport(url.href.replace(/\/+$/,''),token), warnings = [];
+  loadingCatalog = true; $('#import').disabled = true; $('#import-message').textContent = 'Collegamento a Home Assistant…';
+  try {
+    await client.connect();
+    let dashboards=[], entityAreas=new Map();
+    if(useSaved){
+      let page=0,total=1,imported=[];
+      while(imported.length<total){
+        const batch=await client.call('catalog',{page:page++});total=batch.total;
+        if(!Array.isArray(batch.entities)||!Number.isInteger(total)||total<0)throw new Error('Catalogo non valido da Home Assistant');
+        imported.push(...batch.entities);
+        $('#import-message').textContent=`Leggo catalogo dal pannello: ${imported.length} / ${total}…`;
+        if(!batch.entities.length&&imported.length<total)throw new Error('Il catalogo è cambiato durante la lettura: riprova');
+      }
+      catalog=imported.map(e=>({...e,name:clip(e.name),area:clip(e.area),device_name:clip(e.device_name),dashboards:[]}));
+      entityAreas=new Map(catalog.map(e=>[e.id,e.area_id]));
+      try{dashboards=await client.call('lovelace/dashboards/list');}catch{warnings.push('Dashboard non accessibili con questo account.');}
+    }else{
+    const states = await client.call('get_states');
+    const optional = async (type,label) => { try { return await client.call(type); } catch { warnings.push(`${label} non accessibili con questo account.`); return []; } };
+    const [areas,registry,devices,boards] = await Promise.all([optional('config/area_registry/list','Stanze'),optional('config/entity_registry/list','Registro entità'),optional('config/device_registry/list','Registro dispositivi'),optional('lovelace/dashboards/list','Dashboard')]);
+    const areaNames = new Map(areas.map(area => [area.area_id,area.name])), deviceAreas = new Map(devices.map(device => [device.id,device.area_id]));
+    const deviceNames = new Map(devices.map(device=>[device.id,device.name_by_user||device.name||''])),entityDevices = new Map(registry.map(entity=>[entity.entity_id,entity.device_id]));
+    entityAreas = new Map(registry.map(entity => [entity.entity_id,entity.area_id || deviceAreas.get(entity.device_id) || '']));
+    catalog = states.filter(entity => SUPPORTED.has(entity.entity_id.split('.')[0])).map(entity => ({id:entity.entity_id,name:clip(entity.attributes?.friendly_name || entity.entity_id),area:clip(areaNames.get(entityAreas.get(entity.entity_id)) || 'Senza stanza'),device_id:entityDevices.get(entity.entity_id)||'',device_name:clip(deviceNames.get(entityDevices.get(entity.entity_id))||''),device_class:entity.attributes?.device_class || '',dashboards:[],state:entity.state,unit:entity.attributes?.unit_of_measurement || ''}));
+
+      dashboards=boards;
+    }
+    const byId = new Map(catalog.map(entity => [entity.id,entity])), known = new Set(byId.keys()), areaEntities = new Map();
+    catalog.forEach(entity => { for (const area of [entityAreas.get(entity.id),entity.area]) { if (!area) continue; if (!areaEntities.has(area)) areaEntities.set(area,[]); areaEntities.get(area).push(entity.id); } });
+    let unreadable = 0, dynamic = 0, excess = 0; const labels = new Set();
+    const boards = [{title:'Panoramica',url_path:null},...dashboards];
+    for (const board of boards) {
+      $('#import-message').textContent = `Leggo dashboard: ${board.title || board.url_path || 'Panoramica'}…`;
+      let configuration; try { configuration = await client.call('lovelace/config',board.url_path ? {url_path:board.url_path} : {}); } catch { unreadable++; continue; }
+      if (!configuration.views?.length || configuration.strategy) dynamic++;
+      for (const [index,view] of (configuration.views || []).entries()) {
+        if (view.strategy) dynamic++;
+        let name = clip(`${board.title || board.url_path || 'Panoramica'} / ${view.title || view.path || index + 1}`), suffix = 1;
+        while (labels.has(name)) name = clip(`${clip(board.title || 'Dashboard',20)} / ${index + 1} · ${suffix++}`);
+        labels.add(name); const references = new Set(); collectReferences(view,known,areaEntities,references);
+        references.forEach(id => { const entity = byId.get(id); if (entity.dashboards.length < 4) entity.dashboards.push(name); else excess++; });
+      }
+    }
+    if (unreadable) warnings.push(`${unreadable} dashboard non leggibili tramite API.`);
+    if (dynamic) warnings.push(`${dynamic} viste generate automaticamente: usa Stanze/Tipologie o apri Home Assistant.`);
+    if (excess) warnings.push('Alcune entità compaiono in più di quattro viste: vengono conservate le prime quattro.');
+    cacheDirty=true;
+    catalog.sort((a,b) => a.area.localeCompare(b.area,'it') || a.name.localeCompare(b.name,'it'));
+    selected = new Map([...selected.keys()].filter(id => byId.has(id)).map(id => {const e=byId.get(id),previous=selected.get(id);if(typeof previous?.indoor==='boolean')e.indoor=previous.indoor;return [id,e];}));
+    if (!selected.size) recommended().forEach(entity => selected.set(entity.id,entity));
+    $('#import-message').textContent = `${catalog.length} entità trovate. ${selected.size} selezionate per il pannello.\n${warnings.join('\n')}`;
+    drawPicker();
+    if(useSaved)await persistCatalog();
+  } catch (error) { $('#import-message').textContent = error.message; feedback(error.message,true); }
+  finally { client.close(); loadingCatalog = false; $('#import').disabled = false; }
+}
+function automaticIndoor(entity){
+  if(typeof entity.indoor==='boolean')return entity.indoor;
+  if(!entity.device_id||/estern|outdoor|outside|external|balcon|terraz|giardin/i.test([entity.name,entity.device_name,entity.area].join(' ')))return false;
+  return [...selected.values()].some(e=>e.device_id===entity.device_id&&e.device_class==='humidity');
+}
+function drawIndoor(){
+  $('#indoor-picker').replaceChildren();
+  for(const entity of selected.values())if(entity.id.startsWith('sensor.')&&entity.device_class==='temperature'){
+    const label=document.createElement('label');label.className='pick-row';const check=document.createElement('input');check.type='checkbox';check.checked=automaticIndoor(entity);check.onchange=()=>{entity.indoor=check.checked;};
+    const name=document.createElement('span');name.textContent=entity.device_name||entity.name;label.append(check,name);$('#indoor-picker').append(label);
+  }
+}
+async function persistCatalog(){
+  if(!cacheDirty||!savedCredentials||!catalog.length)return;
+  const entities=catalog.map(e=>Object.fromEntries(['id','name','area','area_id','device_id','device_name','device_class','dashboards','state','unit'].filter(k=>e[k]!=null).map(k=>[k,e[k]])));
+  try{const result=await kit.api('/api/catalog/cache',{body:{entities}});if(result.ok){cacheDirty=false;$('#cache-status').textContent='Catalogo aggiornato nell’archiviazione locale. Verrà riutilizzato alle prossime aperture.';}else throw new Error('Salvataggio non riuscito');}
+  catch(error){$('#cache-status').textContent='Catalogo letto, ma non salvato localmente: '+error.message;}
+}
+function pickerResults() { const query = $('#pick-filter').value.trim().toLocaleLowerCase('it'); return catalog.filter(entity => matches(entity,query)); }
+function drawPicker() {
+  drawIndoor();
+  $('#selected-count').textContent = `${selected.size} / ${limit} selezionate`;
+  $('#picker').replaceChildren();
+  const results=pickerResults();$('#picker-count').textContent=`${results.length} risultati${results.length>200?' · Mostro i primi 200: affina la ricerca':''}`;
+  results.slice(0,200).forEach(entity => {
+    const label = document.createElement('label'); label.className = 'pick-row';
+    const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selected.has(entity.id);
+    const text = document.createElement('span'); text.textContent = entity.name || entity.id;
+    const hint = document.createElement('small'); hint.textContent = `${entity.area || 'Senza stanza'} · ${entity.id}`; text.append(hint);
+    check.onchange = () => { if (check.checked) { if (selected.size >= limit) { check.checked = false; return feedback(`Il pannello può importare fino a ${limit} entità.`,true); } selected.set(entity.id,entity); } else selected.delete(entity.id); $('#selected-count').textContent = `${selected.size} / ${limit} selezionate`; drawIndoor(); };
+    label.append(check,text); $('#picker').append(label);
+  });
+}
+$('#import').onclick = importCatalog;
+$('#alarm-close').onclick=()=>$('#alarm-dialog').close();
+$('#save-home').onclick=async()=>{try{const result=await kit.api('/api/home',{body:{homepage:Number($('#home-choice').value)}});feedback(result.ok?'Homepage salvata. Torna a Home sul dispositivo per aprirla.':'Homepage non salvata',!result.ok);}catch(error){feedback(error.message,true);}};
+let homeTouch=null;
+$('#panel-home').addEventListener('pointerdown',event=>{if(event.pointerType!=='mouse')homeTouch={x:event.clientX,y:event.clientY};});
+$('#panel-home').addEventListener('pointerup',event=>{if(homeTouch&&homeTouch.y-event.clientY>70&&Math.abs(event.clientX-homeTouch.x)<60){event.preventDefault();setMode('all');}homeTouch=null;});
+
+$('#climate-close').onclick=()=>{$('#climate-dialog').close();climateId='';};
+$('#climate-dialog').addEventListener('close',()=>{climateId='';});
+$('#disconnect').onclick = async () => {
+  if (!confirm('Rimuovere dal pannello il collegamento e le credenziali Home Assistant?')) return;
+  try { const result = await kit.api('/api/disconnect',{method:'POST'}); if (!result.ok) throw new Error('Impossibile scollegare ora, riprova'); selected.clear(); catalog = []; $('#ha-token').value = ''; $('#ha-url').value = ''; configurationLoaded = false; drawPicker(); feedback('Collegamento rimosso dal pannello.'); }
+  catch (error) { feedback(error.message,true); }
+};
+$('#setup-toggle').onclick = () => $('#setup').classList.toggle('hidden');
+$('#pick-filter').oninput = drawPicker;
+$('#select-recommended').onclick=useRecommended;
+$('#select-visible').onclick = () => { const results = pickerResults(); results.forEach(entity => { if (selected.size < limit) selected.set(entity.id,entity); }); drawPicker(); if (results.some(entity => !selected.has(entity.id))) feedback(`Raggiunto il limite di ${limit} entità sul pannello.`,true); };
+$('#clear-selection').onclick = () => { pickerResults().forEach(entity => selected.delete(entity.id)); drawPicker(); };
+$('#save').onclick = async () => {
+  if (!selected.size) return feedback('Seleziona almeno un’entità.',true);
+  const favorites = [...selected.values()].map(entity => ({id:entity.id,name:clip(entity.name),area:clip(entity.area),device_id:entity.device_id||'',device_name:clip(entity.device_name||''),device_class:entity.device_class || '',dashboards:(entity.dashboards || []).map(name => clip(name)).slice(0,4),...(typeof entity.indoor==='boolean'?{indoor:entity.indoor}:{})}));
+  $('#save').disabled = true;
+  try { const result = await kit.api('/api/config',{body:{url:$('#ha-url').value.trim().replace(/\/+$/,''),token:$('#ha-token').value.trim(),favorites}}); if (!result.ok) throw new Error(result.error || 'Configurazione non salvata'); $('#ha-token').value = ''; savedCredentials=true; savedUrl=$('#ha-url').value.trim(); $('#import').textContent='Reimporta catalogo dal pannello'; feedback('Configurazione salvata. Il pannello si collega direttamente a Home Assistant.'); await persistCatalog(); await loadState(); }
+  catch (error) { feedback(error.message,true); }
+  finally { $('#save').disabled = false; }
+};
+document.querySelectorAll('[data-mode]').forEach(button => button.onclick = () => { mode = button.dataset.mode; localStorage.casaPanelMode = mode; $('#group').value = ''; if(['all','environment','energy'].includes(mode))$('#availability').value='all'; render(); });
+$('#search').oninput = render; $('#group').onchange = render; $('#availability').onchange = render;
+$('#cards').addEventListener('pointerdown',event => { dragging = !!event.target.closest('input[type=range]'); });
+document.addEventListener('pointerup',() => { dragging = false; });
+for(const event of ['pointercancel','touchcancel'])document.addEventListener(event,()=>{dragging=false;render();});
+window.addEventListener('blur',()=>{dragging=false;});
+setInterval(()=>{if(mode==='overview')updatePanel();},30000);
+$('#cards').addEventListener('focusout',() => setTimeout(render,0));
+kit.start({onReady:() => kit.poll(loadState,2000)});
+</script></body></html>

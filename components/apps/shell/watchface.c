@@ -57,6 +57,14 @@ typedef struct
 
 static face_t s_face;
 
+#if CONFIG_APPKIT_HOSTED
+static void open_casa(lv_event_t *event)
+{
+    (void)event;
+    app_open("casa", NULL);
+}
+#endif
+
 static void watchface_observe(lv_obj_t *root);
 
 /* ------------------------------------------------------------ updates */
@@ -468,6 +476,11 @@ void watchface_create(lv_obj_t *parent)
 /* Observers: removed automatically when `root` is deleted. */
 static void watchface_observe(lv_obj_t *root)
 {
+#if CONFIG_APPKIT_HOSTED
+    /* Hold the clock to open Home Assistant; swipes keep their shell meaning. */
+    lv_obj_set_clickable(s_face.time, true);
+    lv_obj_add_event_cb(s_face.time, open_casa, LV_EVENT_LONG_PRESSED, NULL);
+#endif
     lv_subject_add_observer_obj(state_subject(STATE_MINUTE), update_time, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_SETTINGS_VERSION), update_time, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_BATTERY), update_battery, root, NULL);
