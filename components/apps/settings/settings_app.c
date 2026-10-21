@@ -162,11 +162,18 @@ static void set_knob_focus(lv_event_t *e)
     lv_port_set_focus_mode(on);
 }
 
+static const char *homepage_name(uint8_t homepage)
+{
+    return homepage == 1 ? "Casa" : homepage == 2 ? "Lista app" : "Classica";
+}
+
+/* Classica -> Casa (when installed) -> Lista app -> Classica. */
 static void cycle_homepage(lv_event_t *event)
 {
-    uint8_t next = settings_get()->homepage ? 0 : 1;
+    uint8_t next = (uint8_t)((settings_get()->homepage + 1) % 3);
+    if (next == 1 && !app_find("casa")) next = 2;
     EDIT_SETTINGS(s->homepage = next);
-    lv_label_set_text(ui_row_value(lv_event_get_current_target_obj(event)), next ? "Casa" : "Classica");
+    lv_label_set_text(ui_row_value(lv_event_get_current_target_obj(event)), homepage_name(next));
     ui_toast("Homepage salvata: torna a Home per aprirla");
 }
 
@@ -178,7 +185,7 @@ static void display_create(lv_obj_t *screen, void *arg)
     char value[16];
 
     lv_obj_t *page = ui_page(screen, "Display");
-    if (app_find("casa")) ui_row(page, LV_SYMBOL_HOME, UI_COLOR_ORANGE, "Homepage", st->homepage ? "Casa" : "Classica", cycle_homepage, NULL);
+    ui_row(page, LV_SYMBOL_HOME, UI_COLOR_ORANGE, "Homepage", homepage_name(st->homepage), cycle_homepage, NULL);
     ui_slider_row(page, LV_SYMBOL_IMAGE, "Luminosità", 10, 255, st->brightness, set_brightness, NULL);
     snprintf(value, sizeof(value), "%u s", st->screen_timeout_s);
     ui_row(page, LV_SYMBOL_EYE_CLOSE, UI_COLOR_INDIGO, "Spegnimento", value, cycle_timeout, NULL);

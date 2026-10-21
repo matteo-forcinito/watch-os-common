@@ -58,10 +58,16 @@ static void set_defaults(settings_t *s)
 
 static void sanitize(settings_t *s)
 {
-    if (s->home_preferences_version != 1 || s->homepage > 1)
+    /* Without touch the paged face cannot be navigated: the app list. */
+    if (s->home_preferences_version == 1 && s->homepage <= 1)
     {
-        s->home_preferences_version = 1;
-        s->homepage = 0;
+        if (!board_info()->has_touch && s->homepage == 0) s->homepage = 2;
+        s->home_preferences_version = 2;
+    }
+    if (s->home_preferences_version != 2 || s->homepage > 2)
+    {
+        s->home_preferences_version = 2;
+        s->homepage = board_info()->has_touch ? 0 : 2;
     }
     if (s->remote_preferences_version != 1)
     {

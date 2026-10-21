@@ -872,9 +872,13 @@ static void handle_knob(void)
     if (s_focus_mode)
     {
         sync_focus_group();
-        s_enc_diff += delta;
-        lv_indev_read(s_encoder);
-        return;
+        /* Nothing to select (text, info pages): the knob scrolls instead. */
+        if (lv_group_get_obj_count(s_group) > 0)
+        {
+            s_enc_diff += delta;
+            lv_indev_read(s_encoder);
+            return;
+        }
     }
 
     lv_obj_t *target = find_scrollable(lv_screen_active(), 0);

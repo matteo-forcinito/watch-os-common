@@ -1075,3 +1075,58 @@ const app_t launcher_all_app = {
     .flags = APP_FLAG_HIDDEN,
     .create = all_create,
 };
+
+/* ======================================================= the app list */
+
+/* Homepage "Lista app" (Settings > Homepage; the default without touch):
+ * every app and menu entry in one vertical list, no pages and no swipes,
+ * so a focus that steps through rows reaches everything. */
+
+static void on_list_app(lv_event_t *e)
+{
+    app_open_app(lv_event_get_user_data(e), NULL);
+}
+
+static void on_list_external(lv_event_t *e)
+{
+    int index = (int)(intptr_t)lv_event_get_user_data(e);
+    if (index < s_ext_count)
+    {
+        launcher_item_t item = {.external = true, .ext = s_ext[index]};
+        open_item(&item);
+    }
+}
+
+static void on_list_menu(lv_event_t *e)
+{
+    open_menu_entry((int)(intptr_t)lv_event_get_user_data(e));
+}
+
+void launcher_list_build(lv_obj_t *parent)
+{
+    lv_obj_clean(parent);
+    lv_obj_t *page = ui_page(parent, "App");
+    for (size_t i = 0; i < app_count(); i++)
+    {
+        const app_t *app = app_at(i);
+        if (!(app->flags & APP_FLAG_HIDDEN))
+        {
+            ui_row(page, app->icon, app->color, app->name, NULL, on_list_app, (void *)app);
+        }
+    }
+    scan_external();
+    if (s_ext_count > 0)
+    {
+        ui_section(page, "App esterne");
+        for (int i = 0; i < s_ext_count; i++)
+        {
+            ui_row(page, s_ext[i].icon[0] != '\0' ? s_ext[i].icon : LV_SYMBOL_DIRECTORY, UI_COLOR_PURPLE,
+                   s_ext[i].name, NULL, on_list_external, (void *)(intptr_t)i);
+        }
+    }
+    ui_section(page, "Sistema");
+    for (int entry = MENU_MARKET; entry < MENU_COUNT; entry++)
+    {
+        ui_row(page, MENU[entry].icon, MENU[entry].color, MENU[entry].name, NULL, on_list_menu, (void *)(intptr_t)entry);
+    }
+}

@@ -25,7 +25,8 @@ static lv_obj_t *s_tiles = NULL;
 static int s_last_notif_count = 0;
 static lv_obj_t *s_classic, *s_notifications;
 static lv_obj_t *s_casa_home, *s_casa_all;
-static bool s_casa_mode;
+static lv_obj_t *s_list;           /* homepage "Lista app" */
+static bool s_casa_mode, s_list_mode;
 #if CONFIG_APPKIT_HOSTED
 static void *s_home_component, *s_all_component;
 #endif
@@ -53,11 +54,23 @@ static void homepage_changed(lv_observer_t *observer, lv_subject_t *subject)
 #if CONFIG_APPKIT_HOSTED
     casa = settings_get()->homepage == 1;
 #endif
-    if (casa == s_casa_mode) return;
+    bool list = settings_get()->homepage == 2;
+    if (list != s_list_mode)
+    {
+        s_list_mode = list;
+        if (list) launcher_list_build(s_list);
+        else lv_obj_clean(s_list);
+        lv_obj_set_hidden(s_list, !list);
+    }
+    if (casa == s_casa_mode)
+    {
+        lv_obj_set_hidden(s_classic, casa || list);
+        return;
+    }
     s_casa_mode = casa;
     /* Hide the previous face before mounting its replacement. Returning Home
      * only selects this tile; it never launches or reconstructs the Casa app. */
-    lv_obj_set_hidden(s_classic, casa);
+    lv_obj_set_hidden(s_classic, casa || list);
     lv_obj_set_hidden(s_casa_home, !casa);
 #if CONFIG_APPKIT_HOSTED
     if (casa)
@@ -218,6 +231,8 @@ void shell_create(void)
     s_casa_home = container(face);
     s_notifications = container(notes);
     s_casa_all = container(notes);
+    s_list = container(face);
+    lv_obj_set_hidden(s_list, true);
     lv_obj_set_hidden(s_casa_home, true);
     lv_obj_set_hidden(s_casa_all, true);
     watchface_create(s_classic);

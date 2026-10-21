@@ -72,6 +72,7 @@ void watchface_create(lv_obj_t *parent);
 void watchface_aod_create(lv_obj_t *screen);
 void launcher_create(lv_obj_t *parent);
 void launcher_refresh(void);
+void launcher_list_build(lv_obj_t *parent);   /* homepage "Lista app" */
 bool launcher_rotate(int delta); /* select a round icon; touch the centre to open */
 void control_center_create(lv_obj_t *parent);
 void shell_show_control_center(void);   /* slide the home screen to the control center */
