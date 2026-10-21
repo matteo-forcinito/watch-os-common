@@ -19,6 +19,7 @@
 #include <stdatomic.h>
 
 #include "cJSON.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -826,6 +827,30 @@ static void slow_timer_cb(void *arg)
 
 static esp_err_t start(void);
 
+/* While Bluetooth is off its controller pool (~38 KiB of contiguous internal
+ * RAM) is kept aside, so turning it on later never finds the heap too
+ * fragmented (Wi-Fi, dashboards). Same cost as Bluetooth on. */
+#define BLE_RESERVE (44 * 1024)
+static void *s_reserve;
+
+static void reserve_take(void)
+{
+    if (s_reserve == NULL)
+    {
+        s_reserve = heap_caps_malloc(BLE_RESERVE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (s_reserve == NULL)
+        {
+            ESP_LOGW(TAG, "No room to keep Bluetooth's memory aside");
+        }
+    }
+}
+
+static void reserve_release(void)
+{
+    free(s_reserve);
+    s_reserve = NULL;
+}
+
 static void retry_job(void *arg)
 {
     (void)arg;
@@ -851,6 +876,7 @@ static esp_err_t start(void)
         return ESP_OK;
     }
 
+    reserve_release();
     sys_heap_log("ble start");
     /* The S3 controller allocates a contiguous internal pool (~38 KiB).
      * Its binary asserts on allocation failure instead of returning an error.
@@ -858,6 +884,7 @@ static esp_err_t start(void)
      * Keep room for the controller task and small internal allocations too. */
     if (sys_internal_largest() < 40 * 1024 || sys_internal_free() < 56 * 1024) {
         ESP_LOGW(TAG, "Bluetooth deferred: insufficient contiguous internal RAM; close heavy services or restart");
+        reserve_take();
         esp_timer_stop(s_retry_timer);
         esp_timer_start_once(s_retry_timer, RETRY_US);
         return ESP_ERR_NO_MEM;
@@ -867,6 +894,7 @@ static esp_err_t start(void)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "NimBLE init: %s (retrying in 30 s)", esp_err_to_name(err));
+        reserve_take();
         esp_timer_stop(s_retry_timer);
         esp_timer_start_once(s_retry_timer, RETRY_US);
         return err;
@@ -941,6 +969,7 @@ static void stop(void)
 
     s_conn = BLE_HS_CONN_HANDLE_NONE;
     state_set(STATE_BLE, STATE_BLE_OFF);
+    reserve_take();   /* the controller's pool is free again: keep it */
     ESP_LOGI(TAG, "Bluetooth off");
 }
 
@@ -1013,7 +1042,12 @@ esp_err_t ble_companion_init(void)
     state_set(STATE_BLE, STATE_BLE_OFF);
     settings_add_listener(settings_changed);
 
-    return settings_get()->ble_enabled ? start() : ESP_OK;
+    if (!settings_get()->ble_enabled)
+    {
+        reserve_take();
+        return ESP_OK;
+    }
+    return start();
 }
 
 void ble_companion_enable(bool enable)
