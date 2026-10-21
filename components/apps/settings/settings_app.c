@@ -191,7 +191,7 @@ static void display_create(lv_obj_t *screen, void *arg)
     snprintf(value, sizeof(value), "%u", st->launcher_cards);
     ui_row(page, LV_SYMBOL_LIST, UI_COLOR_BLUE, "App per pagina", value, cycle_cards, NULL);
 
-    if (board_info()->has_knob)
+    if (board_info()->has_knob && board_info()->has_touch)
     {
         ui_switch_row(page, LV_SYMBOL_SHUFFLE, UI_COLOR_TEAL, "Rotella: focus", st->knob_focus, set_knob_focus, NULL);
     }

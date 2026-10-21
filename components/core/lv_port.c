@@ -1120,7 +1120,8 @@ static esp_err_t init_port(bool headless)
         lv_indev_set_group(s_encoder, s_group);
         lv_timer_pause(lv_indev_get_read_timer(s_encoder));
         s_focus_color = lv_color_hex(0x3D8BFF);
-        s_focus_mode = settings_get()->knob_focus;
+        /* Without touch the focus is the only way to pick anything. */
+        s_focus_mode = settings_get()->knob_focus || !board_info()->has_touch;
 
         if (knob_init(knob_cb) != ESP_OK)
         {
@@ -1288,6 +1289,7 @@ lv_event_code_t lv_port_knob_event(void)
 
 void lv_port_set_focus_mode(bool on)
 {
+    on = on || !board_info()->has_touch;
     if (s_group == NULL || on == s_focus_mode)
     {
         return;

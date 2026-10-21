@@ -4,6 +4,7 @@
 #include "core/monkey.h"
 #include "core/power.h"
 #include "core/settings.h"
+#include "hardware/board.h"
 #include "core/state.h"
 
 #include "esp_log.h"
@@ -696,9 +697,9 @@ static void toggle_focus_mode(void)
 
 void app_manager_button(button_id_t button, button_event_t event)
 {
-    if (event == BUTTON_DOUBLE_CLICK)
+    if (event == BUTTON_DOUBLE_CLICK && board_info()->has_touch)
     {
-        toggle_focus_mode();
+        toggle_focus_mode();   /* without touch the focus stays on */
         return;
     }
 
