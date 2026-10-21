@@ -15,7 +15,7 @@ What it does:
      commits and pushes to `dev` (promote: to `dev` and `main`).
   3. Publishes all of them in parallel with release_firmware.py, a log per firmware in %TEMP%.
 
-  -Only amoled,knob     just some products       -NoPublish   prepare and push, no release
+  -Only amoled,knob     just some products (amoled, amoled175, amoled175c, knob, watcher, guition4848)       -NoPublish   prepare and push, no release
 #>
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]+)?$')][string]$Version,
@@ -34,6 +34,7 @@ $firmwares = [ordered]@{
     amoled175c = 'ESP32-S3-Touch-AMOLED-1.75C'
     knob       = 'ESP32-S3-Knob-Touch-LCD-1.8'
     watcher    = 'SenseCap-Watcher-W1-A'
+    guition4848 = 'ESP32-4848S040C-I'
 }
 if ($Only) { foreach ($p in @($firmwares.Keys)) { if ($Only -notcontains $p) { $firmwares.Remove($p) } } }
 if ($firmwares.Count -eq 0) { throw 'No firmware selected' }
