@@ -104,6 +104,10 @@ typedef struct
 
 lv_event_code_t lv_port_knob_event(void);
 
+/* A modal remote-control scene (Orbit Link dial) gets the knob before the
+ * screen; the hook returns true when it used the turn. lvgl task. */
+void lv_port_set_knob_hook(bool (*hook)(int delta));
+
 /* Act as if the knob turned `delta` detents (tests, remote control). Any task. */
 void lv_port_knob_inject(int delta);
 

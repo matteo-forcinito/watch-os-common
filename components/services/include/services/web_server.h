@@ -56,6 +56,11 @@ bool web_server_ap_name(char *out, size_t size);
 esp_err_t web_server_add_folder(const char *folder, const char *app_id, esp_err_t (*handler)(httpd_req_t *req));
 /* "/pieno/" for the app with a dashboard folder, NULL otherwise. */
 const char *web_server_app_folder(const char *app_id, char *out, size_t size);
+/* Routes of another component (Orbit Link), registered at every server start
+ * after the system ones. Call at boot, before the server starts. */
+void web_server_add_routes(void (*register_routes)(httpd_handle_t server));
+/* Registers one route; /api/ routes require the paired token. */
+void web_route(httpd_handle_t server, const httpd_uri_t *route);
 /* The request comes from the paired browser (token, same origin). */
 bool web_server_authorized(httpd_req_t *req);
 

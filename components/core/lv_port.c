@@ -87,6 +87,7 @@ static bool s_was_pressed = false;
 /* Knob detents not handled yet (written by the knob driver, read by the lvgl task). */
 static _Atomic int s_knob_delta = 0;
 static uint32_t s_knob_event = 0;
+static bool (*s_knob_hook)(int delta);   /* a remote scene that takes the knob first */
 
 /* Focus navigation (lvgl task only). */
 static lv_indev_t *s_encoder = NULL;
@@ -849,6 +850,11 @@ static void handle_knob(void)
 
     power_user_activity();
 
+    if (s_knob_hook != NULL && s_knob_hook(delta))
+    {
+        return;
+    }
+
     if (!s_running)
     {
         return;
@@ -1264,6 +1270,11 @@ void lv_port_set_back_gesture_filter(bool (*allowed)(void))
 void lv_port_knob_inject(int delta)
 {
     knob_cb(delta);
+}
+
+void lv_port_set_knob_hook(bool (*hook)(int delta))
+{
+    s_knob_hook = hook;
 }
 
 lv_event_code_t lv_port_knob_event(void)

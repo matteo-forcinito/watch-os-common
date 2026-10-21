@@ -12,5 +12,5 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "../apps"
     REQUIRES core ui services esp_http_server cjson
-    PRIV_REQUIRES hardware esp_timer esp_wifi esp_netif nvs_flash mdns
+    PRIV_REQUIRES hardware esp_timer esp_wifi esp_netif nvs_flash mdns extapp_sdk
 )

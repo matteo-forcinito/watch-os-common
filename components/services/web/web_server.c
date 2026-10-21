@@ -957,12 +957,25 @@ static esp_err_t handle_not_found(httpd_req_t *req, httpd_err_code_t error)
     return httpd_resp_send(req, NULL, 0);
 }
 
+/* Route sets of other components, registered again at every server start. */
+#define ROUTE_SETS_MAX 4
+static void (*s_route_sets[ROUTE_SETS_MAX])(httpd_handle_t server);
+static int s_route_set_count;
+
+void web_server_add_routes(void (*register_routes)(httpd_handle_t server))
+{
+    if (s_route_set_count < ROUTE_SETS_MAX)
+    {
+        s_route_sets[s_route_set_count++] = register_routes;
+    }
+}
+
 /* ------------------------------------------------------------- server */
 
 static esp_err_t start_httpd(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 80;
+    config.max_uri_handlers = 104;
     config.stack_size = 6144;
     config.uri_match_fn = httpd_uri_match_wildcard; /* folders like /pieno/... */
     config.lru_purge_enable = true;
@@ -1005,6 +1018,10 @@ static esp_err_t start_httpd(void)
 
     web_files_register(s_server);   /* SD card file manager */
     web_system_register(s_server);  /* device, apps, market, system update */
+    for (int i = 0; i < s_route_set_count; i++)
+    {
+        s_route_sets[i](s_server);   /* Orbit Link and other components */
+    }
     for (int i = 0; i < s_folder_count; i++)
     {
         register_folder(&s_folders[i]);

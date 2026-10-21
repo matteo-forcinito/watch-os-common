@@ -11,6 +11,7 @@
 #include "hardware/board.h"
 #include "hardware/pmu.h"
 #include "services/wifi.h"
+#include "extapp_sdk.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -36,7 +37,7 @@ extern const char kit_css_start[] asm("_binary_kit_css_start");
 extern const char kit_css_end[] asm("_binary_kit_css_end");
 
 #define NVS_NAMESPACE "appkit"
-#define EXTRA_ROUTES  5
+#define EXTRA_ROUTES  6
 
 static const appkit_web_config_t *s_config;
 static httpd_handle_t s_server;
@@ -226,7 +227,31 @@ static esp_err_t kit_info(httpd_req_t *request)
     cJSON_AddBoolToObject(out, "charging", pmu_present() && pmu_is_charging());
     cJSON_AddNumberToObject(out, "rssi", wifi_rssi());
     cJSON_AddNumberToObject(out, "uptime", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddBoolToObject(out, "exit", true);   /* POST /api/kit/exit returns to Watch OS */
     return appkit_json(request, out);
+}
+
+/* Orbit asks to go back to Watch OS: reply first, restart a moment later. */
+static void exit_later(void *arg)
+{
+    (void)arg;
+    extapp_return_to_launcher();
+}
+
+static esp_err_t kit_exit(httpd_req_t *request)
+{
+    if (!appkit_authorized(request))
+    {
+        return appkit_unauthorized(request);
+    }
+    static esp_timer_handle_t timer;
+    const esp_timer_create_args_t args = {.callback = exit_later, .name = "kit_exit"};
+    if (timer == NULL && esp_timer_create(&args, &timer) != ESP_OK)
+    {
+        return appkit_error(request, "503 Service Unavailable", "Riprova");
+    }
+    esp_timer_start_once(timer, 400000);
+    return appkit_json(request, cJSON_CreateObject());
 }
 
 /* ---------------------------------------------------------------- start */
@@ -253,6 +278,7 @@ static esp_err_t start_server(void)
         {.uri = "/kit.css", .method = HTTP_GET, .handler = kit_css},
         {.uri = "/api/pair", .method = HTTP_POST, .handler = pair},
         {.uri = "/api/kit", .method = HTTP_GET, .handler = kit_info},
+        {.uri = "/api/kit/exit", .method = HTTP_POST, .handler = kit_exit},
     };
     for (int i = 0; i < EXTRA_ROUTES && err == ESP_OK; i++)
     {

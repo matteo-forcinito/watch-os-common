@@ -36,6 +36,8 @@
 #endif
 
 #include "cJSON.h"
+#include "esp_random.h"
+#include "nvs.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -46,6 +48,7 @@
 #include "freertos/semphr.h"
 #include "core/power.h"
 
+#include <ctype.h>
 #include <stdatomic.h>
 #include <errno.h>
 #include <sys/stat.h>
@@ -282,6 +285,46 @@ static esp_err_t apps_get(httpd_req_t *req)
     return send_out(req, out);
 }
 
+/* Orbit hand-off: external apps with an appkit dashboard keep their token in
+ * NVS "appkit"/<name in lower case>, which this launcher shares. Giving it to
+ * the paired companion lets Orbit use the app at once, with no new code on
+ * screen. Apps known to use appkit get a token before their first start. */
+static bool handoff_token(const char *name, char token[33])
+{
+    static const char *const appkit_apps[] = {"pieno", "giornata", "copertura", "news", "notizie", "bilancio"};
+    char key[16];
+    size_t i = 0;
+    for (; name[i] != '\0' && i < sizeof(key) - 1; i++)
+    {
+        key[i] = (char)tolower((unsigned char)name[i]);
+    }
+    key[i] = '\0';
+    nvs_handle_t nvs;
+    if (nvs_open("appkit", NVS_READWRITE, &nvs) != ESP_OK)
+    {
+        return false;
+    }
+    size_t size = 33;
+    bool ok = nvs_get_str(nvs, key, token, &size) == ESP_OK && strlen(token) == 32;
+    bool known = false;
+    for (size_t k = 0; k < sizeof(appkit_apps) / sizeof(appkit_apps[0]); k++)
+    {
+        known |= strcmp(key, appkit_apps[k]) == 0;
+    }
+    if (!ok && known)
+    {
+        uint8_t bytes[16];
+        esp_fill_random(bytes, sizeof(bytes));
+        for (int b = 0; b < 16; b++)
+        {
+            snprintf(token + b * 2, 3, "%02x", bytes[b]);
+        }
+        ok = nvs_set_str(nvs, key, token) == ESP_OK && nvs_commit(nvs) == ESP_OK;
+    }
+    nvs_close(nvs);
+    return ok;
+}
+
 static esp_err_t apps_open(httpd_req_t *req)
 {
     if (remote_ui_pending()) return reply(req, false, "Interfaccia occupata, usa le funzioni dirette");
@@ -289,6 +332,7 @@ static esp_err_t apps_open(httpd_req_t *req)
     cJSON *json = body(req);
     const char *id = cJSON_GetStringValue(cJSON_GetObjectItem(json, "id"));
     const char *ext_id = cJSON_GetStringValue(cJSON_GetObjectItem(json, "ext"));
+    char handoff[33] = "";
     if (recovery_active() && (ext_id != NULL || (id != NULL && strncmp(id, "extapps.", 8) == 0)))
     {
         cJSON_Delete(json);
@@ -314,6 +358,10 @@ static esp_err_t apps_open(httpd_req_t *req)
                 if (copy != NULL)
                 {
                     *copy = list[i];
+                    if (!handoff_token(list[i].name, handoff))
+                    {
+                        handoff[0] = '\0';
+                    }
                     lv_port_lock();
                     app_close_others("web");
                     ok = app_open("extapps.open", copy);
@@ -328,6 +376,15 @@ static esp_err_t apps_open(httpd_req_t *req)
         free(list);
     }
     cJSON_Delete(json);
+    if (ok && handoff[0] != '\0')
+    {
+        cJSON *out = cJSON_CreateObject();
+        cJSON_AddStringToObject(out, "message", "Aperta sull'orologio");
+        cJSON *h = cJSON_AddObjectToObject(out, "handoff");
+        cJSON_AddStringToObject(h, "header", "X-Key");
+        cJSON_AddStringToObject(h, "token", handoff);
+        return send_out(req, out);
+    }
     return reply(req, ok, ok ? "Aperta sull'orologio" : "App non trovata");
 }
 

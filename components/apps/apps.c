@@ -300,6 +300,7 @@ void apps_init(void)
     ecos_init();
     ecos_apps_init();   /* another device can ring this one */
 #endif
+    link_init();   /* Orbit Link routes, nothing runs until the companion uses them */
     app_manager_set_close_confirm(ask_close);
     market_init();
 #if CONFIG_APPKIT_HOSTED

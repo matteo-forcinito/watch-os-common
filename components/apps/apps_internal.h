@@ -33,6 +33,17 @@ extern const app_t sistema_app;
 /* Overlay of Sistema (on after a double reset or from the app); LVGL locked. */
 void sistema_boot(void);
 extern const app_t timer_app;
+/* Orbit Link remote control of the timer (LVGL locked). */
+typedef struct
+{
+    bool countdown_running, countdown_ringing, watch_running;
+    int32_t countdown_total_s, countdown_remaining_s;
+    int64_t watch_elapsed_ms;
+} timer_remote_t;
+void timer_remote_state(timer_remote_t *out);
+bool timer_remote(const char *action, int seconds);
+/* Orbit Link: scenes, events, audio (apps/link). */
+void link_init(void);
 extern const app_t music_app;
 extern const app_t usb_drive_app;
 extern const app_t sdcard_app;

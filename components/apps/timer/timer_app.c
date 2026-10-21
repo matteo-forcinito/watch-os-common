@@ -7,6 +7,8 @@
 
 #include "esp_timer.h"
 
+#include <string.h>
+
 /*
  * Stopwatch and countdown timer.
  *
@@ -89,7 +91,10 @@ static void on_watch_toggle(lv_event_t *e)
         s_watch.running = true;
     }
 
-    lv_label_set_text(lv_obj_get_child(s_watch_button, 0), s_watch.running ? "Pausa" : "Avvia");
+    if (s_watch_button != NULL)
+    {
+        lv_label_set_text(lv_obj_get_child(s_watch_button, 0), s_watch.running ? "Pausa" : "Avvia");
+    }
 }
 
 static void on_watch_reset(lv_event_t *e)
@@ -189,6 +194,7 @@ static void destroy(void)
     lv_timer_delete(s_tick);
     s_border = NULL;
     s_tick = NULL;
+    s_watch_button = NULL;
 }
 
 const app_t timer_app = {
@@ -200,3 +206,65 @@ const app_t timer_app = {
     .create = create,
     .destroy = destroy,
 };
+
+/* ------------------------------------------------------------ remote API */
+
+/* Orbit Link: the same countdown and stopwatch, driven from the companion,
+ * with the app open or closed. LVGL locked by the caller. */
+void timer_remote_state(timer_remote_t *out)
+{
+    int64_t now = esp_timer_get_time();
+    out->countdown_running = s_countdown_end_us != 0;
+    out->countdown_total_s = (int32_t)(s_countdown_duration_us / 1000000);
+    out->countdown_remaining_s = s_countdown_end_us != 0 ? (int32_t)((s_countdown_end_us - now) / 1000000) : 0;
+    out->countdown_ringing = s_countdown_end_us == 0 && s_countdown_duration_us != 0 && sound_alarm_playing();
+    out->watch_running = s_watch.running;
+    out->watch_elapsed_ms = watch_elapsed() / 1000;
+}
+
+bool timer_remote(const char *action, int seconds)
+{
+    if (strcmp(action, "start") == 0)
+    {
+        if (seconds < 1 || seconds > 24 * 3600)
+        {
+            return false;
+        }
+        if (s_countdown == NULL)
+        {
+            const esp_timer_create_args_t args = {.callback = countdown_done, .name = "countdown"};
+            if (esp_timer_create(&args, &s_countdown) != ESP_OK)
+            {
+                return false;
+            }
+        }
+        sound_alarm_stop();
+        esp_timer_stop(s_countdown);
+        s_countdown_minutes = seconds / 60 > 0 ? (seconds / 60 > 120 ? 120 : seconds / 60) : 1;
+        s_countdown_duration_us = (int64_t)seconds * 1000000;
+        s_countdown_end_us = esp_timer_get_time() + s_countdown_duration_us;
+        return esp_timer_start_once(s_countdown, (uint64_t)s_countdown_duration_us) == ESP_OK;
+    }
+    if (strcmp(action, "stop") == 0)
+    {
+        sound_alarm_stop();
+        if (s_countdown != NULL)
+        {
+            esp_timer_stop(s_countdown);
+        }
+        s_countdown_end_us = 0;
+        s_countdown_duration_us = 0;
+        return true;
+    }
+    if (strcmp(action, "watch") == 0)
+    {
+        on_watch_toggle(NULL);
+        return true;
+    }
+    if (strcmp(action, "watch_reset") == 0)
+    {
+        s_watch = (stopwatch_t){0};
+        return true;
+    }
+    return false;
+}

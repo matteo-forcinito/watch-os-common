@@ -65,6 +65,8 @@ idf_component_register(
         "sdcard/sdcard_app.c"
         "battery/battery_app.c"
         "update/update_app.c"
+        "link/link.c"
+        "link/link_scene.c"
         ${INTERNAL_SRCS}
     INCLUDE_DIRS
         "include"
