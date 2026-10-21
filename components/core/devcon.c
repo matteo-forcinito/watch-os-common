@@ -28,6 +28,7 @@
 #include "core/sys.h"
 
 #include "hardware/pmu.h"
+#include "hardware/microphone.h"
 
 #include "sdkconfig.h"
 
@@ -396,7 +397,30 @@ static void handle(char *line)
     char *a3 = strtok(NULL, " ");
     char *a4 = strtok(NULL, " ");
 
-    if (strcmp(cmd, "wifi-status") == 0)
+    if (strcmp(cmd, "mic") == 0)
+    {
+        /* One second at 16 kHz: level and peak, to check the microphones. */
+        static int16_t buf[256];
+        esp_err_t err = microphone_start(16000, 1);
+        double sum = 0;
+        int peak = 0;
+        size_t total = 0;
+        while (err == ESP_OK && total < 16000)
+        {
+            size_t n = 0;
+            err = microphone_read(buf, 256, &n);
+            for (size_t i = 0; i < n; i++)
+            {
+                sum += (double)buf[i] * buf[i];
+                peak = abs(buf[i]) > peak ? abs(buf[i]) : peak;
+            }
+            total += n;
+        }
+        microphone_stop();
+        printf("@MIC %s samples=%u rms=%.0f peak=%d\n", esp_err_to_name(err), (unsigned)total,
+               total ? sqrt(sum / total) : 0.0, peak);
+    }
+    else if (strcmp(cmd, "wifi-status") == 0)
     {
         if (wifi_diagnostic_status != NULL) wifi_diagnostic_status();
     }
