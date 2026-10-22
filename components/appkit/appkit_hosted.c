@@ -20,6 +20,7 @@
 #include "services/wifi.h"
 #include "services/storage.h"
 
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -53,7 +54,7 @@ typedef struct
     char app[24];
     char name[24];
 } registered_t;
-static registered_t s_registered[REGISTERED_MAX];
+static EXT_RAM_BSS_ATTR registered_t s_registered[REGISTERED_MAX];
 static int s_registered_count;
 static char s_autostart[FOLDER_MAX];      /* the app opened from the browser: start its dashboard */
 

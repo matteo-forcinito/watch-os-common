@@ -5,6 +5,7 @@
 #include "hardware/sdcard.h"
 
 #include "cJSON.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -22,7 +23,7 @@ static const char *TAG = "alarm";
 #define NVS_IMPORTED  "imported"
 #define MAX_WAIT_US   (60LL * 1000 * 1000)
 
-static alarm_t s_alarms[ALARM_MAX];
+static EXT_RAM_BSS_ATTR alarm_t s_alarms[ALARM_MAX];
 static int s_count = 0;
 static SemaphoreHandle_t s_mutex = NULL;
 static StaticSemaphore_t s_mutex_buffer;

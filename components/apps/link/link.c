@@ -31,6 +31,7 @@
 #include "services/web_server.h"
 
 #include "cJSON.h"
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -66,7 +67,7 @@ typedef struct
     int32_t value;
 } link_event_t;
 
-static link_event_t s_events[EVENTS_MAX];
+static EXT_RAM_BSS_ATTR link_event_t s_events[EVENTS_MAX];
 static uint32_t s_event_seq;
 static portMUX_TYPE s_event_mux = portMUX_INITIALIZER_UNLOCKED;
 

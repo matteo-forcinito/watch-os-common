@@ -2,6 +2,7 @@
 #include "apps_internal.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#include "esp_attr.h"
 #include "hardware/board.h"
 #include "link/link_internal.h"
 #include "orbi/orbi_view.h"
@@ -16,7 +17,7 @@ static lv_obj_t *s_page, *s_hero, *s_name, *s_status, *s_needs;
 static orbi_view_t *s_view;
 static lv_timer_t *s_timer;
 static char s_seed[17];
-static pet_record_t s_pet;
+static EXT_RAM_BSS_ATTR pet_record_t s_pet;
 static lv_obj_t *s_ambient;
 static orbi_view_t *s_small;
 static char s_small_seed[17];

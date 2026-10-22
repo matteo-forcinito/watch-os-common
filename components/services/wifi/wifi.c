@@ -8,6 +8,7 @@
 #include "hardware/sdcard.h"
 
 #include "cJSON.h"
+#include "esp_attr.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -52,7 +53,7 @@ static int s_last_reason = 0;   /* wifi_err_reason_t of the last disconnection *
 static uint8_t s_home_channel = 0;   /* channel of the last network joined */
 static esp_pm_lock_handle_t s_ap_lock = NULL;   /* no light sleep while our access point runs */
 
-static wifi_known_t s_known[WIFI_KNOWN_MAX];
+static EXT_RAM_BSS_ATTR wifi_known_t s_known[WIFI_KNOWN_MAX];
 static int s_known_count = 0;
 static char s_preferred[33];
 

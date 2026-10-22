@@ -12,6 +12,7 @@ workspace = root.parent
 stub = Path(tempfile.mkdtemp(prefix='orbi-host-'))
 json_dir = workspace/'.release-work/ESP32-S3-Touch-AMOLED-1.75C/managed_components/espressif__cjson/cJSON'
 headers = {
+    'esp_attr.h': '#define EXT_RAM_BSS_ATTR\n',
     'lvgl.h': 'typedef struct lv_obj_t lv_obj_t;\n',
     'esp_err.h': '#pragma once\ntypedef int esp_err_t;\n#define ESP_OK 0\n#define ESP_ERR_NVS_NOT_FOUND 4354\n',
     'esp_mac.h': '#include "esp_err.h"\n#include <stdint.h>\n#define ESP_MAC_WIFI_STA 0\nesp_err_t esp_read_mac(uint8_t*,int);\n',

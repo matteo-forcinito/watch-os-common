@@ -1,5 +1,6 @@
 #include "ui/ui.h"
 
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 
@@ -39,7 +40,8 @@ typedef struct
     lv_image_dsc_t *dsc;     /* NULL: use the path as is */
 } cache_entry_t;
 
-static cache_entry_t s_cache[CACHE_MAX];
+/* UI task only: PSRAM leaves internal RAM to the Bluetooth controller. */
+static EXT_RAM_BSS_ATTR cache_entry_t s_cache[CACHE_MAX];
 static int s_cache_count = 0;
 
 /* "S:/apps/x/icon.bin" -> "/sdcard/apps/x/icon.bin" */

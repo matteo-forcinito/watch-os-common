@@ -3,6 +3,7 @@
  * arrive destination -> acknowledge source. Every step is durable and idempotent
  * by transaction id. A departure receipt is not reused until acknowledged. */
 #include "core/sys.h"
+#include "esp_attr.h"
 #include "esp_mac.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
@@ -26,7 +27,8 @@ typedef struct
     char native[17], selected[17];
     pet_record_t pets[PET_SLOTS];
 } pet_store_t;
-static pet_store_t s_store;
+/* PSRAM: internal RAM is kept for the Bluetooth controller. */
+static EXT_RAM_BSS_ATTR pet_store_t s_store;
 static SemaphoreHandle_t s_lock;
 static bool s_ready;
 

@@ -19,6 +19,7 @@
 #include "web_files.h"
 
 #include "cJSON.h"
+#include "esp_attr.h"
 #include "esp_http_server.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -75,7 +76,7 @@ typedef struct
     char app[24];
     esp_err_t (*handler)(httpd_req_t *req);
 } folder_t;
-static folder_t s_folders[FOLDERS_MAX];
+static EXT_RAM_BSS_ATTR folder_t s_folders[FOLDERS_MAX];
 static int s_folder_count;
 
 /* "/news" (typed without the slash) -> "/news/" */
