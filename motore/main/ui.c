@@ -879,6 +879,13 @@ static void go(motore_ui_t *ui, view_t view)
 static void tick(lv_timer_t *timer)
 {
     motore_ui_t *ui = lv_timer_get_user_data(timer);
+    /* Driving: the screen stays on while the drive view is open. */
+    static int64_t last_kept;
+    if (ui->view == DRIVE && lv_screen_active() == ui->screen && esp_timer_get_time() - last_kept > 5000000)
+    {
+        last_kept = esp_timer_get_time();
+        power_user_activity();
+    }
     if (power_screen() == POWER_SCREEN_OFF || lv_screen_active() != ui->screen)
     {
         return;
