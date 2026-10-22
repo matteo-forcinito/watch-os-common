@@ -74,6 +74,11 @@ static void on_sleep(lv_event_t *e)
     power_sleep_now();
 }
 
+static void on_monitor(lv_event_t *e)
+{
+    sistema_overlay_set(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+
 static void power_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
@@ -82,6 +87,7 @@ static void power_create(lv_obj_t *screen, void *arg)
     ui_row(page, LV_SYMBOL_EYE_CLOSE, UI_COLOR_INDIGO, "Spegni schermo", NULL, on_sleep, NULL);
     ui_row(page, LV_SYMBOL_REFRESH, UI_COLOR_ORANGE, "Riavvia", NULL, on_restart, NULL);
     ui_row(page, LV_SYMBOL_POWER, UI_COLOR_RED, "Spegni", NULL, on_shutdown, NULL);
+    ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_PURPLE, "Monitor di sistema", sistema_overlay_on(), on_monitor, NULL);
 }
 
 const app_t power_app = {

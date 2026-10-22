@@ -131,6 +131,17 @@ static void overlay_show(bool on)
     overlay_tick(NULL);
 }
 
+bool sistema_overlay_on(void)
+{
+    return s_overlay != NULL;
+}
+
+void sistema_overlay_set(bool on)
+{
+    flag_set("overlay", on);
+    overlay_show(on);
+}
+
 static void boot_window_closed(void *arg)
 {
     (void)arg;

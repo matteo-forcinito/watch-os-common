@@ -32,6 +32,9 @@ extern const app_t sensors_app;
 extern const app_t sistema_app;
 /* Overlay of Sistema (on after a double reset or from the app); LVGL locked. */
 void sistema_boot(void);
+/* The light monitor (Alimentazione menu, Sistema); LVGL context, the choice is remembered. */
+bool sistema_overlay_on(void);
+void sistema_overlay_set(bool on);
 extern const app_t timer_app;
 /* Orbit Link remote control of the timer (LVGL locked). */
 typedef struct
