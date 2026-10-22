@@ -81,6 +81,7 @@ idf_component_register(
         core
     PRIV_REQUIRES
         ui
+        orbi
         nvs_flash
         fatfs
         esp_timer

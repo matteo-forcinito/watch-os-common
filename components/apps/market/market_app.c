@@ -9,6 +9,9 @@
 #include "hardware/board.h"
 #include "hardware/sdcard.h"
 #include "ui/ui.h"
+#include "link/link_internal.h"
+#include "orbi/orbi_genome.h"
+#include "cJSON.h"
 
 #if CONFIG_WATCH_DEV_CONSOLE
 #include "core/sys.h"
@@ -792,6 +795,43 @@ static void tone_task(void *arg)
 /* Keep application QA commands above the core/services dependency boundary. */
 bool devcon_app_command(char *line)
 {
+    if (strncmp(line, "orbi", 4) == 0 && (line[4] == 0 || line[4] == ' '))
+    {
+        /* "orbi <code>": the genome's traits (checked against tools/orbi_vectors.json);
+         * "orbi show [code]": the creature on screen (the father without a code). */
+        const char *arg = line[4] ? line + 5 : "";
+        bool show = strncmp(arg, "show", 4) == 0;
+        const char *code = show ? (arg[4] ? arg + 5 : "") : arg;
+        uint64_t seed = 0x0d0000bb00000245ULL;
+        if (code[0] != 0 && !orbi_parse(code, &seed))
+        {
+            printf("@ERR orbi code: 16 hex digits\n");
+            return true;
+        }
+        if (show)
+        {
+            cJSON *j = cJSON_CreateObject();
+            cJSON_AddStringToObject(j, "scene", "orbi");
+            cJSON_AddStringToObject(j, "action", "enter");
+            cJSON_AddStringToObject(j, "mood", "happy");
+            cJSON_AddNumberToObject(j, "hold_ms", 60000);
+            if (code[0] != 0)
+            {
+                cJSON_AddStringToObject(j, "seed", code);
+            }
+            printf(link_scene_post(j) ? "@OK orbi show\n" : "@ERR orbi show\n");
+            return true;
+        }
+        orbi_genome_t g;
+        orbi_genome(seed, &g);
+        char c[17];
+        orbi_code(seed, c);
+        printf("@ORBI seed=%s caps=%u hue=%u body=%u stretch=%u ear=%u crest=%u hue2=%u eyes=%u eye_gap=%u eye_size=%u "
+               "pattern=%u cheeks=%d stats=%u,%u,%u,%u,%u name=%s\n",
+               c, g.caps, g.hue, g.body, g.stretch, g.ear, g.crest, g.hue2, g.eyes, g.eye_gap, g.eye_size, g.pattern,
+               g.cheeks, g.curiosity, g.energy, g.sociability, g.appetite, g.playfulness, g.name);
+        return true;
+    }
     if (strcmp(line, "beep") == 0)
     {
         sound_notification();   /* speaker check on a new board */

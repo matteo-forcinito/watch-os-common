@@ -1,0 +1,189 @@
+[
+ {
+  "input": {
+   "caps": 29,
+   "mac": "a0f262e30794",
+   "model": "amoled175c",
+   "index": 0,
+   "birth": 1761100000
+  },
+  "traits": {
+   "seed": "1d185fbf257a338f",
+   "caps": 29,
+   "hue": 229,
+   "body": "DROP",
+   "stretch": 96,
+   "ear": "POINTY_EARS",
+   "crest": "SPROUT",
+   "hue2": 192,
+   "eyes": "WIDE",
+   "eye_gap": 34,
+   "eye_size": 22,
+   "pattern": "NONE",
+   "cheeks": true,
+   "curiosity": 33,
+   "energy": 94,
+   "sociability": 64,
+   "appetite": 74,
+   "playfulness": 90,
+   "name": "Rurul"
+  }
+ },
+ {
+  "input": {
+   "caps": 29,
+   "mac": "a0f262e30794",
+   "model": "amoled175c",
+   "index": 1,
+   "birth": 1761200000
+  },
+  "traits": {
+   "seed": "1d185fbffd4a3ad8",
+   "caps": 29,
+   "hue": 229,
+   "body": "DROP",
+   "stretch": 96,
+   "ear": "POINTY_EARS",
+   "crest": "SPROUT",
+   "hue2": 185,
+   "eyes": "SLEEPY",
+   "eye_gap": 43,
+   "eye_size": 21,
+   "pattern": "FRECKLES",
+   "cheeks": false,
+   "curiosity": 26,
+   "energy": 82,
+   "sociability": 64,
+   "appetite": 23,
+   "playfulness": 55,
+   "name": "Nosan"
+  }
+ },
+ {
+  "input": {
+   "caps": 14,
+   "mac": "dcb4d904234c",
+   "model": "guition4848",
+   "index": 0,
+   "birth": 1761100000
+  },
+  "traits": {
+   "seed": "0ee0b90c257a338f",
+   "caps": 14,
+   "hue": 354,
+   "body": "CUBE",
+   "stretch": 90,
+   "ear": "ROUND_EARS",
+   "crest": "SPROUT",
+   "hue2": 317,
+   "eyes": "SLEEPY",
+   "eye_gap": 37,
+   "eye_size": 20,
+   "pattern": "NONE",
+   "cheeks": false,
+   "curiosity": 94,
+   "energy": 74,
+   "sociability": 74,
+   "appetite": 97,
+   "playfulness": 44,
+   "name": "Fini"
+  }
+ },
+ {
+  "input": {
+   "caps": 41,
+   "mac": "102030405060",
+   "model": "knob",
+   "index": 0,
+   "birth": 1700000000
+  },
+  "traits": {
+   "seed": "29d1d8f99da5d200",
+   "caps": 41,
+   "hue": 41,
+   "body": "DROP",
+   "stretch": 97,
+   "ear": "NONE",
+   "crest": "ANTENNA",
+   "hue2": 352,
+   "eyes": "ROUND",
+   "eye_gap": 36,
+   "eye_size": 17,
+   "pattern": "BELLY",
+   "cheeks": true,
+   "curiosity": 34,
+   "energy": 59,
+   "sociability": 45,
+   "appetite": 54,
+   "playfulness": 22,
+   "name": "Kidal"
+  }
+ },
+ {
+  "input": {
+   "caps": 77,
+   "mac": "112233445566",
+   "model": "watcher",
+   "index": 0,
+   "birth": 1750000000
+  },
+  "traits": {
+   "seed": "4d07bcdafb3d4b62",
+   "caps": 77,
+   "hue": 154,
+   "body": "DROP",
+   "stretch": 107,
+   "ear": "NONE",
+   "crest": "SPROUT",
+   "hue2": 172,
+   "eyes": "CYCLOPS",
+   "eye_gap": 47,
+   "eye_size": 18,
+   "pattern": "FRECKLES",
+   "cheeks": false,
+   "curiosity": 85,
+   "energy": 70,
+   "sociability": 44,
+   "appetite": 43,
+   "playfulness": 32,
+   "name": "Tune"
+  }
+ },
+ {
+  "input": {
+   "caps": 16,
+   "mac": "ccba97118b08",
+   "model": "lcd13",
+   "index": 0,
+   "birth": 1761150000
+  },
+  "traits": {
+   "seed": "10766eab48d122ca",
+   "caps": 16,
+   "hue": 108,
+   "body": "CAPSULE",
+   "stretch": 101,
+   "ear": "NUBS",
+   "crest": "HORN",
+   "hue2": 83,
+   "eyes": "ROUND",
+   "eye_gap": 38,
+   "eye_size": 21,
+   "pattern": "SPOTS",
+   "cheeks": true,
+   "curiosity": 28,
+   "energy": 64,
+   "sociability": 34,
+   "appetite": 67,
+   "playfulness": 40,
+   "name": "Yotal"
+  }
+ },
+ {
+  "splitmix_state_1": [
+   "910a2dec89025cc1",
+   "beeb8da1658eec67",
+   "f893a2eefb32555e"
+  ]
+ }
+]

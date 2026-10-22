@@ -20,6 +20,7 @@
 #include "core/power.h"
 #include "hardware/board.h"
 #include "ui/ui.h"
+#include "orbi/orbi_view.h"
 
 #include "esp_heap_caps.h"
 
@@ -57,6 +58,7 @@ typedef struct
     char name[16];
     char mood[8];
     char action[8];
+    char seed[17];     /* Orbi child: 16 hex digits, "" = the father */
 } job_t;
 
 static lv_obj_t *s_root;          /* the current scene */
@@ -79,8 +81,9 @@ static int s_dial_value, s_dial_last;
 
 /* Orbi. */
 static lv_obj_t *s_pet;            /* container moved by enter/exit/bob */
-static lv_obj_t *s_body, *s_eyes[2], *s_mouth, *s_tip, *s_caption;
-static int s_body_size;            /* LVGL sizes are only known after layout */
+static lv_obj_t *s_caption;
+static orbi_view_t *s_orbi;        /* freed with the scene's objects */
+static char s_orbi_name[16];
 
 static int screen_w(void)
 {
@@ -118,8 +121,8 @@ static void clear_scene(void)
     s_current = SCENE_NONE;
     s_comet = s_trail = NULL;
     s_arc = s_dial_label = NULL;
-    s_pet = s_body = s_mouth = s_tip = s_caption = NULL;
-    s_eyes[0] = s_eyes[1] = NULL;
+    s_pet = s_caption = NULL;
+    s_orbi = NULL;
 }
 
 static void hold_done(lv_timer_t *timer)
@@ -202,11 +205,6 @@ static void set_opa(void *obj, int32_t v)
 static void set_translate_y(void *obj, int32_t v)
 {
     lv_obj_set_style_translate_y(obj, v, 0);
-}
-
-static void set_scale(void *obj, int32_t v)
-{
-    lv_obj_set_style_transform_scale(obj, v, 0);
 }
 
 /* ------------------------------------------------------------------ pulse */
@@ -476,40 +474,36 @@ static void scene_dial(const job_t *j)
 
 /* ------------------------------------------------------------------- Orbi */
 
-static void bob(void *obj, int32_t v)
+/* Orbi the father, or a child when the companion sends its seed. Drawn by
+ * components/orbi exactly like the companion draws it. */
+#define ORBI_FATHER_SEED 0x0d0000bb00000245ULL
+
+static orbi_mood_t orbi_mood_of(const job_t *j)
 {
-    lv_obj_set_style_translate_y(obj, v, 0);
+    if (strcmp(j->action, "love") == 0)
+    {
+        return ORBI_LOVE;
+    }
+    if (strcmp(j->mood, "sleep") == 0)
+    {
+        return ORBI_SLEEP;
+    }
+    if (strcmp(j->mood, "tired") == 0)
+    {
+        return ORBI_SLEEPY;
+    }
+    if (strcmp(j->mood, "sad") == 0)
+    {
+        return ORBI_SAD;
+    }
+    return strcmp(j->mood, "happy") == 0 ? ORBI_HAPPY : ORBI_CALM;
 }
 
 static void orbi_face(const job_t *j)
 {
-    bool sleeping = strcmp(j->mood, "sleep") == 0;
-    bool tired = strcmp(j->mood, "tired") == 0;
-    int s = s_body_size;
-    for (int i = 0; i < 2; i++)
-    {
-        lv_obj_set_size(s_eyes[i], s / 9, sleeping ? 5 : (tired ? s / 14 : s / 6));
-        lv_obj_align(s_eyes[i], LV_ALIGN_CENTER, (i == 0 ? -1 : 1) * s / 6, -s / 14);
-    }
-    bool happy = strcmp(j->mood, "happy") == 0 || strcmp(j->action, "love") == 0;
-    bool sad = strcmp(j->mood, "sad") == 0;
-    bool hungry = strcmp(j->mood, "hungry") == 0 || strcmp(j->action, "eat") == 0;
-    /* A smile is the lower half of a circle outline, a frown the upper half. */
-    bool curve = (happy || sad) && !hungry;
-    int mouth_w = hungry ? s / 7 : (curve ? s / 3 : s / 5);
-    int mouth_h = hungry ? s / 8 : (curve ? s / 3 : 5);
-    lv_obj_set_size(s_mouth, mouth_w, mouth_h);
-    lv_obj_set_style_radius(s_mouth, hungry || curve ? LV_RADIUS_CIRCLE : 2, 0);
-    lv_obj_set_style_bg_opa(s_mouth, curve ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(s_mouth, curve ? 5 : 0, 0);
-    lv_obj_set_style_border_side(s_mouth, happy ? LV_BORDER_SIDE_BOTTOM : LV_BORDER_SIDE_TOP, 0);
-    lv_obj_align(s_mouth, LV_ALIGN_CENTER, 0, curve ? (happy ? s / 20 : s / 3) : s / 5);
-    lv_obj_set_style_bg_color(s_body, lv_color_hex(j->color), 0);
-    lv_obj_set_style_bg_grad_color(s_body, lv_color_mix(lv_color_hex(j->color), lv_color_black(), 140), 0);
-    glow(s_body, j->color, sleeping ? 20 : 50);
-    lv_obj_set_style_bg_color(s_tip, lv_color_mix(lv_color_hex(j->color), lv_color_white(), 90), 0);
+    orbi_view_mood(s_orbi, orbi_mood_of(j));
     char caption[48];
-    snprintf(caption, sizeof(caption), "%s  LV %d", j->name[0] != '\0' ? j->name : "Orbi", j->level > 0 ? j->level : 1);
+    snprintf(caption, sizeof(caption), "%s  LV %d", j->name[0] != '\0' ? j->name : s_orbi_name, j->level > 0 ? j->level : 1);
     lv_label_set_text(s_caption, caption);
 }
 
@@ -517,9 +511,9 @@ static void on_orbi(lv_event_t *e)
 {
     bool long_press = lv_event_get_code(e) == LV_EVENT_LONG_PRESSED;
     link_event_text("orbi", long_press ? "play" : "pet");
-    if (s_body != NULL)
+    if (s_orbi != NULL)
     {
-        anim(s_body, set_scale, 330, 256, 420, 0, lv_anim_path_overshoot, NULL);
+        orbi_view_poke(s_orbi);
     }
 }
 
@@ -544,52 +538,26 @@ static void scene_orbi(const job_t *j)
     {
         lv_obj_t *root = make_root(SCENE_ORBI, false);
         int w = screen_w(), h = screen_h();
-        int s = (w < h ? w : h) * 34 / 100;
+        int s = (w < h ? w : h) * 30 / 100;
+        uint64_t seed = ORBI_FATHER_SEED;
+        bool child = j->seed[0] != '\0' && orbi_parse(j->seed, &seed);
+        orbi_genome_t g;
+        orbi_genome(seed, &g);
+        snprintf(s_orbi_name, sizeof(s_orbi_name), "%s", child ? g.name : "Orbi");
+
         s_pet = lv_obj_create(root);
         lv_obj_remove_style_all(s_pet);
-        lv_obj_set_size(s_pet, s + 40, s + 90);
-        lv_obj_set_clickable(s_pet, false);
+        lv_obj_set_size(s_pet, s * 3 / 2, LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(s_pet, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(s_pet, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_scrollable(s_pet, false);
-        lv_obj_align(s_pet, LV_ALIGN_CENTER, 0, h / 8);
-        lv_obj_t *antenna = lv_obj_create(s_pet);
-        lv_obj_remove_style_all(antenna);
-        lv_obj_set_size(antenna, 5, s / 4);
-        lv_obj_set_style_bg_color(antenna, lv_color_hex(0x9AA8C8), 0);
-        lv_obj_set_style_bg_opa(antenna, LV_OPA_COVER, 0);
-        lv_obj_align(antenna, LV_ALIGN_TOP_MID, 0, 10);
-        s_tip = dot(s_pet, 16, 0xFFFFFF);
-        glow(s_tip, 0xFFFFFF, 20);
-        lv_obj_align(s_tip, LV_ALIGN_TOP_MID, 0, 2);
-        s_body_size = s;
-        s_body = dot(s_pet, s, j->color);
-        lv_obj_set_style_bg_grad_dir(s_body, LV_GRAD_DIR_VER, 0);
-        lv_obj_set_style_transform_pivot_x(s_body, s / 2, 0);
-        lv_obj_set_style_transform_pivot_y(s_body, s / 2, 0);
-        lv_obj_set_clickable(s_body, true);
-        lv_obj_add_event_cb(s_body, on_orbi, LV_EVENT_SHORT_CLICKED, NULL);
-        lv_obj_add_event_cb(s_body, on_orbi, LV_EVENT_LONG_PRESSED, NULL);
-        lv_obj_align(s_body, LV_ALIGN_TOP_MID, 0, s / 4 + 4);
-        for (int i = 0; i < 2; i++)
-        {
-            s_eyes[i] = dot(s_body, 10, 0x071022);
-        }
-        s_mouth = dot(s_body, 10, 0x071022);
-        lv_obj_set_style_border_color(s_mouth, lv_color_hex(0x071022), 0);
+        lv_obj_add_event_cb(s_pet, on_orbi, LV_EVENT_SHORT_CLICKED, NULL);
+        lv_obj_add_event_cb(s_pet, on_orbi, LV_EVENT_LONG_PRESSED, NULL);
+        lv_obj_align(s_pet, LV_ALIGN_CENTER, 0, h / 10);
+        s_orbi = orbi_view_create(s_pet, &g, s);
         s_caption = lv_label_create(s_pet);
         lv_obj_set_style_text_color(s_caption, lv_color_white(), 0);
         lv_obj_set_style_text_font(s_caption, ui_font_small, 0);
-        lv_obj_align(s_caption, LV_ALIGN_BOTTOM_MID, 0, 0);
-        /* Idle: a slow float. */
-        lv_anim_t a;
-        lv_anim_init(&a);
-        lv_anim_set_var(&a, s_body);
-        lv_anim_set_exec_cb(&a, bob);
-        lv_anim_set_values(&a, -6, 6);
-        lv_anim_set_duration(&a, 1300);
-        lv_anim_set_reverse_duration(&a, 1300);
-        lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
-        lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-        lv_anim_start(&a);
         if (enter)
         {
             float rad = (float)j->angle * DEG_TO_RAD;
@@ -597,6 +565,10 @@ static void scene_orbi(const job_t *j)
             anim(s_pet, set_translate_x, (int)(cosf(rad) * reach), 0, 700, 0, lv_anim_path_ease_out, NULL);
             anim(s_pet, set_translate_y, (int)(sinf(rad) * reach), 0, 700, 0, lv_anim_path_ease_out, NULL);
         }
+    }
+    if (s_orbi == NULL)
+    {
+        return;
     }
     orbi_face(j);
     if (leave)
@@ -609,8 +581,7 @@ static void scene_orbi(const job_t *j)
     }
     else if (strcmp(j->action, "eat") == 0 || strcmp(j->action, "play") == 0 || strcmp(j->action, "love") == 0)
     {
-        anim(s_body, set_scale, 256, 320, 260, 0, lv_anim_path_ease_out, NULL);
-        anim(s_body, set_scale, 320, 256, 420, 260, lv_anim_path_bounce, NULL);
+        orbi_view_poke(s_orbi);
     }
     if (j->hold_ms > 0)
     {
@@ -706,6 +677,7 @@ bool link_scene_post(cJSON *json)
     copy_text(json, "name", j->name, sizeof(j->name));
     copy_text(json, "mood", j->mood, sizeof(j->mood));
     copy_text(json, "action", j->action, sizeof(j->action));
+    copy_text(json, "seed", j->seed, sizeof(j->seed));
     cJSON_Delete(json);
     if (!ui_async(apply, j))
     {
