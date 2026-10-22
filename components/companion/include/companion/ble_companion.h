@@ -40,6 +40,9 @@ typedef struct
     char track[64];
 } ble_music_t;
 
+/* Sets the controller's memory aside while the heap is still whole (right
+ * after the UI is built); ble_companion_init() hands it to the controller. */
+void ble_companion_reserve(void);
 esp_err_t ble_companion_init(void);
 
 /*

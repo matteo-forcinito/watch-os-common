@@ -845,6 +845,11 @@ static void reserve_take(void)
     }
 }
 
+void ble_companion_reserve(void)
+{
+    reserve_take();
+}
+
 static void reserve_release(void)
 {
     free(s_reserve);
