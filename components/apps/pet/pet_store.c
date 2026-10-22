@@ -13,6 +13,7 @@
 #include "hardware/microphone.h"
 #include "nvs.h"
 #include "orbi/orbi_genome.h"
+#include "orbi/pet_sprite.h"
 #include "pet.h"
 #include <math.h>
 #include <stdio.h>
@@ -30,6 +31,17 @@ typedef struct
 /* PSRAM: internal RAM is kept for the Bluetooth controller. */
 static EXT_RAM_BSS_ATTR pet_store_t s_store;
 static SemaphoreHandle_t s_lock;
+/* Discovered breeds (docs/ORBI-PETS.md), a separate blob: the store format is unchanged. */
+#define DEX_MAX 64
+#define DEX_MAGIC 0x44455831u
+typedef struct
+{
+    uint32_t magic;
+    uint16_t count;
+    uint16_t keys[DEX_MAX];
+} dex_t;
+static EXT_RAM_BSS_ATTR dex_t s_dex;
+static char s_arrived[4][17];   /* arrivals the page has not animated yet */
 static bool s_ready;
 
 static int64_t clock_now(void)
@@ -47,6 +59,35 @@ static bool save(void)
         e = nvs_commit(h);
     nvs_close(h);
     return e == ESP_OK;
+}
+static pet_look_t look_of(const pet_record_t *p)
+{
+    uint64_t seed = 0;
+    orbi_parse(p->seed, &seed);
+    pet_look_t l;
+    pet_look(seed, pet_level(p->xp), &l);
+    return l;
+}
+/* Lock held. Saves only when the breed is new. */
+static void dex_add(const pet_record_t *p)
+{
+    if (!p->seed[0])
+        return;
+    pet_look_t l = look_of(p);
+    uint16_t key = pet_breed_key(&l);
+    for (int i = 0; i < s_dex.count; i++)
+        if (s_dex.keys[i] == key)
+            return;
+    if (s_dex.count >= DEX_MAX)
+        return;
+    s_dex.keys[s_dex.count++] = key;
+    nvs_handle_t h;
+    if (nvs_open("orbi_children", NVS_READWRITE, &h) == ESP_OK)
+    {
+        if (nvs_set_blob(h, "dex", &s_dex, sizeof(s_dex)) == ESP_OK)
+            nvs_commit(h);
+        nvs_close(h);
+    }
 }
 static void evolve(pet_record_t *p)
 {
@@ -135,6 +176,24 @@ bool pet_init(void)
     {
         s_ready = e == ESP_OK && size == sizeof(s_store) && s_store.magic == PET_MAGIC;
     }
+    if (s_ready)
+    {
+        size = sizeof(s_dex);
+        e = nvs_open("orbi_children", NVS_READWRITE, &h);
+        if (e == ESP_OK)
+        {
+            e = nvs_get_blob(h, "dex", &s_dex, &size);
+            nvs_close(h);
+        }
+        if (e != ESP_OK || size != sizeof(s_dex) || s_dex.magic != DEX_MAGIC || s_dex.count > DEX_MAX)
+        {
+            memset(&s_dex, 0, sizeof(s_dex));
+            s_dex.magic = DEX_MAGIC;
+        }
+        for (int i = 0; i < PET_SLOTS; i++)
+            if (s_store.pets[i].stage == PET_ACTIVE)
+                dex_add(&s_store.pets[i]);
+    }
     xSemaphoreGive(s_lock);
     return s_ready;
 }
@@ -155,6 +214,11 @@ static cJSON *record_json(pet_record_t *p)
     cJSON_AddNumberToObject(j, "energy", p->energy);
     cJSON_AddNumberToObject(j, "joy", p->joy);
     cJSON_AddNumberToObject(j, "xp", p->xp);
+    pet_look_t l = look_of(p);
+    cJSON_AddStringToObject(j, "species", pet_species_name(l.species));
+    cJSON_AddStringToObject(j, "breed", pet_variant_name(&l));
+    cJSON_AddNumberToObject(j, "level", l.level);
+    cJSON_AddStringToObject(j, "stage_name", pet_stage_name(l.stage));
     cJSON_AddBoolToObject(j, "asleep", p->asleep);
     cJSON_AddNumberToObject(j, "born", (double)p->born);
     cJSON_AddNumberToObject(j, "updated", (double)p->updated);
@@ -171,6 +235,9 @@ static cJSON *snapshot_locked(void)
     for (int i = 0; i < PET_SLOTS; i++)
         if (s_store.pets[i].seed[0])
             cJSON_AddItemToArray(list, record_json(&s_store.pets[i]));
+    cJSON *dex = cJSON_AddArrayToObject(out, "dex");
+    for (int i = 0; i < s_dex.count; i++)
+        cJSON_AddItemToArray(dex, cJSON_CreateNumber(s_dex.keys[i]));
     return out;
 }
 cJSON *pet_snapshot(void)
@@ -333,8 +400,16 @@ cJSON *pet_command(const cJSON *j, const char **error)
         }
         if (!strcmp(action, "arrive") && same && (p->stage == PET_INCOMING || p->stage == PET_ACTIVE))
         {
+            if (p->stage == PET_INCOMING)
+                for (int i = 0; i < 4; i++)
+                    if (!s_arrived[i][0])
+                    {
+                        snprintf(s_arrived[i], sizeof(s_arrived[i]), "%s", seed);
+                        break;
+                    }
             p->stage = PET_ACTIVE;
             p->updated = clock_now();
+            dex_add(p);
             snprintf(s_store.selected, sizeof(s_store.selected), "%s", seed);
             ok = true;
         }
@@ -369,6 +444,31 @@ cJSON *pet_command(const cJSON *j, const char **error)
             p->energy -= 10;
             p->joy = p->joy < 78 ? p->joy + 22 : 100;
             p->xp += 12;
+            ok = true;
+        }
+        else if (!p->asleep && !strcmp(action, "wash"))
+        {
+            p->joy = p->joy < 92 ? p->joy + 8 : 100;
+            p->xp += 4;
+            ok = true;
+        }
+        else if (!p->asleep && !strcmp(action, "snack"))
+        {
+            p->hunger = p->hunger > 12 ? p->hunger - 12 : 0;
+            p->joy = p->joy < 90 ? p->joy + 10 : 100;
+            p->xp += 2;
+            ok = true;
+        }
+        else if (!p->asleep && !strcmp(action, "train") && p->energy >= 20)
+        {
+            p->energy -= 15;
+            p->xp += 18;
+            ok = true;
+        }
+        else if (!p->asleep && !strcmp(action, "meet"))
+        {
+            p->joy = p->joy < 96 ? p->joy + 4 : 100;
+            p->xp += 2;
             ok = true;
         }
         else if (!strcmp(action, "pet"))
@@ -412,4 +512,57 @@ bool pet_company(void)
     bool on = s_store.company != 0;
     xSemaphoreGive(s_lock);
     return on;
+}
+
+bool pet_take_arrival(const char *seed)
+{
+    if (!s_ready)
+        return false;
+    bool found = false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < 4; i++)
+        if (s_arrived[i][0] && !strcmp(s_arrived[i], seed))
+        {
+            s_arrived[i][0] = 0;
+            found = true;
+        }
+    xSemaphoreGive(s_lock);
+    return found;
+}
+int pet_dex(uint16_t *keys, int max)
+{
+    if (!s_ready)
+        return 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    int n = s_dex.count < max ? s_dex.count : max;
+    memcpy(keys, s_dex.keys, (size_t)n * sizeof(uint16_t));
+    xSemaphoreGive(s_lock);
+    return n;
+}
+int pet_list(pet_record_t *out, int max)
+{
+    if (!s_ready)
+        return 0;
+    int n = 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < PET_SLOTS && n < max; i++)
+        if (s_store.pets[i].seed[0] && s_store.pets[i].stage == PET_ACTIVE)
+        {
+            evolve(&s_store.pets[i]);
+            out[n++] = s_store.pets[i];
+        }
+    xSemaphoreGive(s_lock);
+    return n;
+}
+void pet_traits(const pet_record_t *p, uint8_t out[5])
+{
+    uint64_t seed = 0;
+    orbi_parse(p->seed, &seed);
+    orbi_genome_t g;
+    orbi_genome(seed, &g);
+    out[0] = g.curiosity;
+    out[1] = g.energy;
+    out[2] = g.sociability;
+    out[3] = g.appetite;
+    out[4] = g.playfulness;
 }

@@ -1,198 +1,945 @@
-/* One tap from the menu. No new shell tile or swipe gesture. */
+/* The pets' little world (docs/ORBI-PETS.md): pixel-art animals that grow,
+ * a sky that follows the real weather, guests that arrive and leave through a
+ * portal, Orbi visiting while the companion is connected.
+ * One lv_timer drives the scene; it does nothing when the page is hidden, the
+ * screen is off or a finger is down. Every buffer lives in PSRAM. */
 #include "apps_internal.h"
 #include "core/lv_port.h"
 #include "core/power.h"
 #include "esp_attr.h"
+#include "esp_log.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 #include "hardware/board.h"
 #include "link/link_internal.h"
 #include "orbi/orbi_view.h"
+#include "orbi/pet_sprite.h"
 #include "pet.h"
+#include "services/weather.h"
 #include "ui/ui.h"
-#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-static lv_obj_t *s_page, *s_hero, *s_name, *s_status, *s_needs;
-static orbi_view_t *s_view;
-static lv_timer_t *s_timer;
-static char s_seed[17];
-static EXT_RAM_BSS_ATTR pet_record_t s_pet;
-static lv_obj_t *s_ambient;
-static orbi_view_t *s_small;
-static char s_small_seed[17];
-static lv_obj_t *s_controls[5];
+static const char *TAG = "pet";
 
-static orbi_mood_t mood(const pet_record_t *p)
+#define TICK_MS     66
+#define ACTORS      3
+#define FX          12
+#define DROPS       14
+#define ORBI_FATHER 0x0d0000bb00000245ULL
+#define PET_SLOTS_VISIBLE 8
+
+/* ------------------------------------------------------------ rendering */
+
+static uint8_t s_grid[PET_GRID * PET_GRID];   /* LVGL task only */
+
+typedef struct
 {
-    return p->asleep                       ? ORBI_SLEEP
-           : p->energy < 20                ? ORBI_SLEEPY
-           : p->joy < 25 || p->hunger > 80 ? ORBI_SAD
-           : p->joy > 65                   ? ORBI_HAPPY
-                                           : ORBI_CALM;
+    lv_draw_buf_t *buf;
+    int k;
+} canvas_t;
+
+static void canvas_deleted(lv_event_t *e)
+{
+    canvas_t *c = lv_event_get_user_data(e);
+    lv_draw_buf_destroy(c->buf);
+    free(c);
 }
-static void open(lv_event_t *e)
+
+static lv_obj_t *canvas_new(lv_obj_t *parent, int w, int h, int k)
 {
-    (void)e;
-    app_open("orbi", NULL);
+    canvas_t *c = calloc(1, sizeof(*c));
+    lv_draw_buf_t *buf = c ? lv_draw_buf_create(w * k, h * k, LV_COLOR_FORMAT_ARGB8888, 0) : NULL;
+    if (!buf)
+    {
+        free(c);
+        return NULL;
+    }
+    c->buf = buf;
+    c->k = k;
+    lv_obj_t *o = lv_canvas_create(parent);
+    lv_canvas_set_draw_buf(o, buf);
+    lv_obj_add_event_cb(o, canvas_deleted, LV_EVENT_DELETE, c);
+    lv_obj_set_user_data(o, c);
+    return o;
 }
-static void command(lv_event_t *e)
+
+/* Paints indices through a palette, k x k pixels each, optionally mirrored. */
+static void canvas_paint(lv_obj_t *o, const uint8_t *idx, int w, int h, const uint32_t *pal, bool flip)
 {
-    const char *action = lv_event_get_user_data(e);
+    canvas_t *c = lv_obj_get_user_data(o);
+    int k = c->k;
+    uint32_t stride = c->buf->header.stride;
+    for (int y = 0; y < h; y++)
+    {
+        uint32_t *row = (uint32_t *)(c->buf->data + (size_t)y * k * stride);
+        for (int x = 0; x < w; x++)
+        {
+            uint32_t v = pal[idx[y * w + (flip ? w - 1 - x : x)]];
+            for (int i = 0; i < k; i++)
+                row[x * k + i] = v;
+        }
+        for (int r = 1; r < k; r++)
+            memcpy(c->buf->data + ((size_t)y * k + r) * stride, row, (size_t)w * k * 4);
+    }
+    lv_obj_invalidate(o);
+}
+
+static lv_obj_t *sprite_new(lv_obj_t *parent, const pet_look_t *look, int k, pet_pose_t pose, int mood)
+{
+    lv_obj_t *o = canvas_new(parent, PET_GRID, PET_GRID, k);
+    if (!o)
+        return NULL;
+    uint32_t pal[PET_COLORS];
+    pet_palette(look, mood, pal);
+    pet_draw(look, pose, 0, false, s_grid);
+    canvas_paint(o, s_grid, PET_GRID, PET_GRID, pal, false);
+    return o;
+}
+
+static pet_look_t look_of(const pet_record_t *p)
+{
+    uint64_t seed = 0;
+    orbi_parse(p->seed, &seed);
+    pet_look_t l;
+    pet_look(seed, pet_level(p->xp), &l);
+    return l;
+}
+
+static int mood_of(const pet_record_t *p)
+{
+    return p->asleep ? 3 : (p->joy < 25 || p->hunger > 80) ? 2 : p->joy > 65 ? 1 : 0;
+}
+
+/* 8x8 pixel icons: X colour, o outline, w white. */
+typedef enum { ICON_HEART, ICON_FOOD, ICON_BALL, ICON_DROP, ICON_MOON, ICON_MORE, ICON_ZZZ, ICON_STAR, ICONS } icon_t;
+static const char *const ICON_ART[ICONS] = {
+    ".oo.oo..oXXoXXo.oXwXXXXooXXXXXXo.oXXXXo...oXXo.....oo...........",
+    "........ooo.....oXXo.....oXXXo....oXXXo....oXXXo....ooXXo.....oo",
+    "..oooo...oXwXXo.oXwXXXXooXXXXXXooXXXXXXooXXXXXXo.oXXXXo...oooo..",
+    "...oo......oXo....oXXXo..oXwXXXooXwXXXXooXXXXXXo.oXXXXo...oooo..",
+    "..oooo...oXXo...oXXo....oXXo....oXXo....oXXXo..o.oXXXXXo..ooooo.",
+    "................................oo.oo.oooXoXoXo.oo.oo.oo........",
+    "oooooo..XXXXXo.....oXo.....oXo.....oXo.....oXXXXo..ooooooo......",
+    "...oo......oXo...oooXXXoooXXXwXXXo.oXXXXXo..oXXoXXo.oXo..oXo.oo.",
+};
+static const uint32_t ICON_COLOR[ICONS] = {0xFF5D7A, 0xF2C14E, 0x5AC8FA, 0x6EC8FF, 0xFFE38A, 0xEEF4FB, 0xBFD7FF, 0xFFE070};
+
+static lv_obj_t *icon_new(lv_obj_t *parent, icon_t icon, int k)
+{
+    lv_obj_t *o = canvas_new(parent, 8, 8, k);
+    if (!o)
+        return NULL;
+    uint8_t idx[64];
+    for (int i = 0; i < 64; i++)
+    {
+        char ch = ICON_ART[icon][i];
+        idx[i] = ch == 'X' ? 1 : ch == 'o' ? 2 : ch == 'w' ? 3 : 0;
+    }
+    uint32_t pal[4] = {0, 0xFF000000u | ICON_COLOR[icon], 0xFF1A1E2Cu, 0xFFFFFFFFu};
+    canvas_paint(o, idx, 8, 8, pal, false);
+    lv_obj_set_clickable(o, false);
+    return o;
+}
+
+/* ---------------------------------------------------------------- scene */
+
+enum { A_IDLE, A_WALK, A_ACT, A_ENTER, A_EXIT };
+
+typedef struct
+{
+    bool used, meeting;
+    pet_record_t rec;
+    pet_look_t look;
+    uint8_t traits[5];
+    lv_obj_t *cv;
+    uint32_t pal[PET_COLORS];
+    int x, target;            /* left edge, pixels x 16 */
+    int8_t dir;
+    uint8_t state;
+    pet_pose_t pose, act_pose;
+    int timer, frame, ticks, blink;
+    int drawn_pose, drawn_frame, drawn_dir, drawn_blink, drawn_mood;
+    int64_t met_at;
+} actor_t;
+
+typedef struct
+{
+    lv_obj_t *o;
+    int16_t x, y, vx, vy, life;
+} fx_t;
+
+typedef struct
+{
+    lv_obj_t *screen, *sky, *sun, *ground, *hud_name, *hud_info, *bars[3], *portal, *flash, *menu;
+    lv_obj_t *clouds[3], *drops[DROPS];
+    lv_timer_t *timer;
+    int W, H, k, S, ground_y, margin;
+    int weather;              /* 0 clear 1 cloudy 2 rain 3 snow 4 fog 5 storm */
+    bool night;
+    actor_t actors[ACTORS];
+    fx_t fx[FX];
+    orbi_view_t *orbi;
+    lv_obj_t *orbi_root;
+    char selected[17];
+    uint32_t ticks;
+    int portal_ticks;
+} scene_t;
+
+static EXT_RAM_BSS_ATTR scene_t S;
+
+static lv_obj_t *box(lv_obj_t *parent, uint32_t color, lv_opa_t opa)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_style_bg_color(o, ui_color(color), 0);
+    lv_obj_set_style_bg_opa(o, opa, 0);
+    lv_obj_set_scrollable(o, false);
+    lv_obj_set_clickable(o, false);
+    return o;
+}
+
+static void fx_spawn(icon_t icon, int x, int y, int vx, int vy, int life)
+{
+    for (int i = 0; i < FX; i++)
+        if (!S.fx[i].o)
+        {
+            lv_obj_t *o = icon_new(S.screen, icon, S.k > 2 ? 2 : 1);
+            if (!o)
+                return;
+            S.fx[i] = (fx_t){o, (int16_t)x, (int16_t)y, (int16_t)vx, (int16_t)vy, (int16_t)life};
+            lv_obj_set_pos(o, x, y);
+            return;
+        }
+}
+
+static void fx_tick(void)
+{
+    for (int i = 0; i < FX; i++)
+    {
+        fx_t *f = &S.fx[i];
+        if (!f->o)
+            continue;
+        if (--f->life <= 0)
+        {
+            lv_obj_delete(f->o);
+            f->o = NULL;
+            continue;
+        }
+        f->x += f->vx;
+        f->y += f->vy;
+        lv_obj_set_pos(f->o, f->x, f->y);
+        if (f->life < 6)
+            lv_obj_set_style_opa(f->o, (lv_opa_t)(f->life * 40), 0);
+    }
+}
+
+static int actor_x(const actor_t *a)
+{
+    return a->x / 16;
+}
+
+static void hearts(const actor_t *a, int n)
+{
+    for (int i = 0; i < n; i++)
+        fx_spawn(ICON_HEART, actor_x(a) + S.S / 3 + (int)(esp_random() % (S.S / 3)), S.ground_y - S.S * 9 / 10,
+                 (int)(esp_random() % 3) - 1, -2 - (int)(esp_random() % 2), 14 + i * 3);
+}
+
+/* ------------------------------------------------------------- weather */
+
+static void sky_paint(void)
+{
+    weather_t w;
+    bool ok = weather_get(&w) && w.valid;
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    S.night = ok ? !w.is_day : (tm.tm_hour < 7 || tm.tm_hour >= 20);
+    int c = ok ? w.code : 0;
+    S.weather = c >= 95 ? 5 : (c >= 71 && c <= 77) || c == 85 || c == 86 ? 3 : (c >= 51 && c <= 67) || (c >= 80 && c <= 82) ? 2
+              : c == 45 || c == 48 ? 4 : c >= 2 ? 1 : 0;
+    static const uint32_t DAY[6][2] = {{0x4FA8F0, 0xBFE6FF}, {0x7D93AE, 0xC9D5E2}, {0x4E5D70, 0x8C9AAB},
+                                       {0x9FB3C8, 0xE6EEF5}, {0xA9B4BE, 0xD8DDE2}, {0x2F3646, 0x5E6676}};
+    static const uint32_t NIGHT[6][2] = {{0x0B1330, 0x26365E}, {0x161C28, 0x343C4C}, {0x10151F, 0x2A3140},
+                                         {0x1E2838, 0x46546A}, {0x1C2026, 0x3A4048}, {0x0C0F16, 0x262B36}};
+    const uint32_t *sky = S.night ? NIGHT[S.weather] : DAY[S.weather];
+    lv_obj_set_style_bg_color(S.sky, ui_color(sky[0]), 0);
+    lv_obj_set_style_bg_grad_color(S.sky, ui_color(sky[1]), 0);
+    bool snow = S.weather == 3;
+    uint32_t g0 = snow ? 0xEEF3F8 : 0x6CC453, g1 = snow ? 0xB9C8D8 : 0x3E8E3A;
+    if (S.night)
+        g0 = (g0 >> 1) & 0x7F7F7F, g1 = (g1 >> 1) & 0x7F7F7F;
+    lv_obj_set_style_bg_color(S.ground, ui_color(g0), 0);
+    lv_obj_set_style_bg_grad_color(S.ground, ui_color(g1), 0);
+    lv_obj_set_style_bg_color(S.sun, ui_color(S.night ? 0xF4F1DE : 0xFFD54A), 0);
+    lv_obj_set_hidden(S.sun, S.weather == 2 || S.weather == 5 || S.weather == 4);
+    for (int i = 0; i < 3; i++)
+    {
+        lv_obj_set_hidden(S.clouds[i], S.weather == 0 && i > 0);
+        lv_obj_set_style_bg_color(S.clouds[i], ui_color(S.weather >= 2 && S.weather != 3 ? 0x8A94A3 : 0xFFFFFF), 0);
+        lv_obj_set_style_bg_opa(S.clouds[i], S.night ? LV_OPA_30 : LV_OPA_80, 0);
+    }
+    for (int i = 0; i < DROPS; i++)
+    {
+        lv_obj_set_hidden(S.drops[i], !(S.weather == 2 || S.weather == 3 || S.weather == 5));
+        lv_obj_set_size(S.drops[i], snow ? 4 : 2, snow ? 4 : 9);
+        lv_obj_set_style_radius(S.drops[i], snow ? 2 : 0, 0);
+        lv_obj_set_style_bg_color(S.drops[i], ui_color(snow ? 0xFFFFFF : 0xA8C8F0), 0);
+    }
+    lv_obj_set_hidden(S.flash, true);
+    lv_obj_set_style_bg_opa(S.flash, S.weather == 4 ? LV_OPA_40 : LV_OPA_70, 0);
+    if (S.weather == 4)
+        lv_obj_set_hidden(S.flash, false);
+}
+
+static void weather_tick(void)
+{
+    for (int i = 0; i < 3; i++)
+        if (!lv_obj_is_hidden(S.clouds[i]) && (S.ticks + i * 5) % 6 == 0)
+        {
+            int x = lv_obj_get_x(S.clouds[i]) + 1;
+            lv_obj_set_x(S.clouds[i], x > S.W ? -lv_obj_get_width(S.clouds[i]) : x);
+        }
+    if (!lv_obj_is_hidden(S.drops[0]))
+    {
+        int v = S.weather == 3 ? 2 : 9;
+        for (int i = 0; i < DROPS; i++)
+        {
+            int y = lv_obj_get_y(S.drops[i]) + v + (i & 1);
+            int x = lv_obj_get_x(S.drops[i]) + (S.weather == 3 ? (int)(esp_random() % 3) - 1 : -1);
+            if (y > S.ground_y)
+                y = -(int)(esp_random() % (S.H / 3)), x = (int)(esp_random() % S.W);
+            lv_obj_set_pos(S.drops[i], x, y);
+        }
+    }
+    if (S.weather == 5)
+        lv_obj_set_hidden(S.flash, !(S.ticks % 140 < 2 || S.ticks % 140 == 4));
+}
+
+/* --------------------------------------------------------------- actors */
+
+static void command(const char *seed, const char *action, bool quiet)
+{
     cJSON *j = cJSON_CreateObject();
     cJSON_AddStringToObject(j, "action", action);
-    cJSON_AddStringToObject(j, "seed", s_seed);
-    if (!strcmp(action, "company"))
-        cJSON_AddBoolToObject(j, "on", lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED));
-    const char *error;
+    cJSON_AddStringToObject(j, "seed", seed);
+    const char *error = NULL;
     cJSON *out = pet_command(j, &error);
-    if (!out)
+    if (!out && !quiet && error)
         ui_toast(error);
-    else if (s_view)
-        orbi_view_poke(s_view);
     cJSON_Delete(j);
     cJSON_Delete(out);
-    if (s_timer)
-        lv_timer_ready(s_timer);
 }
-static void next(lv_event_t *e)
+
+static void actor_tapped(lv_event_t *e)
 {
-    (void)e;
-    cJSON *out = pet_snapshot();
-    cJSON *list = cJSON_GetObjectItemCaseSensitive(out, "pets");
-    cJSON *p;
-    char first[17] = "", choice[17] = "";
-    bool seen = false;
-    cJSON_ArrayForEach(p, list)
+    actor_t *a = lv_event_get_user_data(e);
+    if (!a->used || a->state == A_EXIT)
+        return;
+    if (strcmp(S.selected, a->rec.seed))
     {
-        if (cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(p, "stage")) != PET_ACTIVE)
-            continue;
-        const char *seed = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(p, "seed"));
-        if (!first[0])
-            snprintf(first, sizeof(first), "%s", seed);
-        if (seen && !choice[0])
-            snprintf(choice, sizeof(choice), "%s", seed);
-        if (!strcmp(seed, s_seed))
-            seen = true;
+        pet_select(a->rec.seed);
+        snprintf(S.selected, sizeof(S.selected), "%s", a->rec.seed);
+        ui_toast("Child selezionato");
+        return;
     }
-    if (choice[0] || first[0])
-        pet_select(choice[0] ? choice : first);
-    cJSON_Delete(out);
-    if (s_timer)
-        lv_timer_ready(s_timer);
+    command(a->rec.seed, "pet", false);
+    a->rec.joy = a->rec.joy < 91 ? a->rec.joy + 9 : 100;
+    a->state = A_ACT;
+    a->act_pose = PET_POSE_HAPPY;
+    a->timer = 18;
+    hearts(a, 2);
 }
-static void refresh(lv_timer_t *timer)
+
+static void actor_place(actor_t *a)
 {
-    (void)timer;
-    if (!pet_current(&s_pet))
+    lv_obj_set_pos(a->cv, actor_x(a), S.ground_y - 31 * S.k);
+}
+
+static actor_t *actor_add(const pet_record_t *p, bool enter)
+{
+    for (int i = 0; i < ACTORS; i++)
     {
-        for (int i = 0; i < 5; i++)
-            lv_obj_set_state(s_controls[i], LV_STATE_DISABLED, true);
-        lv_label_set_text(s_name, "Il tuo child è altrove");
-        lv_label_set_text(s_status, "Apri Orbit per ritrovarlo o completare un viaggio.");
-        lv_label_set_text(s_needs, "");
-        if (s_view)
+        actor_t *a = &S.actors[i];
+        if (a->used)
+            continue;
+        memset(a, 0, sizeof(*a));
+        a->rec = *p;
+        a->look = look_of(p);
+        pet_traits(p, a->traits);
+        a->cv = sprite_new(S.screen, &a->look, S.k, PET_POSE_IDLE, mood_of(p));
+        if (!a->cv)
+            return NULL;
+        lv_obj_set_clickable(a->cv, true);
+        lv_obj_add_event_cb(a->cv, actor_tapped, LV_EVENT_SHORT_CLICKED, a);
+        a->used = true;
+        a->drawn_pose = -1;
+        a->dir = 1;
+        int span = S.W - 2 * S.margin - S.S;
+        a->x = (S.margin + (int)(esp_random() % (span > 1 ? span : 1))) * 16;
+        a->state = A_IDLE;
+        a->timer = 10 + (int)(esp_random() % 30);
+        if (enter)
         {
-            orbi_view_delete(s_view);
-            s_view = NULL;
-            s_seed[0] = 0;
+            a->state = A_ENTER;
+            a->x = -S.S * 16;
+            a->target = (S.margin + S.S / 2) * 16;
+            S.portal_ticks = 50;
+            lv_obj_set_hidden(S.portal, false);
+            lv_obj_set_pos(S.portal, S.margin / 2 - S.S / 4, S.ground_y - S.S);
         }
+        actor_place(a);
+        lv_obj_move_foreground(a->cv);
+        return a;
+    }
+    return NULL;
+}
+
+static actor_t *other_of(const actor_t *a)
+{
+    for (int i = 0; i < ACTORS; i++)
+        if (S.actors[i].used && &S.actors[i] != a && S.actors[i].state != A_EXIT && !S.actors[i].rec.asleep)
+            return &S.actors[i];
+    return NULL;
+}
+
+static void decide(actor_t *a)
+{
+    uint32_t r = esp_random() % 100;
+    actor_t *o = other_of(a);
+    int lo = S.margin * 16, hi = (S.W - S.margin - S.S) * 16;
+    a->meeting = false;
+    if (S.orbi && r < 45)
+        a->target = (S.W / 2 - S.S / 2 + (int)(esp_random() % (S.S / 2 + 1)) - S.S / 4) * 16;
+    else if (o && r < (uint32_t)a->traits[2] * 6 / 10)
+    {
+        int side = actor_x(o) > S.W / 2 ? -1 : 1;
+        a->target = o->x + side * S.S * 12;
+        a->meeting = true;
+    }
+    else if (r < 25 + a->traits[0] / 2)
+        a->target = lo + (int)(esp_random() % (uint32_t)(hi - lo > 16 ? hi - lo : 16));
+    else
+    {
+        a->timer = 20 + (int)(esp_random() % 50);
+        return;
+    }
+    if (a->target < lo)
+        a->target = lo;
+    if (a->target > hi)
+        a->target = hi;
+    a->state = A_WALK;
+}
+
+static void actor_tick(actor_t *a)
+{
+    a->ticks++;
+    int step = 1;
+    pet_pose_t pose = PET_POSE_IDLE;
+    if (a->rec.asleep && a->state != A_EXIT && a->state != A_ENTER)
+    {
+        pose = PET_POSE_SLEEP;
+        if (S.ticks % 40 == 0)
+            fx_spawn(ICON_ZZZ, actor_x(a) + S.S * 2 / 3, S.ground_y - S.S * 2 / 3, 1, -1, 18);
+    }
+    else
+        switch (a->state)
+        {
+        case A_IDLE:
+            pose = mood_of(&a->rec) == 2 ? PET_POSE_SAD : PET_POSE_IDLE;
+            step = 8;
+            if (--a->timer <= 0)
+                decide(a);
+            break;
+        case A_ACT:
+            pose = a->act_pose;
+            step = 3;
+            if (--a->timer <= 0)
+                a->state = A_IDLE, a->timer = 20;
+            break;
+        default:
+        {
+            pose = PET_POSE_WALK;
+            step = 2;
+            int speed = S.k * (6 + a->traits[1] / 10);   /* x16 per tick */
+            int d = a->target - a->x;
+            a->dir = d > 0 ? 1 : d < 0 ? -1 : a->dir;
+            if (abs(d) <= speed)
+            {
+                a->x = a->target;
+                if (a->state == A_EXIT)
+                {
+                    lv_obj_delete(a->cv);
+                    a->used = false;
+                    lv_obj_set_hidden(S.portal, true);
+                    return;
+                }
+                bool party = a->state == A_ENTER || (S.orbi && !a->meeting);
+                a->state = A_ACT;
+                a->act_pose = PET_POSE_HAPPY;
+                a->timer = 24;
+                actor_t *o = other_of(a);
+                if (a->meeting && o && abs(o->x - a->x) < S.S * 24)
+                {
+                    o->state = A_ACT, o->act_pose = PET_POSE_HAPPY, o->timer = 24;
+                    o->dir = o->x > a->x ? -1 : 1;
+                    a->dir = -o->dir;
+                    hearts(a, 1);
+                    hearts(o, 1);
+                    int64_t now = esp_timer_get_time();
+                    if (now - a->met_at > 600LL * 1000000 || !a->met_at)
+                    {
+                        a->met_at = o->met_at = now;
+                        command(a->rec.seed, "meet", true);
+                        command(o->rec.seed, "meet", true);
+                    }
+                }
+                else if (party)
+                    hearts(a, 2);
+                else
+                    a->state = A_IDLE, a->timer = 15 + (int)(esp_random() % 40);
+            }
+            else
+                a->x += d > 0 ? speed : -speed;
+            actor_place(a);
+            break;
+        }
+        }
+    if (a->ticks % step == 0)
+        a->frame++;
+    if (a->blink > 0)
+        a->blink--;
+    else if (esp_random() % 60 == 0)
+        a->blink = 2;
+    int mood = mood_of(&a->rec);
+    bool flip = a->dir < 0;
+    if (pose != a->drawn_pose || a->frame != a->drawn_frame || flip != a->drawn_dir || (a->blink > 0) != a->drawn_blink ||
+        mood != a->drawn_mood)
+    {
+        if (mood != a->drawn_mood)
+            pet_palette(&a->look, mood, a->pal);
+        pet_draw(&a->look, pose, (uint32_t)a->frame, a->blink > 0, s_grid);
+        canvas_paint(a->cv, s_grid, PET_GRID, PET_GRID, a->pal, flip);
+        a->drawn_pose = pose;
+        a->drawn_frame = a->frame;
+        a->drawn_dir = flip;
+        a->drawn_blink = a->blink > 0;
+        a->drawn_mood = mood;
+    }
+}
+
+/* Plays an action on the selected pet: store first, then the animation. */
+static actor_t *selected_actor(void)
+{
+    for (int i = 0; i < ACTORS; i++)
+        if (S.actors[i].used && !strcmp(S.actors[i].rec.seed, S.selected))
+            return &S.actors[i];
+    return NULL;
+}
+
+static void hud_update(void)
+{
+    actor_t *a = selected_actor();
+    if (!a)
+    {
+        lv_label_set_text(S.hud_name, "Il tuo child è in viaggio");
+        lv_label_set_text(S.hud_info, "Apri Orbit per ritrovarlo");
         return;
     }
     uint64_t seed;
-    orbi_parse(s_pet.seed, &seed);
+    orbi_parse(a->rec.seed, &seed);
     orbi_genome_t g;
     orbi_genome(seed, &g);
-    if (!s_view || strcmp(s_seed, s_pet.seed))
-    {
-        if (s_view)
-            orbi_view_delete(s_view);
-        snprintf(s_seed, sizeof(s_seed), "%s", s_pet.seed);
-        int size = board_info()->width * 28 / 100;
-        if (size > 140)
-            size = 140;
-        s_view = orbi_view_create(s_hero, &g, size);
-        if (s_view)
-            lv_obj_center(orbi_view_root(s_view));
-    }
-    if (s_view)
-        orbi_view_mood(s_view, mood(&s_pet));
-    for (int i = 0; i < 5; i++)
-        lv_obj_set_state(s_controls[i], LV_STATE_DISABLED, false);
-    lv_obj_set_state(s_controls[2], LV_STATE_DISABLED, s_pet.asleep != 0);
-    lv_obj_set_state(s_controls[3], LV_STATE_DISABLED, s_pet.asleep != 0 || s_pet.energy < 10);
-    lv_label_set_text_fmt(s_name, "%s  /  LV %d", g.name, 1 + (int)sqrt((double)s_pet.xp / 40));
-    int days = s_pet.born > 0 ? (int)(((int64_t)time(NULL) - s_pet.born) / 86400) : 0;
-    if (days < 0)
-        days = 0;
-    const char *stage = days < 1 ? "Cucciolo" : days < 7 ? "Giovane" : "Adulto";
-    lv_label_set_text_fmt(s_status, "%s - nato su %s\n%s", stage, s_pet.origin,
-                          s_pet.asleep        ? "Sta riposando"
-                          : s_pet.hunger > 80 ? "Ha fame"
-                          : s_pet.energy < 20 ? "Ha bisogno di riposo"
-                                              : "Toccalo per una coccola");
-    lv_label_set_text_fmt(s_needs, "Sazieta %d%%   Energia %d%%\nGioia %d%%", (int)(100 - s_pet.hunger),
-                          (int)s_pet.energy, (int)s_pet.joy);
+    a->look = look_of(&a->rec);
+    lv_label_set_text_fmt(S.hud_name, "%s  LV %d", g.name, a->look.level);
+    lv_label_set_text_fmt(S.hud_info, "%s %s - %s", pet_species_name(a->look.species), pet_variant_name(&a->look),
+                          a->rec.asleep ? "dorme" : pet_stage_name(a->look.stage));
+    lv_bar_set_value(S.bars[0], 100 - a->rec.hunger, LV_ANIM_OFF);
+    lv_bar_set_value(S.bars[1], a->rec.energy, LV_ANIM_OFF);
+    lv_bar_set_value(S.bars[2], a->rec.joy, LV_ANIM_OFF);
 }
-static lv_obj_t *label(lv_obj_t *p, uint32_t color)
+
+/* Diff the active pets with the actors: arrivals enter, departures leave. */
+static void sync_pets(bool first)
 {
-    lv_obj_t *l = lv_label_create(p);
-    lv_obj_set_width(l, LV_PCT(100));
-    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    pet_record_t list[PET_SLOTS_VISIBLE];
+    int n = pet_list(list, PET_SLOTS_VISIBLE);
+    pet_record_t cur;
+    if (pet_current(&cur))
+        snprintf(S.selected, sizeof(S.selected), "%s", cur.seed);
+    for (int i = 0; i < ACTORS; i++)
+    {
+        actor_t *a = &S.actors[i];
+        if (!a->used)
+            continue;
+        bool found = false;
+        for (int j = 0; j < n; j++)
+            if (!strcmp(list[j].seed, a->rec.seed))
+            {
+                found = true;
+                bool level_up = pet_level(list[j].xp) > pet_level(a->rec.xp);
+                a->rec = list[j];
+                if (level_up)
+                {
+                    a->look = look_of(&a->rec);
+                    a->drawn_pose = -1;
+                    fx_spawn(ICON_STAR, actor_x(a) + S.S / 2, S.ground_y - S.S, 0, -2, 16);
+                }
+            }
+        if (!found && a->state != A_EXIT)
+        {
+            a->state = A_EXIT;
+            a->target = -S.S * 16;
+            S.portal_ticks = 60;
+            lv_obj_set_hidden(S.portal, false);
+            lv_obj_set_pos(S.portal, S.margin / 2 - S.S / 4, S.ground_y - S.S);
+        }
+    }
+    /* Selected first, then guests, up to three in the scene. */
+    for (int pass = 0; pass < 2; pass++)
+        for (int j = 0; j < n; j++)
+        {
+            if ((pass == 0) != !strcmp(list[j].seed, S.selected))
+                continue;
+            bool shown = false;
+            for (int i = 0; i < ACTORS; i++)
+                shown |= S.actors[i].used && !strcmp(S.actors[i].rec.seed, list[j].seed);
+            if (!shown)
+                actor_add(&list[j], pet_take_arrival(list[j].seed) || !first);
+        }
+    hud_update();
+}
+
+static void orbi_sync(void)
+{
+    bool present = link_orbit_present();
+    if (present && !S.orbi)
+    {
+        orbi_genome_t g;
+        orbi_genome(ORBI_FATHER, &g);
+        S.orbi = orbi_view_create(S.screen, &g, S.S * 2 / 3);
+        if (S.orbi)
+        {
+            S.orbi_root = orbi_view_root(S.orbi);
+            lv_obj_align(S.orbi_root, LV_ALIGN_TOP_MID, 0, S.H * 18 / 100);
+            orbi_view_mood(S.orbi, ORBI_LOVE);
+            for (int i = 0; i < ACTORS; i++)
+                if (S.actors[i].used && S.actors[i].state == A_IDLE)
+                    S.actors[i].timer = 1;
+        }
+    }
+    else if (!present && S.orbi)
+    {
+        lv_obj_delete(S.orbi_root);
+        S.orbi = NULL;
+        S.orbi_root = NULL;
+    }
+}
+
+static bool touching(void)
+{
+    for (lv_indev_t *i = lv_indev_get_next(NULL); i; i = lv_indev_get_next(i))
+        if (lv_indev_get_state(i) == LV_INDEV_STATE_PRESSED)
+            return true;
+    return false;
+}
+
+static void tick(lv_timer_t *t)
+{
+    (void)t;
+    if (!S.screen || power_screen() != POWER_SCREEN_ON || S.menu || touching())
+        return;
+    S.ticks++;
+    if (S.ticks % 15 == 0)
+    {
+        sync_pets(false);
+        orbi_sync();
+    }
+    if (S.ticks % 9000 == 0)
+    {
+        weather_refresh(1800);
+        sky_paint();
+    }
+    weather_tick();
+    for (int i = 0; i < ACTORS; i++)
+        if (S.actors[i].used)
+            actor_tick(&S.actors[i]);
+    fx_tick();
+    if (S.portal_ticks > 0 && --S.portal_ticks == 0)
+        lv_obj_set_hidden(S.portal, true);
+    else if (S.portal_ticks > 0)
+        lv_obj_set_style_border_opa(S.portal, (lv_opa_t)(120 + (S.ticks % 8) * 15), 0);
+}
+
+/* ------------------------------------------------------------- actions */
+
+static void action(lv_event_t *e)
+{
+    const char *what = lv_event_get_user_data(e);
+    actor_t *a = selected_actor();
+    if (!a)
+        return;
+    command(a->rec.seed, what, false);
+    pet_current(&a->rec);
+    a->state = A_ACT;
+    a->timer = 30;
+    a->act_pose = PET_POSE_HAPPY;
+    int x = actor_x(a) + (a->dir > 0 ? S.S * 3 / 4 : 0), y = S.ground_y - S.S / 2;
+    if (!strcmp(what, "feed") || !strcmp(what, "snack"))
+    {
+        a->act_pose = PET_POSE_EAT;
+        fx_spawn(ICON_FOOD, x, y - S.S / 2, 0, 2, 10);
+    }
+    else if (!strcmp(what, "play"))
+        fx_spawn(ICON_BALL, x, y - S.S / 2, a->dir * 3, -3, 16);
+    else if (!strcmp(what, "wash"))
+        for (int i = 0; i < 3; i++)
+            fx_spawn(ICON_DROP, actor_x(a) + i * S.S / 3, S.ground_y - S.S, 0, 1 + i % 2, 14);
+    else if (!strcmp(what, "sleep"))
+        a->state = A_IDLE;
+    else if (!strcmp(what, "train"))
+        fx_spawn(ICON_STAR, x, y - S.S / 2, 0, -2, 16);
+    hearts(a, 1);
+    hud_update();
+}
+
+static void menu_close(lv_event_t *e)
+{
+    (void)e;
+    if (S.menu)
+        lv_obj_delete(S.menu);
+    S.menu = NULL;
+}
+
+static void menu_action(lv_event_t *e)
+{
+    action(e);
+    menu_close(e);
+}
+
+static void menu_next(lv_event_t *e)
+{
+    pet_record_t list[PET_SLOTS_VISIBLE];
+    int n = pet_list(list, PET_SLOTS_VISIBLE);
+    for (int i = 0; i < n; i++)
+        if (!strcmp(list[i].seed, S.selected))
+        {
+            pet_select(list[(i + 1) % n].seed);
+            break;
+        }
+    menu_close(e);
+    sync_pets(false);
+}
+
+static void menu_company(lv_event_t *e)
+{
+    cJSON *j = cJSON_CreateObject();
+    cJSON_AddStringToObject(j, "action", "company");
+    cJSON_AddStringToObject(j, "seed", S.selected);
+    cJSON_AddBoolToObject(j, "on", lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED));
+    const char *error;
+    cJSON_Delete(pet_command(j, &error));
+    cJSON_Delete(j);
+}
+
+static void menu_open(lv_event_t *e)
+{
+    (void)e;
+    actor_t *a = selected_actor();
+    if (S.menu || !a)
+        return;
+    S.menu = lv_obj_create(S.screen);
+    lv_obj_remove_style_all(S.menu);
+    lv_obj_set_size(S.menu, S.W, S.H);
+    lv_obj_set_style_bg_color(S.menu, ui_color(0x060B12), 0);
+    lv_obj_set_style_bg_opa(S.menu, LV_OPA_COVER, 0);
+    lv_obj_t *page = ui_page(S.menu, "Il tuo child");
+    ui_button(page, "Chiudi", 0x24415C, menu_close, NULL);
+    ui_button(page, "Snack", 0x245544, menu_action, "snack");
+    ui_button(page, "Allenamento", 0x493663, menu_action, "train");
+
+    /* Personality: revealed qualities, the others still to discover. */
+    uint64_t seed;
+    orbi_parse(a->rec.seed, &seed);
+    int days = a->rec.born > 0 ? (int)((time(NULL) - a->rec.born) / 86400) : 0;
+    pet_quality_t q[PET_TRAITS];
+    int order[PET_TRAITS];
+    int shown = pet_qualities(seed, a->traits, a->look.level, days < 0 ? 0 : days, q, order);
+    char text[420];
+    int len = snprintf(text, sizeof(text), "%s %s%s%s - %s, nato su %s.\n\nPERSONALITA'\n", pet_species_name(a->look.species),
+                       pet_variant_name(&a->look), a->look.mark ? " " : "", pet_mark_name(a->look.mark),
+                       pet_stage_name(a->look.stage), a->rec.origin);
+    for (int i = 0; i < PET_TRAITS && len < (int)sizeof(text) - 80; i++)
+        len += i < shown ? snprintf(text + len, sizeof(text) - len, "%s: %s\n", q[order[i]].name, q[order[i]].about)
+                         : snprintf(text + len, sizeof(text) - len, "??? - passate altro tempo insieme\n");
+    ui_text(page, text, false);
+
+    /* Discovered breeds. */
+    uint16_t keys[64];
+    int n = pet_dex(keys, 64), total = 0;
+    for (int s = 0; s < PET_SPECIES; s++)
+        total += pet_variant_count(s);
+    char title[64];
+    snprintf(title, sizeof(title), "RAZZE SCOPERTE: %d", n);
+    ui_text(page, title, false);
+    lv_obj_t *grid = lv_obj_create(page);
+    lv_obj_remove_style_all(grid);
+    lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_gap(grid, 6, 0);
+    for (int i = 0; i < n; i++)
+    {
+        pet_look_t l = {.species = (uint8_t)(keys[i] >> 8), .variant = (uint8_t)((keys[i] >> 4) & 15),
+                        .mark = (uint8_t)(keys[i] & 15), .growth = 255, .level = 15, .stage = 2};
+        sprite_new(grid, &l, 2, PET_POSE_IDLE, 0);
+    }
+    (void)total;
+    ui_text(page, "Ogni child che nasce o arriva su questo device aggiunge la sua razza.", true);
+    ui_button(page, "Altro child sul device", 0x26364D, menu_next, NULL);
+    ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_BLUE, "Piccola compagnia", pet_company(), menu_company, NULL);
+    ui_text(page, "Viaggi: Orbit > Ecosistema > Children. Aspetto, personalita e progressi viaggiano con lui.", true);
+}
+
+static lv_obj_t *round_button(lv_obj_t *parent, icon_t icon, lv_event_cb_t cb, void *data, int size)
+{
+    lv_obj_t *b = lv_button_create(parent);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, size, size);
+    lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(b, ui_color(0x111A26), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_80, 0);
+    lv_obj_set_style_border_color(b, ui_color(0x34C6F4), 0);
+    lv_obj_set_style_border_width(b, 1, 0);
+    lv_obj_set_style_bg_color(b, ui_color(0x1F2C3D), LV_STATE_PRESSED);
+    lv_obj_t *i = icon_new(b, icon, size >= 52 ? 3 : 2);
+    if (i)
+        lv_obj_center(i);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, data);
+    lv_port_set_focusable(b);
+    return b;
+}
+
+static lv_obj_t *hud_label(int y, const lv_font_t *font, uint32_t color)
+{
+    lv_obj_t *l = lv_label_create(S.screen);
+    lv_obj_set_style_text_font(l, font, 0);
     lv_obj_set_style_text_color(l, ui_color(color), 0);
-    lv_obj_set_style_text_font(l, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(l, S.W * 7 / 10);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
     return l;
 }
+
 static void create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
+    int64_t t0 = esp_timer_get_time();
     if (!pet_init())
         ui_toast("Archivio child non disponibile: riprova");
+    memset(&S, 0, sizeof(S));
+    const board_info_t *b = board_info();
+    S.screen = screen;
+    S.W = b->width;
+    S.H = b->height;
+    S.k = S.W >= 300 ? 3 : 2;
+    S.S = PET_GRID * S.k;
+    S.ground_y = S.H * 68 / 100;
+    S.margin = b->round ? S.W / 9 : 8;
+    lv_obj_set_scrollable(screen, false);
     lv_obj_set_style_bg_color(screen, ui_color(0x060B12), 0);
-    s_page = ui_page(screen, "Orbi / il tuo child");
-    s_name = label(s_page, 0xEEF4FB);
-    lv_obj_set_style_text_font(s_name, ui_font_title, 0);
-    s_hero = lv_obj_create(s_page);
-    lv_obj_remove_style_all(s_hero);
-    int w = board_info()->width;
-    lv_obj_set_size(s_hero, LV_PCT(100), w * 65 / 100);
-    lv_obj_set_scrollable(s_hero, false);
-    lv_obj_set_style_bg_color(s_hero, ui_color(0x111A26), 0);
-    lv_obj_set_style_bg_opa(s_hero, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(s_hero, 24, 0);
-    lv_obj_set_style_border_width(s_hero, 1, 0);
-    lv_obj_set_style_border_color(s_hero, ui_color(0x34C6F4), 0);
-    lv_obj_set_clickable(s_hero, true);
-    lv_obj_add_event_cb(s_hero, command, LV_EVENT_SHORT_CLICKED, "pet");
-    lv_port_set_focusable(s_hero);
-    s_status = label(s_page, 0x8B9AB0);
-    s_needs = label(s_page, 0x34C6F4);
-    s_controls[0] = s_hero;
-    s_controls[1] = ui_button(s_page, "Coccola", 0x24415C, command, "pet");
-    s_controls[2] = ui_button(s_page, "Dai da mangiare", 0x245544, command, "feed");
-    s_controls[3] = ui_button(s_page, "Gioca", 0x493663, command, "play");
-    s_controls[4] = ui_button(s_page, "Nanna / sveglia", 0x26364D, command, "sleep");
-    ui_button(s_page, "Altri child sul device", 0x26364D, next, NULL);
-    ui_switch_row(s_page, LV_SYMBOL_EYE_OPEN, UI_COLOR_BLUE, "Piccola compagnia", pet_company(), command, "company");
-    ui_text(s_page,
-            "Per farlo viaggiare: Orbit > Ecosistema > Children. Il suo aspetto e i suoi progressi viaggiano con lui.",
-            true);
-    s_seed[0] = 0;
-    s_timer = lv_timer_create(refresh, 2000, NULL);
-    refresh(NULL);
+
+    S.sky = box(screen, 0x4FA8F0, LV_OPA_COVER);
+    lv_obj_set_size(S.sky, S.W, S.ground_y);
+    lv_obj_set_style_bg_grad_dir(S.sky, LV_GRAD_DIR_VER, 0);
+    S.sun = box(screen, 0xFFD54A, LV_OPA_COVER);
+    lv_obj_set_size(S.sun, S.W / 9, S.W / 9);
+    lv_obj_set_style_radius(S.sun, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_pos(S.sun, S.W * 66 / 100, S.H * 27 / 100);
+    for (int i = 0; i < 3; i++)
+    {
+        S.clouds[i] = box(screen, 0xFFFFFF, LV_OPA_80);
+        lv_obj_set_size(S.clouds[i], S.W / 5 + i * S.W / 20, S.W / 18);
+        lv_obj_set_style_radius(S.clouds[i], S.W / 36, 0);
+        lv_obj_set_pos(S.clouds[i], i * S.W / 3, S.H * (30 + i * 7) / 100);
+    }
+    S.flash = box(screen, 0xFFFFFF, LV_OPA_70);
+    lv_obj_set_size(S.flash, S.W, S.ground_y);
+    for (int i = 0; i < DROPS; i++)
+    {
+        S.drops[i] = box(screen, 0xA8C8F0, LV_OPA_80);
+        lv_obj_set_pos(S.drops[i], (int)(esp_random() % S.W), (int)(esp_random() % S.ground_y));
+    }
+    S.ground = box(screen, 0x6CC453, LV_OPA_COVER);
+    lv_obj_set_size(S.ground, S.W, S.H - S.ground_y);
+    lv_obj_set_pos(S.ground, 0, S.ground_y);
+    lv_obj_set_style_bg_grad_dir(S.ground, LV_GRAD_DIR_VER, 0);
+    for (int i = 0; i < 9; i++)
+    {
+        lv_obj_t *tuft = box(S.ground, 0x2E6E2C, LV_OPA_50);
+        lv_obj_set_size(tuft, S.k * 2, S.k * 2);
+        lv_obj_set_pos(tuft, (int)((uint32_t)(i * 7919 + 13) % S.W), S.k * (2 + (i * 5) % 9));
+    }
+    S.portal = box(screen, 0x34C6F4, LV_OPA_TRANSP);
+    lv_obj_set_size(S.portal, S.S / 2, S.S);
+    lv_obj_set_style_radius(S.portal, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(S.portal, S.k * 2, 0);
+    lv_obj_set_style_border_color(S.portal, ui_color(0x7EE8FF), 0);
+    lv_obj_set_hidden(S.portal, true);
+
+    S.hud_name = hud_label(b->round ? S.H / 12 : 10, ui_font_title, 0xFFFFFF);
+    S.hud_info = hud_label((b->round ? S.H / 12 : 10) + 28, UI_FONT_SMALL, 0xEEF4FB);
+    static const uint32_t BAR[3] = {0xF2C14E, 0x5AC8FA, 0xFF5D7A};
+    int bw = S.W * (b->round ? 16 : 22) / 100;
+    for (int i = 0; i < 3; i++)
+    {
+        S.bars[i] = lv_bar_create(screen);
+        lv_obj_set_size(S.bars[i], bw, 6);
+        lv_bar_set_range(S.bars[i], 0, 100);
+        lv_obj_set_style_bg_color(S.bars[i], ui_color(0x111A26), 0);
+        lv_obj_set_style_bg_opa(S.bars[i], LV_OPA_70, 0);
+        lv_obj_set_style_bg_color(S.bars[i], ui_color(BAR[i]), LV_PART_INDICATOR);
+        lv_obj_align(S.bars[i], LV_ALIGN_TOP_MID, (i - 1) * (bw + 8), (b->round ? S.H / 12 : 10) + 56);
+    }
+
+    /* Actions on the ground. */
+    int size = S.W >= 400 ? 54 : S.W >= 300 ? 48 : 40;
+    lv_obj_t *row = lv_obj_create(screen);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, S.W * (b->round ? 80 : 94) / 100, size + 4);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, S.ground_y + (S.H - S.ground_y - size) * (b->round ? 30 : 50) / 100);
+    round_button(row, ICON_FOOD, action, "feed", size);
+    round_button(row, ICON_BALL, action, "play", size);
+    round_button(row, ICON_DROP, action, "wash", size);
+    round_button(row, ICON_MOON, action, "sleep", size);
+    round_button(row, ICON_MORE, menu_open, NULL, size);
+
+    sky_paint();
+    weather_refresh(1800);
+    sync_pets(true);
+    orbi_sync();
+    S.timer = lv_timer_create(tick, TICK_MS, NULL);
+    ESP_LOGI(TAG, "scene ready in %d ms, k=%d", (int)((esp_timer_get_time() - t0) / 1000), S.k);
 }
+
 static void destroy(void)
 {
-    if (s_timer)
-    {
-        lv_timer_delete(s_timer);
-    }
-    s_timer = NULL;
-    s_view = NULL;
-    s_page = NULL;
-    s_seed[0] = 0;
+    if (S.timer)
+        lv_timer_delete(S.timer);
+    S.timer = NULL;
+    S.screen = NULL;   /* objects go with the screen */
+    S.menu = NULL;
+    S.orbi = NULL;
+    for (int i = 0; i < FX; i++)
+        S.fx[i].o = NULL;
 }
+
 const app_t pet_app = {.id = "orbi",
                        .name = "Orbi / Children",
                        .icon = LV_SYMBOL_IMAGE,
@@ -200,7 +947,15 @@ const app_t pet_app = {.id = "orbi",
                        .flags = APP_FLAG_HIDDEN,
                        .create = create,
                        .destroy = destroy,
-                       .about = "Il child nato su questo device. Coccole, cibo, gioco e viaggi con Orbit."};
+                       .about = "Il child nato su questo device. Coccole, cibo, gioco, bagnetto e viaggi con Orbit."};
+
+/* ----------------------------------------------------- menu and corner */
+
+static void open(lv_event_t *e)
+{
+    (void)e;
+    app_open("orbi", NULL);
+}
 
 void pet_cta(lv_obj_t *parent)
 {
@@ -224,34 +979,40 @@ void pet_cta(lv_obj_t *parent)
         orbi_parse(p.seed, &seed);
         orbi_genome_t g;
         orbi_genome(seed, &g);
-        lv_label_set_text_fmt(title, "%s\nApri il tuo child  >", g.name);
-        orbi_view_t *v = orbi_view_create(card, &g, 34);
-        if (v)
+        pet_look_t l = look_of(&p);
+        lv_label_set_text_fmt(title, "%s - %s\nApri il tuo child  >", g.name, pet_species_name(l.species));
+        lv_obj_t *s = sprite_new(card, &l, 2, PET_POSE_IDLE, mood_of(&p));
+        if (s)
         {
-            orbi_view_static(v);
-            lv_obj_align(orbi_view_root(v), LV_ALIGN_LEFT_MID, 2, 0);
+            lv_obj_set_clickable(s, false);
+            lv_obj_align(s, LV_ALIGN_LEFT_MID, -6, 0);
         }
     }
     else
         lv_label_set_text(title, "Children\nApri  >");
 }
+
 void pet_thumbnail(lv_obj_t *parent, int width)
 {
     pet_record_t p;
     if (!pet_current(&p))
         return;
-    uint64_t seed;
-    orbi_parse(p.seed, &seed);
-    orbi_genome_t g;
-    orbi_genome(seed, &g);
     lv_obj_clean(parent);
-    orbi_view_t *v = orbi_view_create(parent, &g, width);
-    if (v)
+    pet_look_t l = look_of(&p);
+    int k = width / PET_GRID;
+    lv_obj_t *s = sprite_new(parent, &l, k < 1 ? 1 : k, PET_POSE_IDLE, mood_of(&p));
+    if (s)
     {
-        orbi_view_static(v);
-        lv_obj_center(orbi_view_root(v));
+        lv_obj_set_clickable(s, false);
+        lv_obj_center(s);
     }
 }
+
+static lv_obj_t *s_ambient;
+static char s_ambient_seed[17];
+static int s_ambient_frame;
+static pet_look_t s_ambient_look;
+
 static void ambient(lv_timer_t *timer)
 {
     (void)timer;
@@ -266,36 +1027,28 @@ static void ambient(lv_timer_t *timer)
             lv_obj_set_hidden(s_ambient, true);
         return;
     }
-    if (!s_ambient || strcmp(s_small_seed, p.seed))
+    int k = board_info()->width >= 400 ? 2 : 1;
+    if (!s_ambient || strcmp(s_ambient_seed, p.seed))
     {
         if (s_ambient)
             lv_obj_delete(s_ambient);
-        s_ambient = lv_obj_create(lv_layer_top());
-        lv_obj_remove_style_all(s_ambient);
-        int size = board_info()->width * 13 / 100;
-        if (size > 60)
-            size = 60;
-        if (size < 28)
-            size = 28;
-        lv_obj_set_size(s_ambient, size * 3 / 2, size * 2);
-        lv_obj_set_scrollable(s_ambient, false);
+        s_ambient_look = look_of(&p);
         /* Decorative only: cannot intercept a swipe or a button underneath. */
+        s_ambient = canvas_new(lv_layer_top(), PET_GRID, PET_GRID, k);
+        snprintf(s_ambient_seed, sizeof(s_ambient_seed), "%s", s_ambient ? p.seed : "");
+        if (!s_ambient)
+            return;
         lv_obj_set_clickable(s_ambient, false);
-        uint64_t seed;
-        orbi_parse(p.seed, &seed);
-        orbi_genome_t g;
-        orbi_genome(seed, &g);
-        s_small = orbi_view_create(s_ambient, &g, size);
-        if (s_small)
-            lv_obj_center(orbi_view_root(s_small));
-        snprintf(s_small_seed, sizeof(s_small_seed), "%s", s_small ? p.seed : "");
-        int inset = board_info()->round ? board_info()->width / 7 : 6;
+        int inset = board_info()->round ? board_info()->width / 7 : 4;
         lv_obj_align(s_ambient, LV_ALIGN_BOTTOM_RIGHT, -inset, -inset);
     }
     lv_obj_set_hidden(s_ambient, false);
-    if (s_small)
-        orbi_view_mood(s_small, mood(&p));
+    uint32_t pal[PET_COLORS];
+    pet_palette(&s_ambient_look, mood_of(&p), pal);
+    pet_draw(&s_ambient_look, p.asleep ? PET_POSE_SLEEP : PET_POSE_IDLE, (uint32_t)(s_ambient_frame++), false, s_grid);
+    canvas_paint(s_ambient, s_grid, PET_GRID, PET_GRID, pal, true);
 }
+
 void pet_companion_start(void)
 {
     lv_timer_create(ambient, 1500, NULL);

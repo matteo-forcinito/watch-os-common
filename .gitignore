@@ -4,3 +4,4 @@ sdkconfig
 sdkconfig.old
 dependencies.lock
 __pycache__/
+/build-preview/

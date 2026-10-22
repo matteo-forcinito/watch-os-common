@@ -472,8 +472,17 @@ static esp_err_t scene_post(httpd_req_t *req)
     return send_json(req, cJSON_CreateObject());
 }
 
+static _Atomic int64_t s_orbit_seen;   /* Orbit polls the events while it is connected */
+
+bool link_orbit_present(void)
+{
+    int64_t seen = atomic_load(&s_orbit_seen);
+    return seen && esp_timer_get_time() - seen < 30LL * 1000 * 1000;
+}
+
 static esp_err_t events_get(httpd_req_t *req)
 {
+    atomic_store(&s_orbit_seen, esp_timer_get_time());
     int since = query_int(req, "since", -1);
     cJSON *out = cJSON_CreateObject();
     cJSON *list = cJSON_AddArrayToObject(out, "events");

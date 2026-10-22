@@ -17,6 +17,8 @@ void link_event_text(const char *type, const char *value);
 bool link_scene_post(cJSON *json);
 /* LVGL task only: keeps the resident child out of modal/remote scenes. */
 bool link_scene_busy(void);
+/* Orbit (the companion) polled this device in the last 30 s. */
+bool link_orbit_present(void);
 
 /* Shows or hides the "microphone on" indicator. Any task. */
 void link_scene_mic(bool on);

@@ -38,8 +38,8 @@ static size_t lengths[2], pending_len;
 static int device, fail_commit;
 static unsigned serial=200;
 int nvs_open(const char*a,int b,int*c){(void)a;(void)b;*c=device;return 0;}
-int nvs_get_blob(int h,const char*k,void*p,size_t*n){(void)k;if(!lengths[h])return ESP_ERR_NVS_NOT_FOUND;assert(*n>=lengths[h]);*n=lengths[h];memcpy(p,durable[h],*n);return 0;}
-int nvs_set_blob(int h,const char*k,const void*p,size_t n){(void)h;(void)k;assert(n<8192);memcpy(pending_blob,p,n);pending_len=n;return 0;}
+int nvs_get_blob(int h,const char*k,void*p,size_t*n){if(strcmp(k,"state")||!lengths[h])return ESP_ERR_NVS_NOT_FOUND;assert(*n>=lengths[h]);*n=lengths[h];memcpy(p,durable[h],*n);return 0;}
+int nvs_set_blob(int h,const char*k,const void*p,size_t n){(void)h;if(strcmp(k,"state"))return 0;assert(n<8192);memcpy(pending_blob,p,n);pending_len=n;return 0;}
 int nvs_commit(int h){if(fail_commit)return 9;memcpy(durable[h],pending_blob,pending_len);lengths[h]=pending_len;return 0;}
 void nvs_close(int h){(void)h;}
 int esp_read_mac(uint8_t *m,int t){(void)t;memset(m,0,6);m[5]=(uint8_t)(device+1);return 0;}
@@ -93,6 +93,6 @@ for line in raw.splitlines():
 compiler=sorted((vs/'VC/Tools/MSVC').glob('*/bin/Hostx64/x64/cl.exe'))[-1]
 subprocess.run([str(compiler),'/nologo','/std:c11','/W3','/D_CRT_SECURE_NO_WARNINGS',
                 '/I'+str(stub),'/I'+str(json_dir),'/I'+str(root/'components/orbi/include'),
-                str(stub/'test.c'),str(root/'components/orbi/orbi_genome.c'),str(json_dir/'cJSON.c'),
+                str(stub/'test.c'),str(root/'components/orbi/orbi_genome.c'),str(root/'components/orbi/pet_sprite.c'),str(json_dir/'cJSON.c'),
                 '/Fe:'+str(stub/'pet_tests.exe')],env=env,cwd=stub,check=True)
 subprocess.run([str(stub/'pet_tests.exe')],check=True)

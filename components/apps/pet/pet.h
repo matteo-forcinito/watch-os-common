@@ -29,4 +29,11 @@ cJSON *pet_command(const cJSON *request, const char **error);
 void pet_cta(lv_obj_t *parent);
 void pet_thumbnail(lv_obj_t *parent, int width);
 void pet_companion_start(void);
+/* Active pets (copies); the scene diffs them to animate arrivals and departures. */
+int pet_list(pet_record_t *out, int max);
+/* True once for a pet that arrived from a journey since the page last looked. */
+bool pet_take_arrival(const char *seed);
+int pet_dex(uint16_t *keys, int max);
+/* Seed and genome traits of a record (curiosity, energy, sociability, appetite, playfulness). */
+void pet_traits(const pet_record_t *p, uint8_t out[5]);
 #endif
