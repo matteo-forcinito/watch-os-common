@@ -168,9 +168,24 @@ dallo stesso `POST /api/orbi`.
 1. **1.10.0** (questo lavoro): sprite procedurali, crescita, ambiente meteo,
    pagina nuova, più pet in scena, entrata/uscita, visita di Orbi, nuove
    azioni, personalità, razze scoperte, miniature nuove.
-2. **Companion 0.6**: porting Dart di `pet_sprite` con vettori di test
+2. **1.11 - Passatempo**
+   - **Viaggi ESP-NOW** device-device senza companion né Wi-Fi: stesso
+     protocollo a passi (`reserve` → `receive` → `depart` → `arrive` →
+     `forget`) incapsulato in frame ESP-NOW cifrati (PMK/LMK derivati
+     dall'accoppiamento Orbit), ritrasmissione con ack e timeout; la
+     scoperta dei vicini avviene sul canale del Wi-Fi corrente.
+   - **Ritorno a casa**: azione "Torna a casa" sul device ospite; il pet
+     conserva `origin` e riparte verso il device nativo (ESP-NOW se vicino,
+     altrimenti in coda finché Orbit non lo vede).
+   - **Visite**: un pet può andare "in visita" per un tempo limitato e
+     tornare da solo con un ricordo (oggetto o razza scoperta).
+   - **Minigiochi insieme** sulla scena: acchiapparella (tocco), salto con
+     knob/IMU, memory dei versi sui device con speaker; due device vicini
+     giocano in coppia via ESP-NOW (punteggi e premi in XP).
+   - Oggetti nell'ambiente (cuccia, ciotola, giochi) e ricordi dei viaggi.
+3. **Companion 0.6**: porting Dart di `pet_sprite` con vettori di test
    (hash delle griglie) e Children con gli animali nuovi.
-3. Dopo: oggetti nell'ambiente (cuccia, ciotola, giochi), stagioni, suoni
+4. Dopo: oggetti nell'ambiente (cuccia, ciotola, giochi), stagioni, suoni
    sui device con speaker, minigiochi con knob/IMU.
 
 ## Verifiche
