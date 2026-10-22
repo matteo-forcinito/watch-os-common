@@ -18,6 +18,7 @@
  */
 #include "apps_internal.h"
 #include "link_internal.h"
+#include "pet/pet.h"
 
 #include "core/lv_port.h"
 #include "core/settings.h"
@@ -424,7 +425,7 @@ static esp_err_t link_get(httpd_req_t *req)
     cJSON_AddNumberToObject(out, "version", 1);
     cJSON_AddStringToObject(out, "node", sys_nickname());
     cJSON *features = cJSON_AddArrayToObject(out, "features");
-    const char *always[] = {"scene", "events", "dial", "timer"};
+    const char *always[] = {"scene", "events", "dial", "timer", "pets"};
     for (size_t i = 0; i < sizeof(always) / sizeof(always[0]); i++)
     {
         cJSON_AddItemToArray(features, cJSON_CreateString(always[i]));
@@ -623,9 +624,22 @@ static esp_err_t voice_post(httpd_req_t *req)
     return send_json(req, cJSON_CreateObject());
 }
 
+static esp_err_t pets_get(httpd_req_t *req)
+{
+    cJSON *out=pet_snapshot();
+    return out?send_json(req,out):fail(req,"503 Service Unavailable","Archivio child non disponibile");
+}
+static esp_err_t pets_post(httpd_req_t *req)
+{
+    cJSON *in=read_json(req,2048); const char *error;
+    cJSON *out=pet_command(in,&error); cJSON_Delete(in);
+    return out?send_json(req,out):fail(req,"409 Conflict",error);
+}
 static void register_routes(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
+        {.uri = "/api/orbi", .method = HTTP_GET, .handler = pets_get},
+        {.uri = "/api/orbi", .method = HTTP_POST, .handler = pets_post},
         {.uri = "/api/link", .method = HTTP_GET, .handler = link_get},
         {.uri = "/api/link/scene", .method = HTTP_POST, .handler = scene_post},
         {.uri = "/api/link/events", .method = HTTP_GET, .handler = events_get},

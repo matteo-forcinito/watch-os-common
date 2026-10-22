@@ -6,6 +6,7 @@
 
 /* ---- apps (each in its own file) */
 extern const app_t alarms_app;
+extern const app_t pet_app;
 extern const app_t alarm_edit_app;      /* hidden: arg = alarm id (0 = new) */
 extern const app_t ring_app;            /* hidden: arg = alarm_t * (malloc, freed by it) */
 extern const app_t weather_app;

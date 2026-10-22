@@ -1,4 +1,5 @@
 #include "apps_internal.h"
+#include "pet/pet.h"
 
 #include "core/lv_port.h"
 #include "core/settings.h"
@@ -46,7 +47,7 @@ typedef struct
     extapp_t ext;              /* external */
 } launcher_item_t;
 
-enum { MENU_APPS, MENU_EXTERNAL, MENU_MARKET, MENU_WEB, MENU_SETTINGS, MENU_INFO, MENU_COUNT };
+enum { MENU_PET, MENU_APPS, MENU_EXTERNAL, MENU_MARKET, MENU_WEB, MENU_SETTINGS, MENU_INFO, MENU_COUNT };
 
 static const struct
 {
@@ -54,6 +55,7 @@ static const struct
     uint32_t color;
     const char *name;
 } MENU[MENU_COUNT] = {
+    {LV_SYMBOL_IMAGE, 0x34C6F4, "Il tuo child"},
     {LV_SYMBOL_LIST, UI_COLOR_BLUE, "App"},
     {LV_SYMBOL_DIRECTORY, UI_COLOR_PURPLE, "App esterne"},
     {LV_SYMBOL_DOWNLOAD, 0x8C7EFF, "Market"},
@@ -199,6 +201,7 @@ static void open_menu_entry(int entry)
 {
     switch (entry)
     {
+    case MENU_PET: app_open_app(&pet_app, NULL); break;
     case MENU_APPS: app_open_app(&launcher_apps_app, (void *)0); break;
     case MENU_EXTERNAL: app_open_app(&launcher_apps_app, (void *)1); break;
     case MENU_MARKET: app_open_app(&market_app, NULL); break;
@@ -318,6 +321,7 @@ static void menu_build(void)
         return;
     }
     int favorites = s_slot_count - MENU_COUNT;
+    pet_cta(s_menu);
     ui_section(s_menu, "PREFERITE");
     if (favorites > 0)
     {
@@ -345,6 +349,7 @@ static void menu_build(void)
     for (int i = 0; i < MENU_COUNT; i++)
     {
         const char *v = NULL;
+        if (i == MENU_PET) continue;
         if (i == MENU_APPS)
         {
             snprintf(value, sizeof(value), "%d", visible_apps());
@@ -416,6 +421,7 @@ static void select_slot(int index)
         lv_obj_delete(s_center_bubble);
     }
     s_center_bubble = ui_icon_bubble(s_center, slot_icon(index), slot_color(index), CENTER_ICON);
+    if (s_slots[index].menu && s_slots[index].entry == MENU_PET) pet_thumbnail(s_center_bubble, CENTER_ICON / 2);
     lv_obj_move_to_index(s_center_bubble, 0);
     lv_label_set_text(s_center_name, slot_name(index));
 }
@@ -1106,6 +1112,7 @@ void launcher_list_build(lv_obj_t *parent)
 {
     lv_obj_clean(parent);
     lv_obj_t *page = ui_page(parent, "App");
+    pet_cta(page);
     for (size_t i = 0; i < app_count(); i++)
     {
         const app_t *app = app_at(i);

@@ -15,6 +15,8 @@ void link_event_text(const char *type, const char *value);
 /* Draws the scene described by `json` (takes ownership) in the lvgl task.
  * False when the scene is unknown or the UI queue is full. Any task. */
 bool link_scene_post(cJSON *json);
+/* LVGL task only: keeps the resident child out of modal/remote scenes. */
+bool link_scene_busy(void);
 
 /* Shows or hides the "microphone on" indicator. Any task. */
 void link_scene_mic(bool on);

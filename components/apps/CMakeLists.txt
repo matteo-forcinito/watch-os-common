@@ -47,6 +47,8 @@ endif()
 idf_component_register(
     SRCS
         "apps.c"
+        "pet/pet_store.c"
+        "pet/pet_app.c"
         "shell/shell.c"
         "shell/watchface.c"
         "shell/launcher.c"
@@ -89,6 +91,7 @@ idf_component_register(
         companion
         hardware
         esp_pm
+        esp_hw_support
         esp_tinyusb
         esp_timer
         app_update

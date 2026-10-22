@@ -477,6 +477,7 @@ static void scene_dial(const job_t *j)
 /* Orbi the father, or a child when the companion sends its seed. Drawn by
  * components/orbi exactly like the companion draws it. */
 #define ORBI_FATHER_SEED 0x0d0000bb00000245ULL
+bool link_scene_busy(void) { return s_current != SCENE_NONE; }
 
 static orbi_mood_t orbi_mood_of(const job_t *j)
 {
@@ -538,7 +539,7 @@ static void scene_orbi(const job_t *j)
     {
         lv_obj_t *root = make_root(SCENE_ORBI, false);
         int w = screen_w(), h = screen_h();
-        int s = (w < h ? w : h) * 30 / 100;
+        int s = (w < h ? w : h) * 16 / 100;
         uint64_t seed = ORBI_FATHER_SEED;
         bool child = j->seed[0] != '\0' && orbi_parse(j->seed, &seed);
         orbi_genome_t g;

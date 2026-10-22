@@ -25,5 +25,7 @@ void orbi_view_look_free(orbi_view_t *view);
 void orbi_view_poke(orbi_view_t *view);
 /* The view is freed when its root object is deleted (or with this). */
 void orbi_view_delete(orbi_view_t *view);
+/* A menu thumbnail is a still image: no animation work while swiping. */
+void orbi_view_static(orbi_view_t *view);
 
 #endif

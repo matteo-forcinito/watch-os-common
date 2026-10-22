@@ -1,6 +1,7 @@
 #include "apps/apps.h"
 
 #include "apps_internal.h"
+#include "pet/pet.h"
 
 #if CONFIG_APPKIT_HOSTED
 #include "appkit.h"
@@ -29,6 +30,7 @@ void shell_create(void);
 
 /* Launcher order. Hidden apps (sub-pages) are registered too. */
 static const app_t *const s_apps[] = {
+    &pet_app,
     &alarms_app,
     &weather_app,
     &timer_app,
@@ -297,6 +299,7 @@ static void ask_close(const app_t *app)
 
 void apps_init(void)
 {
+    pet_init();
 #if CONFIG_WATCH_ECOS_PAIRING
     ecos_init();
     ecos_apps_init();   /* another device can ring this one */
@@ -345,6 +348,7 @@ void apps_init(void)
     /* Before the shell: the watch face asks for the next alarm as soon as it exists. */
     alarm_service_init(on_alarm);
     shell_create();
+    pet_companion_start();
 
     lv_subject_add_observer(state_subject(STATE_UPDATE), on_update_phase, NULL);
     lv_subject_add_observer(state_subject(STATE_UPDATE_PERCENT), on_update_percent, NULL);

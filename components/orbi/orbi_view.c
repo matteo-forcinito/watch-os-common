@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FRAME_MS 33
+#define FRAME_MS 66
 
 struct orbi_view
 {
@@ -105,6 +105,12 @@ static void apply_mood(orbi_view_t *v)
 static void tick(lv_timer_t *timer)
 {
     orbi_view_t *v = lv_timer_get_user_data(timer);
+    if (!lv_obj_is_visible(v->root)) return;
+    lv_area_t area; lv_obj_get_coords(v->root, &area);
+    lv_display_t *display=lv_obj_get_display(v->root);
+    if (area.x2<0 || area.y2<0 || area.x1>=lv_display_get_horizontal_resolution(display) || area.y1>=lv_display_get_vertical_resolution(display)) return;
+    for (lv_indev_t *input=lv_indev_get_next(NULL); input; input=lv_indev_get_next(input))
+        if (lv_indev_get_state(input)==LV_INDEV_STATE_PRESSED) return;
     v->t += FRAME_MS;
     int32_t W = v->W;
 
@@ -360,3 +366,4 @@ void orbi_view_delete(orbi_view_t *v)
 {
     lv_obj_delete(v->root);   /* frees v through on_delete */
 }
+void orbi_view_static(orbi_view_t *v) { lv_timer_pause(v->timer); }

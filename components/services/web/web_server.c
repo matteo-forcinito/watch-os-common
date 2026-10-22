@@ -977,7 +977,7 @@ void web_server_add_routes(void (*register_routes)(httpd_handle_t server))
 static esp_err_t start_httpd(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 104;
+    config.max_uri_handlers = 106;
     config.stack_size = 6144;
     config.uri_match_fn = httpd_uri_match_wildcard; /* folders like /pieno/... */
     config.lru_purge_enable = true;
