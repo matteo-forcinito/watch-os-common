@@ -1,7 +1,8 @@
 """Drivable car for testing Motore: an ELM327 adapter on TCP with a Renault
 Clio IV 1.2 (5 speed, MAP sensor, ISO 15765-4 CAN 11 bit 500 kbaud) behind it.
 
-    python clio_sim.py [port]          (default 35000, all interfaces)
+    python clio_sim.py [port] [--demo]  (default 35000, all interfaces;
+                                          --demo drives by itself: launch, shifts at 5500, brake)
 
 Keys (in this window):
     W  accelerator (hold or tap)      S  brake        C  clutch (toggle)
@@ -19,7 +20,9 @@ import sys
 import threading
 import time
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 35000
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+PORT = int(ARGS[0]) if ARGS else 35000
+DEMO = "--demo" in sys.argv
 
 # ---------------------------------------------------------------- the car
 GEAR_KMH = [0, 7.1, 13.0, 19.0, 25.0, 31.5]   # km/h at 1000 rpm per gear (Clio IV 1.2)
@@ -256,6 +259,24 @@ def serve():
 status = {"client": None, "requests": 0, "first": True}
 
 
+def autopilot():
+    """Demo driver: full throttle through the gears, shift at 5500, brake to a stop."""
+    with car.lock:
+        car.last_press = time.time()
+        if getattr(car, "braking", False):
+            car.throttle, car.brake, car.gear = 0.0, 1.0, 0
+            if car.speed < 1:
+                car.braking = False
+            return
+        if car.gear == 0:
+            car.gear = 1
+        car.throttle = 1.0
+        if car.rpm >= 5500 and car.gear < 5:
+            car.gear += 1
+        elif car.gear == 5 and car.speed > 150:
+            car.braking = True
+
+
 def main():
     threading.Thread(target=serve, daemon=True).start()
     print(__doc__.split("\n\n")[1])
@@ -287,6 +308,8 @@ def main():
                     return
             if k == "e" and car.freeze is None:
                 car.freeze = car.snapshot()
+        if DEMO:
+            autopilot()
         now = time.time()
         car.step(now - last)
         last = now

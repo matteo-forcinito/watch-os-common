@@ -50,11 +50,17 @@ typedef struct
     uint32_t revision;
     lv_timer_t *timer;
     /* drive */
+    lv_obj_t *digit[3][7];
+    uint8_t digit_bits[3];
+    lv_obj_t *rpm_seg[48];
+    int rpm_lit;
     lv_obj_t *arc, *speed, *rpm, *coolant, *battery, *fuel, *mil, *status, *gear;
     lv_obj_t *led[15];
     float shown_rpm;
     uint16_t shift;
+    mt_settings_t settings;   /* copy for the drive view: never read under mt_lock() */
     int lit, blink;
+    uint32_t arc_color;
     /* live: value label per value */
     lv_obj_t *live[MT_VALUES];
     int last_found;
@@ -186,19 +192,79 @@ static void set_text(lv_obj_t *l, const char *text)
     }
 }
 
-static lv_obj_t *ring(lv_obj_t *root, int32_t size, int32_t from, int32_t to, int32_t width, uint32_t color)
+/* Speed in 7-segment digits: big and sharp at any size, and a change of
+ * number redraws only the segments that switch (a scaled font re-renders
+ * the whole text through a transformed layer: ~300 ms a frame). */
+#define SEG_DIGITS 3
+
+static const uint8_t s_seven[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};   /* bits a..g */
+
+static void seven_build(lv_obj_t *root, lv_obj_t *seg[SEG_DIGITS][7], int32_t height, int32_t y)
 {
-    lv_obj_t *a = lv_arc_create(root);
-    lv_obj_set_size(a, size, size);
-    lv_obj_center(a);
-    lv_arc_set_bg_angles(a, from, to);
-    lv_obj_remove_style(a, NULL, LV_PART_KNOB);
-    lv_obj_remove_style(a, NULL, LV_PART_INDICATOR);
-    lv_obj_set_clickable(a, false);
-    lv_obj_set_style_arc_width(a, width, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(a, ui_color(color), LV_PART_MAIN);
-    lv_obj_set_style_arc_rounded(a, false, LV_PART_MAIN);
-    return a;
+    int32_t w = height * 55 / 100, t = height / 8, gap = height / 6;
+    int32_t total = SEG_DIGITS * w + (SEG_DIGITS - 1) * gap;
+    for (int d = 0; d < SEG_DIGITS; d++)
+    {
+        int32_t x0 = -total / 2 + d * (w + gap), y0 = y - height / 2, half = height / 2;
+        /* a top, b top-right, c bottom-right, d bottom, e bottom-left, f top-left, g middle */
+        const int32_t box[7][4] = {
+            {x0 + t, y0, w - 2 * t, t}, {x0 + w - t, y0 + t, t, half - t - t / 2}, {x0 + w - t, y0 + half + t / 2, t, half - t - t / 2},
+            {x0 + t, y0 + height - t, w - 2 * t, t}, {x0, y0 + half + t / 2, t, half - t - t / 2}, {x0, y0 + t, t, half - t - t / 2},
+            {x0 + t, y0 + half - t / 2, w - 2 * t, t},
+        };
+        for (int s = 0; s < 7; s++)
+        {
+            lv_obj_t *o = lv_obj_create(root);
+            lv_obj_remove_style_all(o);
+            lv_obj_set_size(o, box[s][2], box[s][3]);
+            lv_obj_align(o, LV_ALIGN_CENTER, box[s][0] + box[s][2] / 2, box[s][1] + box[s][3] / 2);
+            lv_obj_set_style_radius(o, t / 2, 0);
+            lv_obj_set_style_bg_color(o, lv_color_white(), 0);
+            lv_obj_set_style_bg_opa(o, LV_OPA_10, 0);
+            lv_obj_set_clickable(o, false);
+            seg[d][s] = o;
+        }
+    }
+}
+
+/* value < 0: dashes. Leading zeros stay as faint "ghost" segments. */
+static void seven_set(lv_obj_t *seg[SEG_DIGITS][7], uint8_t shown[SEG_DIGITS], int value)
+{
+    for (int d = 0; d < SEG_DIGITS; d++)
+    {
+        int place = SEG_DIGITS - 1 - d;
+        int divisor = place == 0 ? 1 : place == 1 ? 10 : 100;
+        uint8_t bits = value < 0 ? 0x40 : (value >= divisor || place == 0) ? s_seven[(value / divisor) % 10] : 0;
+        if (bits == shown[d])
+        {
+            continue;
+        }
+        for (int s = 0; s < 7; s++)
+        {
+            bool on = (bits >> s) & 1, was = (shown[d] >> s) & 1;
+            if (on != was)
+            {
+                lv_obj_set_style_bg_opa(seg[d][s], on ? LV_OPA_COVER : LV_OPA_10, 0);
+            }
+        }
+        shown[d] = bits;
+    }
+}
+
+#define RPM_SEGS   48
+#define RPM_MAX    7000.0f
+
+static lv_obj_t *dot(lv_obj_t *root, int32_t size, int32_t x, int32_t y, uint32_t color, lv_opa_t opa)
+{
+    lv_obj_t *o = lv_obj_create(root);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_size(o, size, size);
+    lv_obj_set_style_radius(o, size / 3, 0);
+    lv_obj_set_style_bg_color(o, ui_color(color), 0);
+    lv_obj_set_style_bg_opa(o, opa, 0);
+    lv_obj_set_clickable(o, false);
+    lv_obj_align(o, LV_ALIGN_CENTER, x, y);
+    return o;
 }
 
 static uint32_t led_color(int i)
@@ -206,58 +272,50 @@ static uint32_t led_color(int i)
     return i < SHIFT_LEDS / 3 ? C_GOOD : i < SHIFT_LEDS * 2 / 3 ? C_WARN : C_BAD;
 }
 
+/* Segment colour by position: cyan, amber from 80% of the shift point, magenta beyond it. */
+static uint32_t rpm_color(const motore_ui_t *ui, int i)
+{
+    float at = i * RPM_MAX / (RPM_SEGS - 1);
+    return at >= ui->shift ? C_MAGENTA : at >= ui->shift * 0.8f ? C_WARN : C_CYAN;
+}
+
 static void build_drive(motore_ui_t *ui)
 {
     lv_obj_t *root = ui->root;
     int32_t w = lv_obj_get_width(ui->screen), h = lv_obj_get_height(ui->screen);
     int32_t side = (w < h ? w : h) - 8;
-    mt_settings_t st;
-    mt_settings(&st);
-    ui->shift = st.shift_rpm;
+    mt_settings(&ui->settings);
+    ui->shift = ui->settings.shift_rpm ? ui->settings.shift_rpm : 5500;
     ui->shown_rpm = 0;
     ui->lit = -1;
     ui->blink = 0;
+    ui->arc_color = C_CYAN;
 
-    /* Shift lights on the outer edge: 200..340 degrees (the top). */
-    int32_t seg = 140 / SHIFT_LEDS;
+    /* Two rings of small dots instead of arcs: a moving arc makes LVGL
+     * redraw a big area and every arc crossing it (~270 ms a frame here);
+     * a dot that switches redraws only itself.
+     *   outer: 48 rpm segments over 270 degrees (cyan, amber, magenta)
+     *   inner: 15 shift lights across the top (green, amber, red, flash) */
+    int32_t seg = side / 30;
+    float r_out = side / 2.0f - seg;
+    for (int i = 0; i < RPM_SEGS; i++)
+    {
+        float a = (135.0f + i * 270.0f / (RPM_SEGS - 1)) * 3.14159265f / 180.0f;
+        ui->rpm_seg[i] = dot(root, seg, (int32_t)(r_out * cosf(a)), (int32_t)(r_out * sinf(a)), rpm_color(ui, i), LV_OPA_20);
+    }
+    int32_t led = side / 22;
+    float r_in = r_out - seg - led;
     for (int i = 0; i < SHIFT_LEDS; i++)
     {
-        int32_t a = 200 + i * seg;
-        ui->led[i] = ring(root, side, a, a + seg - 2, side / 30, led_color(i));
-        lv_obj_set_style_arc_opa(ui->led[i], LV_OPA_20, LV_PART_MAIN);
+        float a = (215.0f + i * 110.0f / (SHIFT_LEDS - 1)) * 3.14159265f / 180.0f;
+        ui->led[i] = dot(root, led, (int32_t)(r_in * cosf(a)), (int32_t)(r_in * sinf(a)), led_color(i), LV_OPA_20);
     }
-
-    int32_t inner = side - side / 9;
-    ui->arc = lv_arc_create(root);
-    lv_obj_set_size(ui->arc, inner, inner);
-    lv_obj_center(ui->arc);
-    lv_arc_set_bg_angles(ui->arc, 135, 45);
-    lv_arc_set_range(ui->arc, 0, 7000);
-    lv_arc_set_value(ui->arc, 0);
-    lv_obj_remove_style(ui->arc, NULL, LV_PART_KNOB);
-    lv_obj_set_clickable(ui->arc, false);
-    lv_obj_set_style_arc_width(ui->arc, side / 20, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(ui->arc, side / 20, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(ui->arc, ui_color(0x141C33), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(ui->arc, ui_color(C_CYAN), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(ui->arc, true, LV_PART_INDICATOR);
-
-    /* Thin inner ring: a tick every 1000 rpm and the shift zone in magenta. */
-    int32_t tick_ring = inner - side / 9;
-    for (int k = 0; k <= 7; k++)
-    {
-        int32_t a = 135 + k * 270 / 7;
-        ring(root, tick_ring, a - 1, a + 1, side / 40, C_DIM);
-    }
-    ring(root, tick_ring, 135 + ui->shift * 270 / 7000, 45, side / 80, C_MAGENTA);
+    ui->rpm_lit = -1;
 
     ui->gear = label(root, &lv_font_montserrat_32, C_VIOLET, "");
     lv_obj_align(ui->gear, LV_ALIGN_CENTER, 0, -side / 4);
-    ui->speed = label(root, &lv_font_montserrat_48, 0xFFFFFF, "—");
-    lv_obj_set_style_transform_scale(ui->speed, side > 400 ? 440 : 360, 0);
-    lv_obj_set_style_transform_pivot_x(ui->speed, LV_PCT(50), 0);
-    lv_obj_set_style_transform_pivot_y(ui->speed, LV_PCT(50), 0);
-    lv_obj_align(ui->speed, LV_ALIGN_CENTER, 0, -side / 30);
+    seven_build(root, ui->digit, side / 5, -side / 30);
+    memset(ui->digit_bits, 0xFF, sizeof(ui->digit_bits));   /* force the first draw */
     lv_obj_t *unit = label(root, UI_FONT_SMALL, C_DIM, "KM/H");
     lv_obj_align(unit, LV_ALIGN_CENTER, 0, side / 8);
     ui->rpm = label(root, UI_FONT_BODY, C_CYAN, "— rpm");
@@ -296,8 +354,19 @@ static void update_drive(motore_ui_t *ui, const mt_state_t *s)
     ui->blink = over ? ui->blink + 1 : 0;
     bool flash_on = over && (ui->blink / 2) % 2 == 0;   /* 5 Hz */
 
-    lv_arc_set_value(ui->arc, (int32_t)rpm);
-    lv_obj_set_style_arc_color(ui->arc, ui_color(over ? C_MAGENTA : rpm > ui->shift * 0.8f ? C_WARN : C_CYAN), LV_PART_INDICATOR);
+    /* Rpm ring: only the segments that switch are touched. */
+    int on = (int)(rpm / RPM_MAX * (RPM_SEGS - 1) + 0.5f);
+    on = on < 0 ? 0 : on > RPM_SEGS ? RPM_SEGS : on;
+    if (on != ui->rpm_lit)
+    {
+        int from = ui->rpm_lit < 0 ? 0 : (on < ui->rpm_lit ? on : ui->rpm_lit);
+        int to = ui->rpm_lit < 0 ? RPM_SEGS : (on > ui->rpm_lit ? on : ui->rpm_lit);
+        for (int i = from; i < to; i++)
+        {
+            lv_obj_set_style_bg_opa(ui->rpm_seg[i], i < on ? LV_OPA_COVER : LV_OPA_20, 0);
+        }
+        ui->rpm_lit = on;
+    }
 
     /* LEDs: recolored only when the count or the flash state changes. */
     float from = ui->shift * SHIFT_FROM;
@@ -311,25 +380,23 @@ static void update_drive(motore_ui_t *ui, const mt_state_t *s)
         {
             if (over)
             {
-                lv_obj_set_style_arc_color(ui->led[i], ui_color(C_MAGENTA), LV_PART_MAIN);
-                lv_obj_set_style_arc_opa(ui->led[i], flash_on ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
+                lv_obj_set_style_bg_color(ui->led[i], ui_color(C_MAGENTA), 0);
+                lv_obj_set_style_bg_opa(ui->led[i], flash_on ? LV_OPA_COVER : LV_OPA_20, 0);
             }
             else
             {
-                lv_obj_set_style_arc_color(ui->led[i], ui_color(led_color(i)), LV_PART_MAIN);
-                lv_obj_set_style_arc_opa(ui->led[i], i < lit ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
+                lv_obj_set_style_bg_color(ui->led[i], ui_color(led_color(i)), 0);
+                lv_obj_set_style_bg_opa(ui->led[i], i < lit ? LV_OPA_COVER : LV_OPA_20, 0);
             }
         }
     }
 
     bool has_speed = mt_value_fresh(s, MT_SPEED);
-    snprintf(t, sizeof(t), "%.0f", has_speed ? (double)s->value[MT_SPEED] : 0.0);
-    set_text(ui->speed, has_speed ? t : "—");
+    seven_set(ui->digit, ui->digit_bits, has_speed ? (int)(s->value[MT_SPEED] + 0.5f) % 1000 : -1);
     snprintf(t, sizeof(t), "%.0f rpm", (double)(has_rpm ? target : 0));
     set_text(ui->rpm, has_rpm ? t : "— rpm");
-    mt_settings_t st;
-    mt_settings(&st);
-    int gear = has_speed && has_rpm ? mt_gear(&st, s->value[MT_SPEED], target) : 0;
+    /* Called with mt_lock() held: the settings come from the view's copy. */
+    int gear = has_speed && has_rpm ? mt_gear(&ui->settings, s->value[MT_SPEED], target) : 0;
     snprintf(t, sizeof(t), "%d", gear);
     set_text(ui->gear, gear ? t : (has_speed && s->value[MT_SPEED] > 3 ? "N" : ""));
 
@@ -849,6 +916,7 @@ static void go(motore_ui_t *ui, view_t view)
     lv_obj_set_style_bg_color(ui->root, ui_color(C_BG), 0);
     lv_obj_set_style_bg_opa(ui->root, LV_OPA_COVER, 0);
     ui->arc = NULL;
+    ui->rpm_seg[0] = NULL;   /* the drive view is built when this is set */
     memset(ui->live, 0, sizeof(ui->live));
     mt_lock();
     mt_state_t *copy = heap_caps_malloc(sizeof(mt_state_t), MALLOC_CAP_SPIRAM);
@@ -890,11 +958,20 @@ static void tick(lv_timer_t *timer)
     {
         return;
     }
+    /* Settings may change from the dashboard: refresh the drive view's copy
+     * before taking the data lock (mt_settings() takes it too). */
+    static int64_t last_settings;
+    if (ui->view == DRIVE && esp_timer_get_time() - last_settings > 1000000)
+    {
+        last_settings = esp_timer_get_time();
+        mt_settings(&ui->settings);
+        ui->shift = ui->settings.shift_rpm;
+    }
     /* Values change continuously: update in place; other views rebuild
      * only when something they show changes (not every value tick). */
     mt_lock();
     const mt_state_t *s = mt_state();
-    if (ui->view == DRIVE && ui->arc != NULL)
+    if (ui->view == DRIVE && ui->rpm_seg[0] != NULL)
     {
         update_drive(ui, s);
         mt_unlock();
