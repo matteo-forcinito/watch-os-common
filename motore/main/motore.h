@@ -141,7 +141,12 @@ typedef struct
     uint8_t fuel_type;      /* mt_fuel_t */
     uint16_t displacement_cc;   /* for cars without MAF (Clio 1.2: 1149) */
     float volumetric;       /* volumetric efficiency of the speed-density estimate */
+    uint16_t shift_rpm;     /* shift lights flash from here */
+    float gear_kmh[6];      /* km/h per 1000 rpm in each gear, 0 = no such gear */
 } mt_settings_t;
+
+/* Estimated gear from speed and rpm: 1..6, 0 = clutch/neutral/unknown. */
+int mt_gear(const mt_settings_t *s, float speed, float rpm);
 
 void mt_settings(mt_settings_t *out);
 esp_err_t mt_set_settings(const mt_settings_t *in);

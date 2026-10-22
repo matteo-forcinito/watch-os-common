@@ -60,6 +60,7 @@ static void add_settings(cJSON *out)
     cJSON_AddNumberToObject(j, "fuel_type", s.fuel_type);
     cJSON_AddNumberToObject(j, "displacement_cc", s.displacement_cc);
     cJSON_AddNumberToObject(j, "volumetric", s.volumetric);
+    cJSON_AddNumberToObject(j, "shift_rpm", s.shift_rpm);
 }
 
 static esp_err_t state(httpd_req_t *request)
@@ -247,6 +248,7 @@ static esp_err_t settings(httpd_req_t *request)
     s.fuel_type = (uint8_t)number(root, "fuel_type", s.fuel_type);
     s.displacement_cc = (uint16_t)number(root, "displacement_cc", s.displacement_cc);
     s.volumetric = (float)number(root, "volumetric", s.volumetric);
+    s.shift_rpm = (uint16_t)number(root, "shift_rpm", s.shift_rpm);
     const char *pin = text(root, "pin");
     const char *old = text(root, "pin_old");
     bool pin_refused = false;

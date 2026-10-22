@@ -39,7 +39,6 @@
 #define C_WARN    0xFFC04D
 #define C_BAD     0xFF5D7A
 #define C_DIM     0x8FA3C0
-#define REDLINE   5800
 
 typedef enum { HOME, DRIVE, LIVE, DIAG, TRIP, LINK, CAR, DASH } view_t;
 
@@ -51,7 +50,11 @@ typedef struct
     uint32_t revision;
     lv_timer_t *timer;
     /* drive */
-    lv_obj_t *arc, *speed, *rpm, *coolant, *battery, *fuel, *mil, *status;
+    lv_obj_t *arc, *speed, *rpm, *coolant, *battery, *fuel, *mil, *status, *gear;
+    lv_obj_t *led[15];
+    float shown_rpm;
+    uint16_t shift;
+    int lit, blink;
     /* live: value label per value */
     lv_obj_t *live[MT_VALUES];
     int last_found;
@@ -167,42 +170,94 @@ static lv_obj_t *chip(lv_obj_t *parent, const char *icon, uint32_t color)
     return label(box, UI_FONT_BODY, 0xFFFFFF, "—");
 }
 
+/* Shift lights: LED segments along the top edge, like a race car's wheel.
+ * They light from 55% of the shift point (green, amber, red) and all flash
+ * above it; the rpm arc glides towards each reading so a gear change reads
+ * as a sweep, not a jump. */
+#define SHIFT_LEDS  15
+#define SHIFT_FROM  0.55f
+#define DRIVE_MS    50
+
+static void set_text(lv_obj_t *l, const char *text)
+{
+    if (strcmp(lv_label_get_text(l), text) != 0)
+    {
+        lv_label_set_text(l, text);   /* only real changes are redrawn */
+    }
+}
+
+static lv_obj_t *ring(lv_obj_t *root, int32_t size, int32_t from, int32_t to, int32_t width, uint32_t color)
+{
+    lv_obj_t *a = lv_arc_create(root);
+    lv_obj_set_size(a, size, size);
+    lv_obj_center(a);
+    lv_arc_set_bg_angles(a, from, to);
+    lv_obj_remove_style(a, NULL, LV_PART_KNOB);
+    lv_obj_remove_style(a, NULL, LV_PART_INDICATOR);
+    lv_obj_set_clickable(a, false);
+    lv_obj_set_style_arc_width(a, width, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(a, ui_color(color), LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(a, false, LV_PART_MAIN);
+    return a;
+}
+
+static uint32_t led_color(int i)
+{
+    return i < SHIFT_LEDS / 3 ? C_GOOD : i < SHIFT_LEDS * 2 / 3 ? C_WARN : C_BAD;
+}
+
 static void build_drive(motore_ui_t *ui)
 {
     lv_obj_t *root = ui->root;
     int32_t w = lv_obj_get_width(ui->screen), h = lv_obj_get_height(ui->screen);
-    int32_t side = (w < h ? w : h) - 12;
+    int32_t side = (w < h ? w : h) - 8;
+    mt_settings_t st;
+    mt_settings(&st);
+    ui->shift = st.shift_rpm;
+    ui->shown_rpm = 0;
+    ui->lit = -1;
+    ui->blink = 0;
 
+    /* Shift lights on the outer edge: 200..340 degrees (the top). */
+    int32_t seg = 140 / SHIFT_LEDS;
+    for (int i = 0; i < SHIFT_LEDS; i++)
+    {
+        int32_t a = 200 + i * seg;
+        ui->led[i] = ring(root, side, a, a + seg - 2, side / 30, led_color(i));
+        lv_obj_set_style_arc_opa(ui->led[i], LV_OPA_20, LV_PART_MAIN);
+    }
+
+    int32_t inner = side - side / 9;
     ui->arc = lv_arc_create(root);
-    lv_obj_set_size(ui->arc, side, side);
+    lv_obj_set_size(ui->arc, inner, inner);
     lv_obj_center(ui->arc);
     lv_arc_set_bg_angles(ui->arc, 135, 45);
     lv_arc_set_range(ui->arc, 0, 7000);
     lv_arc_set_value(ui->arc, 0);
     lv_obj_remove_style(ui->arc, NULL, LV_PART_KNOB);
     lv_obj_set_clickable(ui->arc, false);
-    lv_obj_set_style_arc_width(ui->arc, side / 18, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(ui->arc, side / 18, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(ui->arc, side / 20, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(ui->arc, side / 20, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(ui->arc, ui_color(0x141C33), LV_PART_MAIN);
     lv_obj_set_style_arc_color(ui->arc, ui_color(C_CYAN), LV_PART_INDICATOR);
     lv_obj_set_style_arc_rounded(ui->arc, true, LV_PART_INDICATOR);
 
-    /* Redline mark: a short magenta arc from REDLINE to the end. */
-    lv_obj_t *red = lv_arc_create(root);
-    lv_obj_set_size(red, side + 10, side + 10);
-    lv_obj_center(red);
-    lv_arc_set_bg_angles(red, 135 + REDLINE * 270 / 7000, 45);
-    lv_obj_remove_style(red, NULL, LV_PART_KNOB);
-    lv_obj_remove_style(red, NULL, LV_PART_INDICATOR);
-    lv_obj_set_clickable(red, false);
-    lv_obj_set_style_arc_width(red, 3, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(red, ui_color(C_MAGENTA), LV_PART_MAIN);
+    /* Thin inner ring: a tick every 1000 rpm and the shift zone in magenta. */
+    int32_t tick_ring = inner - side / 9;
+    for (int k = 0; k <= 7; k++)
+    {
+        int32_t a = 135 + k * 270 / 7;
+        ring(root, tick_ring, a - 1, a + 1, side / 40, C_DIM);
+    }
+    ring(root, tick_ring, 135 + ui->shift * 270 / 7000, 45, side / 80, C_MAGENTA);
 
+    ui->gear = label(root, &lv_font_montserrat_32, C_VIOLET, "");
+    lv_obj_align(ui->gear, LV_ALIGN_CENTER, 0, -side / 4);
     ui->speed = label(root, &lv_font_montserrat_48, 0xFFFFFF, "—");
-    lv_obj_set_style_transform_scale(ui->speed, side > 400 ? 460 : 380, 0);
+    lv_obj_set_style_transform_scale(ui->speed, side > 400 ? 440 : 360, 0);
     lv_obj_set_style_transform_pivot_x(ui->speed, LV_PCT(50), 0);
     lv_obj_set_style_transform_pivot_y(ui->speed, LV_PCT(50), 0);
-    lv_obj_align(ui->speed, LV_ALIGN_CENTER, 0, -side / 14);
+    lv_obj_align(ui->speed, LV_ALIGN_CENTER, 0, -side / 30);
     lv_obj_t *unit = label(root, UI_FONT_SMALL, C_DIM, "KM/H");
     lv_obj_align(unit, LV_ALIGN_CENTER, 0, side / 8);
     ui->rpm = label(root, UI_FONT_BODY, C_CYAN, "— rpm");
@@ -210,7 +265,7 @@ static void build_drive(motore_ui_t *ui)
 
     lv_obj_t *row = lv_obj_create(root);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, side * 3 / 4, LV_SIZE_CONTENT);
+    lv_obj_set_size(row, side * 2 / 3, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_align(row, LV_ALIGN_CENTER, 0, side / 3);
@@ -219,10 +274,10 @@ static void build_drive(motore_ui_t *ui)
     ui->fuel = chip(row, "CONS", C_VIOLET);
 
     ui->mil = label(root, UI_FONT_BODY, C_BAD, LV_SYMBOL_WARNING);
-    lv_obj_align(ui->mil, LV_ALIGN_CENTER, 0, -side / 3);
+    lv_obj_align(ui->mil, LV_ALIGN_CENTER, -side / 5, -side / 4);
     lv_obj_set_hidden(ui->mil, true);
     ui->status = label(root, UI_FONT_SMALL, C_WARN, "");
-    lv_obj_align(ui->status, LV_ALIGN_CENTER, 0, -side / 4);
+    lv_obj_align(ui->status, LV_ALIGN_CENTER, 0, -side / 6);
 
     /* Tap anywhere: back to the menu. */
     lv_obj_add_event_cb(root, on_go, LV_EVENT_CLICKED, (void *)HOME);
@@ -232,24 +287,59 @@ static void update_drive(motore_ui_t *ui, const mt_state_t *s)
 {
     char t[32];
     bool live = s->phase == MT_PHASE_LIVE;
-    float rpm = mt_value_fresh(s, MT_RPM) ? s->value[MT_RPM] : 0;
+    bool has_rpm = mt_value_fresh(s, MT_RPM);
+    float target = has_rpm ? s->value[MT_RPM] : 0;
+    /* Glide: 45% of the way at every 50 ms frame (~150 ms to settle). */
+    ui->shown_rpm += (target - ui->shown_rpm) * 0.45f;
+    float rpm = ui->shown_rpm;
+    bool over = has_rpm && target >= ui->shift;
+    ui->blink = over ? ui->blink + 1 : 0;
+    bool flash_on = over && (ui->blink / 2) % 2 == 0;   /* 5 Hz */
+
     lv_arc_set_value(ui->arc, (int32_t)rpm);
-    lv_obj_set_style_arc_color(ui->arc, ui_color(rpm > REDLINE ? C_MAGENTA : rpm > 4500 ? C_WARN : C_CYAN), LV_PART_INDICATOR);
-    snprintf(t, sizeof(t), "%s", mt_value_fresh(s, MT_SPEED) ? "" : "—");
-    if (mt_value_fresh(s, MT_SPEED))
+    lv_obj_set_style_arc_color(ui->arc, ui_color(over ? C_MAGENTA : rpm > ui->shift * 0.8f ? C_WARN : C_CYAN), LV_PART_INDICATOR);
+
+    /* LEDs: recolored only when the count or the flash state changes. */
+    float from = ui->shift * SHIFT_FROM;
+    int lit = rpm <= from ? 0 : (int)((rpm - from) / (ui->shift - from) * SHIFT_LEDS + 0.5f);
+    lit = lit > SHIFT_LEDS ? SHIFT_LEDS : lit;
+    int key = over ? (flash_on ? 100 : 101) : lit;
+    if (key != ui->lit)
     {
-        snprintf(t, sizeof(t), "%.0f", (double)s->value[MT_SPEED]);
+        ui->lit = key;
+        for (int i = 0; i < SHIFT_LEDS; i++)
+        {
+            if (over)
+            {
+                lv_obj_set_style_arc_color(ui->led[i], ui_color(C_MAGENTA), LV_PART_MAIN);
+                lv_obj_set_style_arc_opa(ui->led[i], flash_on ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
+            }
+            else
+            {
+                lv_obj_set_style_arc_color(ui->led[i], ui_color(led_color(i)), LV_PART_MAIN);
+                lv_obj_set_style_arc_opa(ui->led[i], i < lit ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
+            }
+        }
     }
-    lv_label_set_text(ui->speed, t);
-    snprintf(t, sizeof(t), "%.0f rpm", (double)rpm);
-    lv_label_set_text(ui->rpm, mt_value_fresh(s, MT_RPM) ? t : "— rpm");
+
+    bool has_speed = mt_value_fresh(s, MT_SPEED);
+    snprintf(t, sizeof(t), "%.0f", has_speed ? (double)s->value[MT_SPEED] : 0.0);
+    set_text(ui->speed, has_speed ? t : "—");
+    snprintf(t, sizeof(t), "%.0f rpm", (double)(has_rpm ? target : 0));
+    set_text(ui->rpm, has_rpm ? t : "— rpm");
+    mt_settings_t st;
+    mt_settings(&st);
+    int gear = has_speed && has_rpm ? mt_gear(&st, s->value[MT_SPEED], target) : 0;
+    snprintf(t, sizeof(t), "%d", gear);
+    set_text(ui->gear, gear ? t : (has_speed && s->value[MT_SPEED] > 3 ? "N" : ""));
+
     format_value(s, MT_COOLANT, t, sizeof(t));
-    lv_label_set_text(ui->coolant, t);
+    set_text(ui->coolant, t);
     lv_obj_set_style_text_color(ui->coolant, ui_color(s->value[MT_COOLANT] > 105 ? C_BAD : 0xFFFFFF), 0);
     format_value(s, MT_BATTERY, t, sizeof(t));
-    lv_label_set_text(ui->battery, t);
+    set_text(ui->battery, t);
     float lph = mt_value_fresh(s, MT_FUEL_RATE) ? s->value[MT_FUEL_RATE] : NAN;
-    float kmh = mt_value_fresh(s, MT_SPEED) ? s->value[MT_SPEED] : 0;
+    float kmh = has_speed ? s->value[MT_SPEED] : 0;
     if (isnan(lph))
     {
         snprintf(t, sizeof(t), "—");
@@ -262,9 +352,9 @@ static void update_drive(motore_ui_t *ui, const mt_state_t *s)
     {
         snprintf(t, sizeof(t), "%.2f l/h", (double)lph);
     }
-    lv_label_set_text(ui->fuel, t);
+    set_text(ui->fuel, t);
     lv_obj_set_hidden(ui->mil, !s->mil);
-    lv_label_set_text(ui->status, live ? "" : phase_text(s->phase));
+    set_text(ui->status, live ? "" : phase_text(s->phase));
 }
 
 /* ------------------------------------------------------------ live */
@@ -616,6 +706,30 @@ static void on_edit_cc(lv_event_t *e)
     ui_text_input("Cilindrata (cc)", v, false, on_cc, NULL);
 }
 
+static void on_shift(const char *text, void *user_data)
+{
+    (void)user_data;
+    if (text == NULL)
+    {
+        return;
+    }
+    mt_settings_t st;
+    mt_settings(&st);
+    st.shift_rpm = (uint16_t)atoi(text);
+    mt_set_settings(&st);
+    go(s_ui, CAR);
+}
+
+static void on_edit_shift(lv_event_t *e)
+{
+    (void)e;
+    mt_settings_t st;
+    mt_settings(&st);
+    char v[8];
+    snprintf(v, sizeof(v), "%u", st.shift_rpm);
+    ui_text_input("Cambiata a (rpm)", v, false, on_shift, NULL);
+}
+
 static void on_new_pin(const char *text, void *user_data)
 {
     (void)user_data;
@@ -706,6 +820,8 @@ static void build_car(motore_ui_t *ui, const mt_state_t *s)
     snprintf(v, sizeof(v), "%u cc", st.displacement_cc);
     ui_row(page, LV_SYMBOL_SETTINGS, C_DIM, "Cilindrata", v, on_edit_cc, NULL);
     ui_text(page, "Servono per stimare i consumi sulle auto senza debimetro. Con il GPL i litri sono di GPL.", true);
+    snprintf(v, sizeof(v), "%u rpm", st.shift_rpm);
+    ui_row(page, LV_SYMBOL_UP, C_MAGENTA, "Cambiata", v, on_edit_shift, NULL);
     ui_section(page, "Sicurezza");
     ui_row(page, LV_SYMBOL_EYE_CLOSE, C_VIOLET, "Codice", st.pin[0] ? "impostato" : "da impostare", on_pin, NULL);
     ui_row(page, s->unlocked ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_EYE_CLOSE, s->unlocked ? C_WARN : C_GOOD, "Azioni critiche",
@@ -719,6 +835,10 @@ static void build_car(motore_ui_t *ui, const mt_state_t *s)
 static void go(motore_ui_t *ui, view_t view)
 {
     ui->view = view;
+    if (ui->timer != NULL)
+    {
+        lv_timer_set_period(ui->timer, view == DRIVE ? DRIVE_MS : 200);
+    }
     if (ui->root != NULL)
     {
         lv_obj_delete(ui->root);
@@ -837,6 +957,16 @@ bool devcon_app_command(char *line)
         char out[512];
         esp_err_t err = mt_console(line + 4, out, sizeof(out));
         printf("@OBD %s %s\n", esp_err_to_name(err), out);
+        return true;
+    }
+    if (strncmp(line, "shift ", 6) == 0)
+    {
+        mt_settings_t st;
+        mt_settings(&st);
+        st.shift_rpm = (uint16_t)atoi(line + 6);
+        mt_set_settings(&st);
+        mt_settings(&st);
+        printf("@OK shift %u\n", st.shift_rpm);
         return true;
     }
     if (strncmp(line, "link wifi ", 10) == 0)

@@ -137,6 +137,35 @@ static void settings_defaults(mt_settings_t *s)
     s->fuel_type = MT_FUEL_PETROL;
     s->displacement_cc = 1200;
     s->volumetric = 0.80f;
+    s->shift_rpm = 5500;
+    /* Clio IV 1.2 16V (5 speed): km/h at 1000 rpm, refined later on the car. */
+    const float clio[6] = {7.1f, 13.0f, 19.0f, 25.0f, 31.5f, 0};
+    memcpy(s->gear_kmh, clio, sizeof(clio));
+}
+
+int mt_gear(const mt_settings_t *s, float speed, float rpm)
+{
+    if (speed < 3 || rpm < 700)
+    {
+        return 0;
+    }
+    float ratio = speed / (rpm / 1000.0f);
+    int best = 0;
+    float error = 0.12f;   /* within 12% of a gear, else clutch pressed */
+    for (int g = 0; g < 6; g++)
+    {
+        if (s->gear_kmh[g] <= 0)
+        {
+            continue;
+        }
+        float e = fabsf(ratio - s->gear_kmh[g]) / s->gear_kmh[g];
+        if (e < error)
+        {
+            error = e;
+            best = g + 1;
+        }
+    }
+    return best;
 }
 
 static void settings_load(void)
@@ -168,6 +197,7 @@ esp_err_t mt_set_settings(const mt_settings_t *in)
     s.fuel_type = s.fuel_type < MT_FUELS ? s.fuel_type : MT_FUEL_PETROL;
     s.displacement_cc = s.displacement_cc < 600 || s.displacement_cc > 8000 ? 1200 : s.displacement_cc;
     s.volumetric = s.volumetric < 0.5f || s.volumetric > 1.1f ? 0.80f : s.volumetric;
+    s.shift_rpm = s.shift_rpm < 2000 || s.shift_rpm > 9000 ? 5500 : s.shift_rpm;
     s.host[sizeof(s.host) - 1] = 0;
     s.pin[sizeof(s.pin) - 1] = 0;
     s.ble_name[sizeof(s.ble_name) - 1] = 0;
@@ -945,13 +975,26 @@ static void obd_task(void *arg)
         while (mt_link_up() && !reconnect)
         {
             int64_t before = s_state.updated[MT_RPM];
+            /* Rpm before every other value: ~10 readings per second on CAN,
+             * enough to follow a gear change on the shift lights. */
+            bool has_rpm = supported(0x0C);
             for (int i = 0; i < fasts; i++)
             {
+                if (has_rpm && fast[i] != MT_RPM)
+                {
+                    poll(MT_RPM);
+                    polls++;
+                }
                 poll(fast[i]);
                 polls++;
             }
             if (slows > 0)
             {
+                if (has_rpm)
+                {
+                    poll(MT_RPM);
+                    polls++;
+                }
                 poll(slow[next_slow]);
                 next_slow = (next_slow + 1) % slows;
                 polls++;
