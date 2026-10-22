@@ -123,4 +123,16 @@ void ecos_family_ring_done(void);
 /* The apps layer shows what others ask (ring). Called in the link task: post only. */
 void ecos_family_set_handler(void (*handler)(const ecos_event_t *event));
 
+/* Pets travel between paired devices (docs/ORBI-PETS-ROADMAP.md, phase 1).
+ * Steps are opaque bytes up to ECOS_PET_MAX, sealed like every frame. */
+#define ECOS_PET_MAX 120
+/* Runs in the link task for each step received: answer into reply, return its
+ * length (0 = no answer). Keep it short: one store command, no UI. */
+typedef size_t (*ecos_pet_handler_t)(const char *from_id, const char *from_name, const uint8_t *step, size_t length,
+                                     uint8_t *reply, size_t max);
+void ecos_family_set_pet_handler(ecos_pet_handler_t handler);
+/* Sends a step and waits for the answer (blocking: call from a task, never the
+ * LVGL one). Returns the answer length, or -1 if the device did not answer. */
+int ecos_family_pet(const char *id, const uint8_t *step, size_t length, uint8_t *reply, size_t max, int timeout_ms);
+
 #endif

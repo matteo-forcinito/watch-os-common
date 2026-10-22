@@ -30,6 +30,8 @@
 #define ECOS_LINK_ACCESS_REQ 5
 #define ECOS_LINK_ACCESS_REPLY 6
 #define ECOS_LINK_MESSAGE 4      /* payload: bounded text bytes, length from frame */
+#define ECOS_LINK_PET 7          /* payload: a pet journey step (opaque, apps/pet/pet_travel.c) */
+#define ECOS_LINK_PET_REPLY 8    /* payload: the step's answer */
 
 /* Every payload starts with the sender's clock (unix seconds, 0 = unknown). */
 #define ECOS_LINK_TIME_SIZE 4

@@ -34,6 +34,12 @@ int pet_list(pet_record_t *out, int max);
 /* True once for a pet that arrived from a journey since the page last looked. */
 bool pet_take_arrival(const char *seed);
 int pet_dex(uint16_t *keys, int max);
+int pet_list_all(pet_record_t *out, int max);   /* every record, any stage */
+/* Journeys to paired devices over ESP-NOW (pet_travel.c). */
+void pet_travel_init(void);
+bool pet_travel_send(const char *ecos_id, const char *seed);
+void pet_travel_resume(void);
+bool pet_travel_busy(void);
 /* Seed and genome traits of a record (curiosity, energy, sociability, appetite, playfulness). */
 void pet_traits(const pet_record_t *p, uint8_t out[5]);
 #endif

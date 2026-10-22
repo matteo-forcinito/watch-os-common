@@ -7,6 +7,7 @@
 #include "core/lv_port.h"
 #include "core/power.h"
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
@@ -15,6 +16,7 @@
 #include "orbi/orbi_view.h"
 #include "orbi/pet_sprite.h"
 #include "pet.h"
+#include "services/ecos.h"
 #include "services/weather.h"
 #include "ui/ui.h"
 #include <stdio.h>
@@ -734,6 +736,21 @@ static void menu_next(lv_event_t *e)
     sync_pets(false);
 }
 
+static void travel_go(lv_event_t *e)
+{
+    const char *id = lv_event_get_user_data(e);
+    if (pet_travel_send(id, S.selected))
+        ui_toast("Preparo il viaggio...");
+    else
+        ui_toast("Un viaggio e gia in corso");
+    menu_close(e);
+}
+
+static void travel_free(lv_event_t *e)
+{
+    free(lv_event_get_user_data(e));
+}
+
 static void menu_company(lv_event_t *e)
 {
     cJSON *j = cJSON_CreateObject();
@@ -800,6 +817,32 @@ static void menu_open(lv_event_t *e)
     (void)total;
     ui_text(page, "Ogni child che nasce o arriva su questo device aggiunge la sua razza.", true);
     ui_button(page, "Altro child sul device", 0x26364D, menu_next, NULL);
+
+    /* Journeys to paired devices nearby (Ecosistema > Famiglia). */
+    ui_text(page, "MANDA DA UN AMICO VICINO", false);
+    ecos_family_t *f = heap_caps_malloc(sizeof(*f), MALLOC_CAP_SPIRAM);
+    int members = 0;
+    if (f)
+    {
+        ecos_family(f);
+        for (int i = 0; i < f->count; i++)
+        {
+            char *id = malloc(sizeof(f->members[i].id));
+            if (!id)
+                continue;
+            memcpy(id, f->members[i].id, sizeof(f->members[i].id));
+            char label[48];
+            snprintf(label, sizeof(label), "Manda da %s", f->members[i].name);
+            lv_obj_t *b = ui_button(page, label, 0x1F4E5F, travel_go, id);
+            lv_obj_add_event_cb(b, travel_free, LV_EVENT_DELETE, id);
+            members++;
+        }
+        free(f);
+    }
+    ui_text(page,
+            members ? "Apri la pagina del child anche sull'altro device: il viaggio parte via radio, senza Orbit."
+                    : "Nessun device abbinato: abbinalo in Ecosistema per far viaggiare il child senza Orbit.",
+            true);
     ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_BLUE, "Piccola compagnia", pet_company(), menu_company, NULL);
     ui_text(page, "Viaggi: Orbit > Ecosistema > Children. Aspetto, personalita e progressi viaggiano con lui.", true);
 }
@@ -924,6 +967,8 @@ static void create(lv_obj_t *screen, void *arg)
     weather_refresh(1800);
     sync_pets(true);
     orbi_sync();
+    ecos_family_hold(true);   /* reachable for journeys while the page is open */
+    pet_travel_resume();
     S.timer = lv_timer_create(tick, TICK_MS, NULL);
     ESP_LOGI(TAG, "scene ready in %d ms, k=%d", (int)((esp_timer_get_time() - t0) / 1000), S.k);
 }
@@ -933,6 +978,7 @@ static void destroy(void)
     if (S.timer)
         lv_timer_delete(S.timer);
     S.timer = NULL;
+    ecos_family_hold(false);
     S.screen = NULL;   /* objects go with the screen */
     S.menu = NULL;
     S.orbi = NULL;
@@ -1051,5 +1097,6 @@ static void ambient(lv_timer_t *timer)
 
 void pet_companion_start(void)
 {
+    pet_travel_init();
     lv_timer_create(ambient, 1500, NULL);
 }

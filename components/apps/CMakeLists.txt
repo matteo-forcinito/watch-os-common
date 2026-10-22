@@ -49,6 +49,7 @@ idf_component_register(
         "apps.c"
         "pet/pet_store.c"
         "pet/pet_app.c"
+        "pet/pet_travel.c"
         "shell/shell.c"
         "shell/watchface.c"
         "shell/launcher.c"

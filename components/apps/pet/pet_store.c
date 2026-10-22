@@ -336,8 +336,9 @@ cJSON *pet_command(const cJSON *j, const char **error)
     {
         if (p && !strcmp(p->transfer, tx) && (p->stage == PET_INCOMING || p->stage == PET_ACTIVE))
             ok = true;
-        else if (!p)
+        else if (!p || (p->stage == PET_DEPARTED && strcmp(p->transfer, tx)))
         {
+            /* A pet coming back home replaces its own old departure receipt. */
             const cJSON *v = cJSON_GetObjectItemCaseSensitive(j, "pet");
             pet_record_t incoming = {0};
             int64_t n = 0;
@@ -565,4 +566,16 @@ void pet_traits(const pet_record_t *p, uint8_t out[5])
     out[2] = g.sociability;
     out[3] = g.appetite;
     out[4] = g.playfulness;
+}
+int pet_list_all(pet_record_t *out, int max)
+{
+    if (!s_ready)
+        return 0;
+    int n = 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < PET_SLOTS && n < max; i++)
+        if (s_store.pets[i].seed[0])
+            out[n++] = s_store.pets[i];
+    xSemaphoreGive(s_lock);
+    return n;
 }

@@ -48,6 +48,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "mbedtls/platform_util.h"
@@ -98,7 +99,17 @@ typedef enum
     CMD_MESSAGE,
     CMD_WEB_CODE,
     CMD_RESOURCES,
+    CMD_PET,
 } cmd_kind_t;
+
+/* Pet journey step in flight (one at a time). */
+static EXT_RAM_BSS_ATTR uint8_t s_pet_step[ECOS_PET_MAX], s_pet_reply[ECOS_PET_MAX];
+static size_t s_pet_step_len;
+static int s_pet_reply_len = -1;
+static uint8_t s_pet_mac[6];
+static bool s_pet_waiting;
+static SemaphoreHandle_t s_pet_done, s_pet_call;
+static ecos_pet_handler_t s_pet_handler;
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static EXT_RAM_BSS_ATTR member_info_t s_info[ECOS_PEERS_MAX + 2];
@@ -745,6 +756,7 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
     if (((type == ECOS_LINK_STATUS_REQ || type == ECOS_LINK_STATUS) && body_length != ECOS_LINK_STATUS_SIZE) ||
         (type == ECOS_LINK_RING && (body_length != 1 || body[0] > 1)) ||
         (type == ECOS_LINK_MESSAGE && (body_length == 0 || body_length >= ECOS_LINK_TEXT_MAX)) ||
+        ((type == ECOS_LINK_PET || type == ECOS_LINK_PET_REPLY) && (body_length == 0 || body_length > ECOS_PET_MAX)) ||
         (type == ECOS_LINK_ACCESS_REQ && !ecos_access_request_valid(body, body_length)) ||
         (type == ECOS_LINK_ACCESS_REPLY && body_length != ECOS_ACCESS_REPLY_SIZE))
     {
@@ -756,7 +768,7 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
     {
         return;
     }
-    if ((type == ECOS_LINK_RING || type == ECOS_LINK_MESSAGE ||
+    if ((type == ECOS_LINK_RING || type == ECOS_LINK_MESSAGE || type == ECOS_LINK_PET ||
          (type == ECOS_LINK_ACCESS_REQ && body[8] == ECOS_ACCESS_WEB)) &&
         !replay_record(peer, true, boot, seq))
     {
@@ -836,6 +848,34 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
         }
         ESP_LOGI(TAG, "Message from %s", peer->name);
         deliver_message(peer->name, text);
+    }
+    else if (type == ECOS_LINK_PET)
+    {
+        ecos_pet_handler_t handler;
+        portENTER_CRITICAL(&s_lock);
+        handler = s_pet_handler;
+        portEXIT_CRITICAL(&s_lock);
+        uint8_t answer[ECOS_LINK_TIME_SIZE + ECOS_PET_MAX];
+        char id[13];
+        id_text(peer->mac, id);
+        size_t n = handler ? handler(id, peer->name, body, body_length, answer + ECOS_LINK_TIME_SIZE, ECOS_PET_MAX) : 0;
+        if (n > 0 && n <= ECOS_PET_MAX)
+        {
+            time_t t = time(NULL);
+            ecos_link_put32(answer, t > CLOCK_VALID ? (uint32_t)t : 0);
+            seal_send(s, peer, ECOS_LINK_PET_REPLY, answer, ECOS_LINK_TIME_SIZE + n, true);
+        }
+    }
+    else if (type == ECOS_LINK_PET_REPLY)
+    {
+        portENTER_CRITICAL(&s_lock);
+        if (s_pet_waiting && memcmp(s_pet_mac, peer->mac, 6) == 0)
+        {
+            memcpy(s_pet_reply, body, body_length);
+            s_pet_reply_len = (int)body_length;
+            s_pet_waiting = false;
+        }
+        portEXIT_CRITICAL(&s_lock);
     }
 }
 
@@ -952,7 +992,7 @@ static void act(session_t *s, cmd_kind_t kind, const uint8_t mac[6], const char 
         set_message("Dispositivo non abbinato", NULL);
         return;
     }
-    uint8_t payload[ECOS_LINK_TIME_SIZE + ECOS_LINK_TEXT_MAX];
+    uint8_t payload[ECOS_LINK_TIME_SIZE + ECOS_PET_MAX];
     time_t now = time(NULL);
     ecos_link_put32(payload, now > CLOCK_VALID ? (uint32_t)now : 0);
     size_t length = ECOS_LINK_TIME_SIZE;
@@ -977,6 +1017,17 @@ static void act(session_t *s, cmd_kind_t kind, const uint8_t mac[6], const char 
         info->pending_operation = operation;
         info->pending_until = esp_timer_get_time() + 10000000;
         portEXIT_CRITICAL(&s_lock);
+    }
+    else if (kind == CMD_PET)
+    {
+        portENTER_CRITICAL(&s_lock);
+        memcpy(payload + length, s_pet_step, s_pet_step_len);
+        length += s_pet_step_len;
+        memcpy(s_pet_mac, mac, 6);
+        s_pet_reply_len = -1;
+        s_pet_waiting = true;
+        portEXIT_CRITICAL(&s_lock);
+        type = ECOS_LINK_PET;
     }
     else if (kind == CMD_MESSAGE)
     {
@@ -1010,7 +1061,25 @@ static void act(session_t *s, cmd_kind_t kind, const uint8_t mac[6], const char 
     }
     if (sent)
     {
-        receive_for(s, REPLY_WAIT_MS);   /* the ringing status comes back */
+        /* The ringing status comes back; a pet step waits for its answer. */
+        for (int i = 0; i < (kind == CMD_PET ? 10 : 1); i++)
+        {
+            receive_for(s, REPLY_WAIT_MS);
+            portENTER_CRITICAL(&s_lock);
+            bool answered = s_pet_reply_len >= 0;
+            portEXIT_CRITICAL(&s_lock);
+            if (kind != CMD_PET || answered)
+                break;
+        }
+    }
+    if (kind == CMD_PET)
+    {
+        portENTER_CRITICAL(&s_lock);
+        s_pet_waiting = false;
+        portEXIT_CRITICAL(&s_lock);
+        xSemaphoreGive(s_pet_done);
+        park();
+        return;
     }
     park();
     set_message(!sent ? "%s non raggiungibile: deve essere in carica a schermo spento, o con Ecosistema aperto"
@@ -1537,4 +1606,55 @@ void ecos_family_set_handler(void (*handler)(const ecos_event_t *event))
     portENTER_CRITICAL(&s_lock);
     s_handler = handler;
     portEXIT_CRITICAL(&s_lock);
+}
+
+void ecos_family_set_pet_handler(ecos_pet_handler_t handler)
+{
+    portENTER_CRITICAL(&s_lock);
+    s_pet_handler = handler;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+int ecos_family_pet(const char *id, const uint8_t *step, size_t length, uint8_t *reply, size_t max, int timeout_ms)
+{
+    if (length == 0 || length > ECOS_PET_MAX)
+        return -1;
+    if (s_pet_call == NULL)
+    {
+        SemaphoreHandle_t call = xSemaphoreCreateMutex(), done = xSemaphoreCreateBinary();
+        if (call == NULL || done == NULL)
+            return -1;
+        s_pet_call = call;
+        s_pet_done = done;
+    }
+    xSemaphoreTake(s_pet_call, portMAX_DELAY);
+    xSemaphoreTake(s_pet_done, 0);
+    portENTER_CRITICAL(&s_lock);
+    memcpy(s_pet_step, step, length);
+    s_pet_step_len = length;
+    s_pet_reply_len = -1;
+    portEXIT_CRITICAL(&s_lock);
+    int result = -1;
+    /* The worker may be busy with a search: retry the slot for a while. */
+    int64_t until = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    while (command(CMD_PET, id, NULL) != ESP_OK)
+    {
+        if (esp_timer_get_time() > until)
+            goto out;
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    int64_t left = (until - esp_timer_get_time()) / 1000;
+    if (xSemaphoreTake(s_pet_done, pdMS_TO_TICKS(left > 500 ? left : 500)) == pdTRUE)
+    {
+        portENTER_CRITICAL(&s_lock);
+        if (s_pet_reply_len >= 0)
+        {
+            result = s_pet_reply_len < (int)max ? s_pet_reply_len : (int)max;
+            memcpy(reply, s_pet_reply, (size_t)result);
+        }
+        portEXIT_CRITICAL(&s_lock);
+    }
+out:
+    xSemaphoreGive(s_pet_call);
+    return result;
 }
