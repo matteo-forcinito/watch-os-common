@@ -1,5 +1,7 @@
 # Pet di Orbi: animali in pixel art, ambiente e vita insieme
 
+Piano operativo dei prossimi sviluppi: [ORBI-PETS-ROADMAP.md](ORBI-PETS-ROADMAP.md).
+
 Strategia tecnica e piano di sviluppo per la nuova esperienza dei Children
 (firmware 1.10). Completa [ORBI-CHILDREN.md](ORBI-CHILDREN.md) (archivio,
 viaggi, API) e [ORBI-GENOME.md](ORBI-GENOME.md) (seed e genoma).
