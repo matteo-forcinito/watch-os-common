@@ -124,7 +124,7 @@ components/apps/pet/pet_store.c  archivio (invariato) + nuove azioni + dex + eve
   "Piccola compagnia", aiuto per i viaggi.
 - Nuove azioni nell'archivio (stessi campi, nessuna migrazione):
   - `wash`: gioia +8, XP +4;
-  - `snack`: sazietà +12, gioia +10, XP +2 (massimo 3 l'ora);
+  - `snack`: sazietà +12, gioia +10, XP +2;
   - `train`: energia -15, XP +18 (serve energia ≥ 20);
   - `meet`: gioia +4, XP +2.
 
