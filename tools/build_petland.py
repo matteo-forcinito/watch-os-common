@@ -19,7 +19,7 @@ root = Path(__file__).resolve().parents[1]
 board, output = args.board.resolve(), args.output.resolve()
 if not (board/'components/hardware').is_dir():
     parser.error('The board must contain components/hardware')
-defaults = next((board/'external_apps'/name/'sdkconfig.defaults' for name in ['anello', 'remote', 'casa']
+defaults = next((board/'external_apps'/name/'sdkconfig.defaults' for name in ['anello', 'remote', 'casa', 'motore']
                  if (board/'external_apps'/name/'sdkconfig.defaults').is_file()), board/'sdkconfig.defaults')
 if not defaults.is_file():
     parser.error('No board sdkconfig.defaults found')
