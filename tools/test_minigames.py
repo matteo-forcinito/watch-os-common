@@ -42,9 +42,14 @@ sources = [root/'tools/test_minigames.c', root/'components/apps/pet/pet_game.c',
            root/'components/apps/pet/pet_game_catalog.c', root/'components/apps/minigames/minigame.c',
            root/'components/apps/minigames/minigame_canvas.c', generated]
 sources += sorted((root/'components/apps/minigames/games').glob('*.c'))
-subprocess.run([str(compiler), '/nologo', '/std:c11', '/O2', '/W4', '/WX',
+subprocess.run([str(compiler), '/nologo', '/std:c11', '/utf-8', '/O2', '/W4', '/WX',
                 '/I'+str(root/'components/apps/minigames'), '/I'+str(root/'components/apps/pet'),
                 *map(str, sources), '/Fe:'+str(work/'test.exe')],
                cwd=work, env=env, check=True)
 subprocess.run([str(work/'test.exe')], check=True)
+subprocess.run([str(compiler), '/nologo', '/std:c11', '/utf-8', '/O2', '/W4', '/WX',
+                str(root/'tools/test_quantum.c'), str(root/'components/apps/minigames/minigame.c'),
+                str(root/'components/apps/minigames/minigame_canvas.c'), '/Fe:'+str(work/'quantum.exe')],
+               cwd=work, env=env, check=True)
+subprocess.run([str(work/'quantum.exe')], check=True)
 print('PASS: beginner generator: copied game compiles, registration, duplicate and invalid-name protection')

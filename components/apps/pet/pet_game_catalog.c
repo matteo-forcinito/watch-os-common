@@ -207,9 +207,11 @@ static const mg_game_t s_stars = {
     .state_size = sizeof(pet_view_state_t), .start = stars_start, .step = game_step,
     .input = game_input, .draw = stars_draw, .hud = game_hud, .result = game_result};
 extern const mg_game_t mg_tap_star;
+extern const mg_game_t mg_quantum;
 /* Generated game declarations. */
 static const mg_game_t *const s_games[] = {
     &s_ski, &s_stars, &mg_tap_star,
+    &mg_quantum,
     /* Generated game entries. */
 };
 size_t pet_game_count(void) { return sizeof(s_games) / sizeof(s_games[0]); }

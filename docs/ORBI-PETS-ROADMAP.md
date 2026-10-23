@@ -125,6 +125,14 @@ Il ritorno automatico differito e le visite a tempo restano da implementare.
 ## Fase 3 - Minigiochi (1.12.0)
 
 Implementati: **Fuga sulla neve**, **Pioggia di stelle** e **Tocca la stella**.
+La **1.13.0** aggiunge **Salto quantico** sulla stessa base condivisa:
+otto pianeti da raggiungere con il pet, lancio tangenziale caricato,
+gravità, previsione della traiettoria, impulsi correttivi e buchi neri.
+Tre scudi e limite di 60 secondi. Touch per caricare/lasciare e correggere;
+Knob per mirare, clic per lanciare o correggere. Nessuna allocazione nel
+tick; sfondo spaziale in PSRAM preparato soltanto ai cambi di pianeta.
+Le prove host verificano anche 96 percorsi completi sulle varie proporzioni
+dei display. La pausa annulla una carica senza lanciare il pet.
 Menu pet > Minigiochi. Il pet selezionato diventa il giocatore, con i propri
 colori e la propria razza. Il pet deve essere sveglio.
 

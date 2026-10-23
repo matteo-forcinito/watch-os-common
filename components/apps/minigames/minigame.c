@@ -82,7 +82,12 @@ void mg_advance(mg_session_t *s, uint64_t now, bool active)
     s->last = now;
     if (!active || s->done)
     {
-        if (s->active && !s->done) mg_input(s, MG_RELEASE, 0, 0, 0);
+        if (s->active && !s->done)
+        {
+            mg_input_t release = {.kind = MG_RELEASE, .cancelled = true};
+            s->held = false;
+            s->game->input(mg_state(s), &release);
+        }
         s->active = false;
         s->remainder = 0;
         return;

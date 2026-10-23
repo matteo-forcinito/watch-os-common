@@ -184,6 +184,18 @@ colline la pressione aumenta il peso, nelle stelle un tocco cambia corsia,
 nell'esempio cerca di colpire il bersaglio. Prevedi anche il Knob se vuoi
 che il gioco sia comodo sui device con rotella.
 
+Quando lo schermo si spegne, arriva un `MG_RELEASE` con
+`event->cancelled == true`: annulla la pressione. Se il tuo gioco lancia
+qualcosa quando lasci il dito, controlla `!event->cancelled` prima del
+lancio. Così mettere in pausa non diventa una mossa involontaria.
+
+Per un esempio più avanzato guarda
+[Salto quantico](../../components/apps/minigames/games/quantum.c): orbite,
+gravità, traiettoria prevista e particelle usano questa stessa base. Non
+crea timer, non chiama LVGL e non alloca memoria durante la partita. Lo
+sfondo viene preparato solo quando cambia pianeta e poi ripristinato nelle
+zone attraversate dal pet.
+
 Per una scelta casuale usa lo stato del gioco:
 
 ```c

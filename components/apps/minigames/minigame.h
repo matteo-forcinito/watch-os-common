@@ -20,6 +20,7 @@ typedef struct
     int x, y;                 /* Touch position, 0..1000 in the play area. */
     int direction;            /* -1 left, +1 right; zero for release/click. */
     bool held;
+    bool cancelled;           /* Synthetic release on pause: cancel gestures. */
 } mg_input_t;
 typedef struct { int score; bool won; } mg_result_t;
 typedef struct

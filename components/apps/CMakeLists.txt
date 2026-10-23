@@ -56,6 +56,7 @@ idf_component_register(
         "minigames/minigame_canvas.c"
         "minigames/minigame_screen.c"
         "minigames/games/tap_star.c"
+        "minigames/games/quantum.c"
         "shell/shell.c"
         "shell/watchface.c"
         "shell/launcher.c"

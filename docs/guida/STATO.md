@@ -1,6 +1,6 @@
 # Stato del progetto — 23 ottobre 2026
 
-Questa pagina descrive la release **1.12.0** per AMOLED 1.8, AMOLED 1.75,
+Questa pagina descrive la release **1.13.0** per AMOLED 1.8, AMOLED 1.75,
 AMOLED 1.75C, Knob 1.8, Watcher e Guition 4848. La versione effettivamente
 disponibile si controlla dal catalogo OTA in **Impostazioni → Aggiornamento**.
 
@@ -16,6 +16,11 @@ disponibile si controlla dal catalogo OTA in **Impostazioni → Aggiornamento**.
   Pet → Minigiochi. Premi in XP e gioia, salvataggio tramite worker di sistema.
 - **Base condivisa per i minigiochi**: tempo, pausa, comandi, memoria,
   disegno, Riprova, Esci e risultato sono gestiti dal motore comune.
+- **Salto quantico**: quarto gioco, con il proprio pet astronauta. Tieni
+  premuto per caricare e rallentare l'orbita, lascia per lanciarti; la scia
+  puntinata anticipa la traiettoria. In volo tocca per correggere la rotta
+  usando energia. Otto pianeti, tre scudi, buchi neri dopo il terzo salto.
+  Sul Knob gira per mirare e clicca per lanciare o dare un impulso.
 
 Per creare il tuo gioco, parti da
 [Il tuo primo minigioco](14-minigiochi.md). Il comando
