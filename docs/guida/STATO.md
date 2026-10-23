@@ -1,7 +1,8 @@
 # Stato del progetto — 23 ottobre 2026
 
-Questa pagina descrive la release **1.13.0** per AMOLED 1.8, AMOLED 1.75,
-AMOLED 1.75C, Knob 1.8, Watcher e Guition 4848. La versione effettivamente
+Questa pagina descrive lo sviluppo **1.14.0-dev.1** per AMOLED 1.8, AMOLED 1.75,
+AMOLED 1.75C, Knob 1.8, Watcher e Guition 4848. Le prove sui dispositivi
+collegati usano USB. La versione effettivamente
 disponibile si controlla dal catalogo OTA in **Impostazioni → Aggiornamento**.
 
 ## Pet e giochi
@@ -26,6 +27,24 @@ Per creare il tuo gioco, parti da
 [Il tuo primo minigioco](14-minigiochi.md). Il comando
 `python tools/new_minigame.py nome --title "Titolo"` crea una copia funzionante
 dell'esempio e la registra nel firmware.
+
+## Campagne e RPG
+
+- **Arcipet**: stanze raggruppate in piani, attacco automatico da fermo,
+  nemici mobili e tiratori, boss ogni cinque stanze, potenziamenti a scelta.
+- **Abissi luminosi**: esplorazione continua, cristalli, ossigeno, sonar,
+  creature e profondità successive.
+- **Bastione dei sogni**: tre corsie, torri potenziabili, assedi e guardiani.
+- I tre giochi conservano la campagna sul dispositivo: salvataggio ogni
+  30 secondi e all'uscita, pausa e ripresa dopo il riavvio. Non terminano
+  al vecchio limite di 60 secondi. Il soccorso conserva i potenziamenti.
+- **[Petland](../../petland/README.md)** è un RPG esterno separato: mondo
+  96×96, villaggi, quattro santuari, torre, equipaggiamento e combattimenti
+  a turni. Cronache del Faro e Legami selvatici hanno progressi indipendenti;
+  dodici specie, tre forme evolutive, catture, squadra di tre e armi elementali.
+  Il codice non viene incluso nel firmware del sistema.
+- **Salvataggi**: due copie compresse nei file del dispositivo, importazione
+  dei precedenti record NVS e ripiego NVS per modelli senza spazio file.
 
 ## Verifiche da usare
 

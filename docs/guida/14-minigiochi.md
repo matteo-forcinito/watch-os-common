@@ -279,3 +279,69 @@ Per orientarti: [motore](../../components/apps/minigames/minigame.h),
 [disegno](../../components/apps/minigames/minigame_canvas.h),
 [schermo condiviso](../../components/apps/minigames/minigame_screen.c),
 [elenco dei giochi](../../components/apps/pet/pet_game_catalog.c).
+
+## 11. Un gioco che continua e si salva
+
+**Arcipet**, **Abissi luminosi** e **Bastione dei sogni** usano la stessa
+base, con `.continuous = true`: non scadono dopo 60 secondi. Arcipet
+procede per stanze e piani, Abissi per esplorazioni successive, Bastione
+per ondate. Puoi uscire e riprendere. Se perdi tutta la vita arriva un
+soccorso: riparti nella zona attuale e conservi i potenziamenti, perdendo
+il 10% delle monete. Non c'è una schermata finale che cancella la campagna.
+
+- **Arcipet:** trascina per muoverti e fermati per sparare. Sul Knob gira
+  per cambiare direzione e clicca per alternare movimento e attacco.
+  Non puoi fare entrambe le cose insieme: crea distanza dai nemici e trova
+  il momento per colpire. Ogni quinta stanza contiene un guardiano.
+- **Abissi luminosi:** trascina in verticale per nuotare, rilascia per
+  emettere il sonar. Sul Knob gira per cambiare quota e clicca per il sonar.
+  Raccogli cristalli e aria, conservando energia per i passaggi difficili.
+- **Bastione dei sogni:** scegli una delle tre corsie e potenzia la torre;
+  sul Knob gira per scegliere e clicca per comprare. Distribuisci le risorse
+  fra le corsie in base agli assalti, invece di potenziare soltanto una torre.
+
+Fra le zone la partita attende la tua decisione. Le quattro carte sono
+attacco (riserva d'aria in Abissi), vita, abilità e riposo gratuito.
+Le prime tre consumano l'oro indicato e diventano più care: non cresci
+automaticamente restando fermo nel menu. Il riposo permette di continuare
+anche senza denaro. Tocca e rilascia una carta, oppure scegli e clicca sul Knob.
+
+I progressi appartengono **al gioco e al dispositivo**, non al singolo pet:
+cambiare pet cambia il protagonista, senza azzerare la campagna. Un viaggio
+del pet non trasporta questi salvataggi sull'altro orologio.
+
+Il motore salva ogni 30 secondi di attività, quando lo schermo cambia stato
+e all'uscita. **Salva ed esci** richiede subito una scrittura al worker.
+Attendi un istante prima di togliere alimentazione: uno spegnimento improvviso
+può riportare all'ultimo salvataggio completato. Con memoria per i file, i dati
+stanno in `game-saves` (memoria interna oppure SD): due copie alternate
+permettono di recuperare la precedente se una scrittura viene interrotta.
+Senza file si usa NVS `pet_games`, separata da impostazioni, abbinamenti
+e archivio dei pet. I vecchi progressi NVS vengono trasferiti ai file;
+il record originale si libera solo dopo la conferma della scrittura.
+Le sequenze di zeri
+vengono compresse prima della scrittura: mappe e nemici inutilizzati non
+occupano inutilmente la memoria del dispositivo. I precedenti record non
+compressi restano leggibili. Una scrittura fallita
+viene segnalata e ritentata; un formato incompatibile o un checksum errato
+non viene usato per avviare la partita.
+
+Per aggiungere un salvataggio al tuo gioco:
+
+1. Metti le sole regole in una struttura piccola: posizione, vita, monete,
+   nemici e stato casuale. Niente immagini, widget o puntatori.
+2. Aggiungi `save` e `load`, seguendo
+   [adventures.c](../../components/apps/minigames/games/adventures.c).
+   `load` deve controllare i valori prima di usarli.
+3. Imposta `checkpoint_bytes`, `checkpoint_version` e `continuous` nel
+   descrittore. Il limite della copia da salvare è 1536 byte; il limite
+   dell'intero stato grafico resta 64 KB.
+4. Se cambi il formato, aumenta `checkpoint_version`. Questa prima base
+   rifiuta i vecchi formati: per conservarli devi scrivere una migrazione.
+
+`MG_MOVE` comunica la posizione durante un trascinamento. `MG_PRESS` avvia
+il gesto, `MG_RELEASE` lo chiude; controlla sempre `cancelled` quando un
+rilascio attiva un'azione. Non serve aggiungere timer o scritture NVS nel
+file del gioco.
+
+Per un progetto più ampio vedi [Petland, app RPG esterna](../../petland/README.md).

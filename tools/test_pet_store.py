@@ -109,6 +109,6 @@ subprocess.run([str(compiler),'/nologo','/std:c11','/W3','/D_CRT_SECURE_NO_WARNI
                 str(stub/'test.c'),str(root/'components/orbi/orbi_genome.c'),str(root/'components/orbi/pet_sprite.c'),str(json_dir/'cJSON.c'),
                 str(root/'components/apps/pet/pet_game.c'),str(root/'components/apps/pet/pet_game_catalog.c'),
                 str(root/'components/apps/minigames/minigame.c'),str(root/'components/apps/minigames/minigame_canvas.c'),
-                str(root/'components/apps/minigames/games/tap_star.c'),
+                *map(str, sorted((root/'components/apps/minigames/games').glob('*.c'))),
                 '/Fe:'+str(stub/'pet_tests.exe')],env=env,cwd=stub,check=True)
 subprocess.run([str(stub/'pet_tests.exe')],check=True)

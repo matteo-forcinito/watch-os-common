@@ -11,9 +11,10 @@
 #define MG_MAX_STATE_BYTES 65536
 #define MG_MAX_DURATION_MS 60000
 #define MG_HUD_BYTES 80
+#define MG_CHECKPOINT_BYTES 1536
 
 typedef struct mg_canvas mg_canvas_t;
-typedef enum { MG_PRESS, MG_RELEASE, MG_TURN, MG_CLICK } mg_input_kind_t;
+typedef enum { MG_PRESS, MG_RELEASE, MG_TURN, MG_CLICK, MG_MOVE } mg_input_kind_t;
 typedef struct
 {
     mg_input_kind_t kind;
@@ -36,6 +37,14 @@ typedef struct
     void (*hud)(const void *state, char text[MG_HUD_BYTES]);
     bool (*result)(const void *state, mg_result_t *result);
     const char *(*feedback)(const void *state);
+    /* Optional continuing adventure. Persist only logical state, never pixels
+     * or pointers. A new format requires a new checkpoint_version. */
+    bool continuous;
+    uint16_t checkpoint_version, checkpoint_bytes;
+    bool (*save)(const void *state, void *data, size_t size);
+    bool (*load)(void *state, const void *data, size_t size);
+    const char *(*help)(const void *state);
+    int (*actor_variant)(const void *state);
 } mg_game_t;
 
 typedef struct mg_session mg_session_t;

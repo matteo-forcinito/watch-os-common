@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import importlib.util
 import shutil
+import sys
 
 root = Path(__file__).resolve().parents[1]
 work = Path(tempfile.mkdtemp(prefix='minigames-'))
@@ -38,6 +39,15 @@ for line in raw.splitlines():
         k, v = line.split('=', 1)
         env[k.upper()] = v
 compiler = sorted((vs/'VC/Tools/MSVC').glob('*/bin/Hostx64/x64/cl.exe'))[-1]
+def portable_case(name):
+    subprocess.run([str(compiler), '/nologo', '/std:c11', '/utf-8', '/O2', '/W4', '/WX',
+                    str(root/f'tools/test_{name}.c'), str(root/'components/apps/minigames/minigame.c'),
+                    str(root/'components/apps/minigames/minigame_canvas.c'), '/Fe:'+str(work/(name+'.exe'))],
+                   cwd=work, env=env, check=True)
+    subprocess.run([str(work/(name+'.exe'))], check=True, timeout=90)
+if '--petland-only' in sys.argv:
+    portable_case('petland')
+    raise SystemExit(0)
 sources = [root/'tools/test_minigames.c', root/'components/apps/pet/pet_game.c',
            root/'components/apps/pet/pet_game_catalog.c', root/'components/apps/minigames/minigame.c',
            root/'components/apps/minigames/minigame_canvas.c', generated]
@@ -52,4 +62,8 @@ subprocess.run([str(compiler), '/nologo', '/std:c11', '/utf-8', '/O2', '/W4', '/
                 str(root/'components/apps/minigames/minigame_canvas.c'), '/Fe:'+str(work/'quantum.exe')],
                cwd=work, env=env, check=True)
 subprocess.run([str(work/'quantum.exe')], check=True)
+for name in ['adventures', 'petland']:
+    portable_case(name)
 print('PASS: beginner generator: copied game compiles, registration, duplicate and invalid-name protection')
+from test_progress import run
+run(root, work, compiler, env, sources)

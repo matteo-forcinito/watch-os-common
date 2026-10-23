@@ -2,6 +2,7 @@
  * allocation. All allocations happen here at open, and all are owned by root. */
 #include "minigame_screen.h"
 #include "minigame_canvas.h"
+#include "minigame_progress.h"
 #include "core/lv_port.h"
 #include "core/power.h"
 #include "core/state.h"
@@ -29,10 +30,14 @@ typedef struct
     uint8_t grid[PET_GRID * PET_GRID];
     uint16_t colors[PET_COLORS];
     char hud_text[MG_HUD_BYTES];
-    const char *feedback_text;
+    char feedback_text[128];
+    char hint_text[128];
+    int actor_variant;
     int frames, animation, report_at, hud_at;
     int64_t began, refresh_start, refresh_sum, refresh_max, tick_sum;
     unsigned refresh_count;
+    uint64_t checkpoint_at;
+    bool was_active;
 } mg_screen_t;
 
 static uint64_t now_ms(void) { return (uint64_t)(esp_timer_get_time() / 1000); }
@@ -82,17 +87,25 @@ static void screen_changed(lv_observer_t *observer, lv_subject_t *subject)
     mg_screen_t *s = lv_observer_get_user_data(observer);
     /* The observer runs even when LVGL's timers are stopped for screen-off. */
     mg_advance(s->session, now_ms(), false);
+    if (s->game->continuous) mg_progress_save(s->game, mg_state(s->session));
 }
 static void touch(lv_event_t *e)
 {
     mg_screen_t *s = lv_event_get_user_data(e);
     if (!active(s)) return;
+    if (lv_event_get_code(e) == LV_EVENT_PRESS_LOST)
+    {
+        /* Losing the pad cancels a gesture; it must never confirm a purchase. */
+        mg_advance(s->session, now_ms(), false);
+        return;
+    }
     lv_point_t point = {0};
     lv_indev_t *indev = lv_indev_active();
     if (indev) lv_indev_get_point(indev, &point);
     int x = point.x * 1000 / s->canvas.width;
     int y = (point.y - s->canvas.top) * 1000 / s->canvas.height;
-    mg_input(s->session, lv_event_get_code(e) == LV_EVENT_PRESSED ? MG_PRESS : MG_RELEASE,
+    mg_input(s->session, lv_event_get_code(e) == LV_EVENT_PRESSED ? MG_PRESS :
+             lv_event_get_code(e) == LV_EVENT_PRESSING ? MG_MOVE : MG_RELEASE,
              x, y, x < 500 ? -1 : 1);
 }
 static void knob(lv_event_t *e)
@@ -110,9 +123,19 @@ bool mg_screen_click(lv_obj_t *root)
     mg_input(s->session, MG_CLICK, 0, 0, 0);
     return true;
 }
+bool mg_screen_checkpoint(lv_obj_t *root)
+{
+    mg_screen_t *s = root ? lv_obj_get_user_data(root) : NULL;
+    return s && (!s->game->continuous || mg_progress_save(s->game, mg_state(s->session)));
+}
 static void leave(lv_event_t *e)
 {
     mg_screen_t *s = lv_event_get_user_data(e);
+    if (s->game->continuous && !mg_progress_save(s->game, mg_state(s->session)))
+    {
+        ui_toast("Salvataggio in attesa: riprova");
+        return;
+    }
     if (s->config.exit) s->config.exit(s->config.user);
 }
 static void retry(lv_event_t *e)
@@ -124,7 +147,7 @@ static void retry(lv_event_t *e)
     s->frames = 0;
     s->tick_sum = s->refresh_sum = s->refresh_max = s->refresh_start = 0;
     s->refresh_count = 0;
-    s->feedback_text = NULL;
+    s->feedback_text[0] = 0;
     lv_obj_set_hidden(s->result, true);
     lv_obj_set_hidden(s->retry, true);
     lv_obj_set_hidden(s->hint, false);
@@ -152,17 +175,38 @@ static void tick(lv_timer_t *timer)
     int64_t started = esp_timer_get_time();
     bool visible = active(s);
     mg_advance(s->session, (uint64_t)(started / 1000), visible);
+    if (!visible && s->was_active && s->game->continuous)
+        mg_progress_save(s->game, mg_state(s->session));
+    s->was_active = visible;
     if (!visible || mg_done(s->session))
     {
         if (visible) finish(s);
         return;
     }
     int elapsed = mg_elapsed(s->session);
+    if (s->game->continuous && now_ms() - s->checkpoint_at >= 30000)
+    {
+        if (mg_progress_save(s->game, mg_state(s->session))) s->checkpoint_at = now_ms();
+        else s->checkpoint_at = now_ms() - 25000;
+    }
     if (s->frames++ % 15 == 0) power_user_activity();
+    pet_look_t actor = s->config.actor;
+    int variant = s->game->actor_variant ? s->game->actor_variant(mg_state(s->session)) : 0;
+    variant = variant < 0 ? 0 : variant % 256;
+    int count = pet_variant_count(actor.species);
+    if (count > 0) actor.variant = (uint8_t)((actor.variant + variant) % count);
+    if (s->actor_variant != variant)
+    {
+        uint32_t colors[PET_COLORS];
+        pet_palette(&actor, 1, colors);
+        for (int i = 0; i < PET_COLORS; i++) s->colors[i] = mg_color(colors[i]);
+        s->actor_variant = variant;
+        s->animation = -1;
+    }
     if (s->animation != elapsed / 100)
     {
         s->animation = elapsed / 100;
-        pet_draw(&s->config.actor, s->game->actor_walk ? PET_POSE_WALK : PET_POSE_HAPPY,
+        pet_draw(&actor, s->game->actor_walk ? PET_POSE_WALK : PET_POSE_HAPPY,
                  (uint32_t)s->animation, false, s->grid);
     }
     mg_canvas_begin(&s->canvas);
@@ -186,12 +230,20 @@ static void tick(lv_timer_t *timer)
         else snprintf(s->hud_text, sizeof(s->hud_text), "%ds", (MG_MAX_DURATION_MS - elapsed + 999) / 1000);
         s->hud_text[MG_HUD_BYTES - 1] = 0;
         lv_label_set_text_static(s->hud, s->hud_text);
+        const char *help = s->game->help ? s->game->help(mg_state(s->session)) : s->game->instructions;
+        if (help && strcmp(help, s->hint_text))
+        {
+            snprintf(s->hint_text, sizeof(s->hint_text), "%s", help);
+            lv_label_set_text_static(s->hint, s->hint_text);
+        }
     }
     const char *feedback = s->game->feedback ? s->game->feedback(mg_state(s->session)) : "";
-    if (feedback != s->feedback_text)
+    if (s->game->continuous && mg_progress_failed(s->game)) feedback = "Salvataggio fallito: riprovo";
+    if (!feedback) feedback = "";
+    if (strcmp(feedback, s->feedback_text))
     {
-        s->feedback_text = feedback;
-        lv_label_set_text_static(s->feedback, feedback ? feedback : "");
+        snprintf(s->feedback_text, sizeof(s->feedback_text), "%s", feedback);
+        lv_label_set_text_static(s->feedback, s->feedback_text);
     }
     s->tick_sum += esp_timer_get_time() - started;
     if (elapsed / 5000 != s->report_at)
@@ -207,6 +259,8 @@ static void tick(lv_timer_t *timer)
 static void deleted(lv_event_t *e)
 {
     mg_screen_t *s = lv_event_get_user_data(e);
+    if (s->game->continuous && !mg_progress_save(s->game, mg_state(s->session)))
+        ESP_LOGW(TAG, "%s final checkpoint not queued", s->game->id);
     if (s->timer) lv_timer_delete(s->timer);
     lv_obj_remove_event_cb_with_user_data(s->parent, knob, s);
     lv_display_remove_event_cb_with_user_data(lv_display_get_default(), refresh, s);
@@ -224,6 +278,7 @@ lv_obj_t *mg_screen_open(lv_obj_t *parent, const mg_game_t *game, const mg_scree
     mg_screen_t *s = heap_caps_calloc(1, sizeof(*s), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s) return NULL;
     s->config = *config;
+    s->actor_variant = -1;
     s->game = game;
     s->parent = parent;
     s->session = mg_create(game, esp_random(), now_ms());
@@ -235,6 +290,9 @@ lv_obj_t *mg_screen_open(lv_obj_t *parent, const mg_game_t *game, const mg_scree
         free(s);
         return NULL;
     }
+    if (game->continuous && mg_progress_load(game, mg_state(s->session)))
+        ESP_LOGI(TAG, "%s resumed checkpoint", game->id);
+    s->checkpoint_at = now_ms();
     uint32_t palette[PET_COLORS];
     pet_palette(&config->actor, 1, palette);
     for (int i = 0; i < PET_COLORS; i++) s->colors[i] = mg_color(palette[i]);
@@ -265,6 +323,7 @@ lv_obj_t *mg_screen_open(lv_obj_t *parent, const mg_game_t *game, const mg_scree
     lv_obj_set_pos(s->pad, W * 8 / 100, H / 5);
     lv_obj_set_clickable(s->pad, true);
     lv_obj_add_event_cb(s->pad, touch, LV_EVENT_PRESSED, s);
+    lv_obj_add_event_cb(s->pad, touch, LV_EVENT_PRESSING, s);
     lv_obj_add_event_cb(s->pad, touch, LV_EVENT_RELEASED, s);
     lv_obj_add_event_cb(s->pad, touch, LV_EVENT_PRESS_LOST, s);
     s->result = label(s, "", H * 33 / 100, true);
@@ -274,8 +333,8 @@ lv_obj_t *mg_screen_open(lv_obj_t *parent, const mg_game_t *game, const mg_scree
     s->retry = ui_button(s->root, "Riprova", 0x245544, retry, s);
     lv_obj_set_width(s->retry, W / 3);
     lv_obj_align(s->retry, LV_ALIGN_TOP_MID, 0, H * 65 / 100);
-    lv_obj_t *exit = ui_button(s->root, "Esci", 0x24415C, leave, s);
-    lv_obj_set_width(exit, W / 3);
+    lv_obj_t *exit = ui_button(s->root, game->continuous ? "Salva ed esci" : "Esci", 0x24415C, leave, s);
+    lv_obj_set_width(exit, game->continuous ? W / 2 : W / 3);
     lv_obj_align(exit, LV_ALIGN_TOP_MID, 0, H * 82 / 100);
     lv_obj_set_hidden(s->result, true);
     lv_obj_set_hidden(s->retry, true);

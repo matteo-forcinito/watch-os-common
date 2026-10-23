@@ -174,6 +174,26 @@ deve essere abbinato, vicino e raggiungibile.
 
 ## Fase 4 - Oggetti e passatempo (1.12.x)
 
+### Campagne della 1.14.0
+
+Arcipet aggiunge stanze, piani, boss e scelte di potenziamento; Abissi
+luminosi e Bastione dei sogni sono altre due campagne continue. La base
+supporta `MG_MOVE`, partite senza limite di 60 secondi e checkpoint
+versionati fino a 1536 byte in `pet_games`. La UI usa una cache PSRAM e
+il worker scrive NVS; formati e checksum non validi vengono rifiutati.
+I progressi sono locali al gioco/dispositivo e non viaggiano col pet.
+
+Petland è un progetto esterno distinto: [guida](../petland/README.md),
+con le campagne indipendenti Cronache del Faro e Legami selvatici. Include
+mondo 96×96, quattro biomi, rovine, sei azioni di combattimento, dodici
+specie catturabili, tre forme evolutive, squadra di tre con vita individuale,
+ruoli e tre slot di equipaggiamento elementale. Usa lo stesso host e lo
+stesso backend di salvataggio, compresso e compatibile con i vecchi record:
+due file alternati in `game-saves`, con fallback NVS se non esiste uno
+spazio file. La migrazione libera il vecchio blob NVS solo dopo la scrittura.
+La parte allarmi dell'appkit ha un header autonomo
+per riutilizzare le sveglie anche nelle app offline.
+
 - Inventario (`orbi_children/items`, 32 oggetti, 1 byte ciascuno): ciotola,
   cuccia, palla, fiore, conchiglia (dai viaggi), cappellino.
 - Gli oggetti si posano sul prato (sprite 16x16 procedurali come le icone) e

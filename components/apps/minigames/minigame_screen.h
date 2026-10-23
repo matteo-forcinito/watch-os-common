@@ -16,4 +16,5 @@ typedef struct
 } mg_screen_config_t;
 lv_obj_t *mg_screen_open(lv_obj_t *parent, const mg_game_t *game, const mg_screen_config_t *config);
 bool mg_screen_click(lv_obj_t *root);
+bool mg_screen_checkpoint(lv_obj_t *root);
 #endif

@@ -66,7 +66,7 @@ void mg_restart(mg_session_t *s, uint32_t seed, uint64_t now)
 void mg_input(mg_session_t *s, mg_input_kind_t kind, int x, int y, int direction)
 {
     if (!s || s->done || !s->active) return;
-    if (kind < MG_PRESS || kind > MG_CLICK) return;
+    if (kind < MG_PRESS || kind > MG_MOVE) return;
     if (kind == MG_PRESS) s->held = true;
     if (kind == MG_RELEASE) s->held = false;
     mg_input_t input = {.kind = kind, .x = x < 0 ? 0 : x > 1000 ? 1000 : x,
@@ -103,9 +103,10 @@ void mg_advance(mg_session_t *s, uint64_t now, bool active)
     {
         s->remainder -= MG_STEP_MS;
         s->elapsed += MG_STEP_MS;
+        if (s->game->continuous && s->elapsed >= 3600000) s->elapsed = 0;
         s->game->step(mg_state(s), MG_STEP_MS);
         s->done = s->game->result(mg_state(s), &s->result);
-        if (s->elapsed >= MG_MAX_DURATION_MS) s->done = true;
+        if (!s->game->continuous && s->elapsed >= MG_MAX_DURATION_MS) s->done = true;
         if (s->done)
         {
             s->result.score = s->result.score < 0 ? 0 : s->result.score > 100 ? 100 : s->result.score;

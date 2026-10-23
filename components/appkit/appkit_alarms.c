@@ -3,7 +3,8 @@
  * here, the sound starts at once (sound service retries the speaker), and the
  * ring screen opens as soon as the UI can take it.
  */
-#include "appkit.h"
+#include "appkit_alarms.h"
+#include "esp_err.h"
 
 #include "apps_internal.h"
 #include "core/app.h"

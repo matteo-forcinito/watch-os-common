@@ -275,6 +275,8 @@ int extapp_scan(extapp_t *out, int max)
 
     if (dir == NULL)
     {
+        /* A USB-installed development app is usable with a card inserted too. */
+        if (count == 0 && max > 0 && extapp_slot_app(&out[0])) count = 1;
         return count;
     }
 
@@ -340,6 +342,15 @@ int extapp_scan(extapp_t *out, int max)
     }
 
     closedir(dir);
+    /* Keep manually flashed apps launchable on development boards with SD.
+     * Prefer a real SD package with the same id, so updates there still work. */
+    if (sdcard_is_mounted() && count < max && extapp_slot_app(&out[count]))
+    {
+        bool listed = false;
+        for (int i = 0; i < count; i++)
+            if (!strcasecmp(out[i].id, out[count].id) || !strcasecmp(out[i].name, out[count].name)) listed = true;
+        if (!listed) count++;
+    }
     ESP_LOGI(TAG, "%d external apps in %s", count, apps_dir);
 
     return count;

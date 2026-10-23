@@ -107,7 +107,20 @@ int main(void)
                 if (g->hud) g->hud(mg_state(s), hud);
                 assert(memchr(hud, 0, sizeof(hud)));
             }
-            assert(mg_done(s) && mg_take_result(s, &r) && r.score >= 0 && r.score <= 100);
+            if (g->continuous)
+            {
+                assert(!mg_done(s) && !mg_take_result(s, &r));
+                uint8_t checkpoint[MG_CHECKPOINT_BYTES];
+                assert(g->checkpoint_bytes <= sizeof(checkpoint));
+                assert(g->save(mg_state(s), checkpoint, g->checkpoint_bytes));
+                mg_session_t *resumed = mg_create(g, 55, 0);
+                assert(resumed && g->load(mg_state(resumed), checkpoint, g->checkpoint_bytes));
+                mg_canvas_begin(&c);
+                g->draw(mg_state(resumed), &c);
+                assert(!g->load(mg_state(resumed), checkpoint, g->checkpoint_bytes - 1));
+                mg_destroy(resumed);
+            }
+            else assert(mg_done(s) && mg_take_result(s, &r) && r.score >= 0 && r.score <= 100);
             mg_destroy(s);
         }
         free(memory);

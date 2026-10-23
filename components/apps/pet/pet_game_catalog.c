@@ -208,8 +208,10 @@ static const mg_game_t s_stars = {
     .input = game_input, .draw = stars_draw, .hud = game_hud, .result = game_result};
 extern const mg_game_t mg_tap_star;
 extern const mg_game_t mg_quantum;
+extern const mg_game_t mg_archer, mg_ocean, mg_defence;
 /* Generated game declarations. */
 static const mg_game_t *const s_games[] = {
+    &mg_archer, &mg_ocean, &mg_defence,
     &s_ski, &s_stars, &mg_tap_star,
     &mg_quantum,
     /* Generated game entries. */

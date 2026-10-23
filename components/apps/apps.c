@@ -2,6 +2,7 @@
 
 #include "apps_internal.h"
 #include "pet/pet.h"
+#include "minigames/minigame_progress.h"
 
 #if CONFIG_APPKIT_HOSTED
 #include "appkit.h"
@@ -299,6 +300,7 @@ static void ask_close(const app_t *app)
 
 void apps_init(void)
 {
+    mg_progress_init();
     pet_init();
 #if CONFIG_WATCH_ECOS_PAIRING
     ecos_init();
