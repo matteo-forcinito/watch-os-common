@@ -78,6 +78,11 @@ prepara il ritorno al launcher anche in caso di riavvio inatteso.
 
 ## Compilare e installare
 
+I [pacchetti Petland 1.0.0 per i sei modelli](https://github.com/matteo-forcinito/watch-firmware-releases/releases/tag/petland-v1.0.0)
+sono già compilati con la grafica Pokémon e i relativi crediti. Scegli
+lo ZIP del tuo modello; sulla SD estrai `apps` nella radice. Questi pacchetti
+sono separati dall'aggiornamento del sistema 1.14.0.
+
 Apri PowerShell con l'ambiente ESP-IDF 6.1 e, dalla cartella
 `watch-os-common`, esegui per il modello desiderato:
 

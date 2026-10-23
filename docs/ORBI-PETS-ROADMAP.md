@@ -221,6 +221,11 @@ all'RPG, senza simulare l'intero sistema dei giochi originali.
 
 ## Checklist di rilascio (ogni fase)
 
+La [valutazione Pokémon](POKEMON-INTEGRAZIONE.md), successiva al rilascio
+1.14.0/Petland 1.0.0, descrive mosse, tipi multipli, nature e l'integrazione
+opzionale come pet personale, con budget e vincoli di compatibilità.
+È una proposta successiva, non una funzione inclusa in questi rilasci.
+
 1. `python tools/test_pet_store.py` e gli altri test host: tutti OK.
 2. `python tools/pet_sprite_preview.py`: controllare l'anteprima PNG.
 3. Commit in `watch-os-common`, push su `main`.
