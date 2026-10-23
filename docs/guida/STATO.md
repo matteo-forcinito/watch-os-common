@@ -1,6 +1,6 @@
 # Stato del progetto — 23 ottobre 2026
 
-Questa pagina descrive lo sviluppo **1.14.0-dev.1** per AMOLED 1.8, AMOLED 1.75,
+Questa pagina descrive la base **1.14.0** per AMOLED 1.8, AMOLED 1.75,
 AMOLED 1.75C, Knob 1.8, Watcher e Guition 4848. Le prove sui dispositivi
 collegati usano USB. La versione effettivamente
 disponibile si controlla dal catalogo OTA in **Impostazioni → Aggiornamento**.
