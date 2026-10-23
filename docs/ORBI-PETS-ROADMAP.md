@@ -194,6 +194,13 @@ spazio file. La migrazione libera il vecchio blob NVS solo dopo la scrittura.
 La parte allarmi dell'appkit ha un header autonomo
 per riutilizzare le sveglie anche nelle app offline.
 
+Legami selvatici può usare il pacchetto Pokémon personale: dodici famiglie,
+31 specie comprese le evoluzioni, versioni normali/shiny e cinque tipi.
+Grafica ispirata a TamaPoke, sprite PMD SpriteCollab convertiti con
+`tools/prepare_pokemon.py`: il pacchetto e i crediti restano separati dal
+codice del motore. Le condizioni evolutive e le regole restano adattate
+all'RPG, senza simulare l'intero sistema dei giochi originali.
+
 - Inventario (`orbi_children/items`, 32 oggetti, 1 byte ciascuno): ciotola,
   cuccia, palla, fiore, conchiglia (dai viaggi), cappellino.
 - Gli oggetti si posano sul prato (sprite 16x16 procedurali come le icone) e

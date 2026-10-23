@@ -83,6 +83,16 @@ static void test_collection(void)
     touch.kind = MG_PRESS; touch.cancelled = false; input(&a, &touch);
     touch.kind = MG_RELEASE; input(&a, &touch);
     assert(!a.m.mode && a.m.gear[1] == drop);
+    wild_start(&a, 4); choose_starter(&a, 0);
+    assert(!strcmp(beast_name(&a.m, 0), "Charmander"));
+    a.m.beast_xp[0] = 48; a.m.seals = 1;
+    assert(!strcmp(beast_name(&a.m, 0), "Charmeleon"));
+    a.m.beast_xp[0] = 132; a.m.seals = 15;
+    assert(!strcmp(beast_name(&a.m, 0), "Charizard"));
+    a.m.beast_xp[10] = 348;
+    assert(beast_form(&a.m, 10) == 1 && !strcmp(beast_name(&a.m, 10), "Raichu"));
+    assert(element_of(&a.m, 10) == 4);
+    assert(matchup(&a.m, 4, 1) == 200 && matchup(&a.m, 4, 3) == 0 && matchup(&a.m, 2, 1) == 200);
 }
 static void test_renderers(void)
 {
@@ -99,10 +109,15 @@ static void test_renderers(void)
             .actor_grid = actor, .actor_palette = palette, .actor_size = 32};
         rpg_t state = {0}; start(&state, 123);
         battle(&state, 1);
-        for (int mode = 0; mode <= 6; mode++)
+        for (int edition = 0; edition < 2; edition++) for (int mode = 0; mode <= 6; mode++)
         {
-            state.m.mode = mode; state.m.choice = 0; state.redraw = true;
+            state.m.edition = edition; state.m.mode = mode; state.m.choice = 0; state.redraw = true;
             mg_canvas_begin(&canvas); draw(&state, &canvas);
+            for (int i = 0; i < 16; i++) assert(memory[i] == 0xA5 && memory[16 + bytes + i] == 0xA5);
+        }
+        for (int family = 0; family < 12; family++) for (int form = 0; form < 3; form++) for (int shiny = 0; shiny < 2; shiny++)
+        {
+            pokemon_draw(&canvas, family, form, 1, 10, 2, 3, shiny != 0);
             for (int i = 0; i < 16; i++) assert(memory[i] == 0xA5 && memory[16 + bytes + i] == 0xA5);
         }
         free(memory);

@@ -2,6 +2,7 @@
  * four shrines, villages, shops, equipment, relics and a final tower. All
  * rules and drawing are portable C; the external host owns flash and LVGL. */
 #include "../../components/apps/minigames/minigame_canvas.h"
+#include "pokemon.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,8 +26,8 @@ static const int s_shrines[4][2] = {{38,14},{70,40},{38,70},{14,40}};
 static const int s_villages[4][2] = {{12,12},{68,14},{14,70},{70,70}};
 static const char *const s_beasts[12] = {"Lumos","Volpice","Brillo","Coralio","Ondino","Nebulina",
     "Frondel","Radin","Musgel","Quarzo","Granok","Ossidion"};
-static const char *const s_elements[4] = {"Fuoco","Acqua","Natura","Roccia"};
-static const uint32_t s_colors[4] = {0xF5A36A,0x7DCEF4,0xA3DEA0,0xBCABD7};
+static const char *const s_elements[5] = {"Fuoco","Acqua","Erba","Roccia","Elettro"};
+static const uint32_t s_colors[5] = {0xF5A36A,0x7DCEF4,0xA3DEA0,0xBCABD7,0xFFE075};
 static const char *const s_intents[4] = {"attacco rapido", "si difende", "carica: interrompilo!", "colpo pesante: para!"};
 _Static_assert(sizeof(rpg_model_t) <= MG_CHECKPOINT_BYTES, "Petland checkpoint budget");
 static int clamp(int v, int a, int b) { return v < a ? a : v > b ? b : v; }
@@ -34,8 +35,17 @@ static int beast_level(const rpg_model_t *m, int id) { return clamp(1 + m->beast
 static int beast_form(const rpg_model_t *m, int id)
 {
     int level = beast_level(m, id);
-    return level >= 12 && (m->chapter > 1 || m->seals == 15) ? 2 : level >= 5 && (m->chapter > 1 || m->seals) ? 1 : 0;
+    int form = level >= 12 && (m->chapter > 1 || m->seals == 15) ? 2 : level >= 5 && (m->chapter > 1 || m->seals) ? 1 : 0;
+    return m->edition && form > pokemon_last_form(id) ? pokemon_last_form(id) : form;
 }
+static const char *beast_name(const rpg_model_t *m, int id) { return m->edition ? pokemon_name(id, beast_form(m, id)) : s_beasts[id]; }
+static int element_of(const rpg_model_t *m, int id) { return m->edition && id == 10 ? 4 : id / 3; }
+static int enemy_form(const rpg_model_t *m)
+{
+    int form = m->boss ? m->boss > 3 ? 2 : 1 : 0;
+    return m->edition && form > pokemon_last_form(m->enemy - 1) ? pokemon_last_form(m->enemy - 1) : form;
+}
+static const char *enemy_name(const rpg_model_t *m) { return m->edition ? pokemon_name(m->enemy - 1, enemy_form(m)) : s_beasts[m->enemy - 1]; }
 static int hp_for(const rpg_model_t *m, int id) { return 20 + m->level * 5 + m->armour * 4 + beast_level(m, id); }
 static int hp_max(const rpg_model_t *m) { return hp_for(m, m->active_pet); }
 static void heal_party(rpg_model_t *m)
@@ -62,6 +72,14 @@ static int effectiveness(int attack, int defence)
 {
     static const int beats[4] = {2,0,3,1};
     return beats[attack] == defence ? 200 : beats[defence] == attack ? 50 : 100;
+}
+static int matchup(const rpg_model_t *m, int attack, int defence)
+{
+    static const int chart[5][5] = {
+        {50,50,200,50,100}, {200,50,50,200,100}, {50,200,50,200,100},
+        {200,100,100,100,100}, {100,200,50,0,50}
+    };
+    return m->edition ? chart[attack][defence] : effectiveness(attack, defence);
 }
 static int action_count(const rpg_model_t *m) { return m->mode == 4 || m->mode == 6 ? 4 : m->mode == 5 ? 3 : m->mode == 1 ? 6 : 5; }
 static uint16_t make_gear(int power, int element, int rarity) { return (uint16_t)(power | (element << 6) | (rarity << 8)); }
@@ -164,7 +182,7 @@ static void battle(rpg_t *s, int boss)
     m->intent = m->enemy % 4;
     m->rare = !boss && mg_random(&m->random) % 32 == 0;
     m->mana = 6;
-    snprintf(s->message, sizeof(s->message), "%s %s: %s", s_beasts[m->enemy - 1], s_elements[(m->enemy - 1) / 3], s_intents[m->intent]);
+    snprintf(s->message, sizeof(s->message), "%s %s: %s", enemy_name(m), s_elements[element_of(m, m->enemy - 1)], s_intents[m->intent]);
     s->redraw = true;
 }
 static void preview_drop(rpg_t *s)
@@ -228,7 +246,7 @@ static void combat(rpg_t *s, int action)
         return;
     }
     int guard = 0, interrupted = 0;
-    int element = m->active_pet / 3, enemy_element = (m->enemy - 1) / 3;
+    int element = element_of(m, m->active_pet), enemy_element = element_of(m, m->enemy - 1);
     if (action == 5)
     {
         if (!switch_party(m)) { say(s, "Nessun altro compagno pronto"); return; }
@@ -241,7 +259,7 @@ static void combat(rpg_t *s, int action)
         int damage = 3 + m->level + m->weapon * 2 + power + beast_level(m, m->active_pet) / 3 + (m->role == 0 ? 2 : 0);
         bool focused = m->focus >= 2;
         if (focused) damage *= 3, m->focus = 0;
-        damage = damage * effectiveness((gear >> 6) & 3, enemy_element) / 100;
+        damage = damage * matchup(m, (gear >> 6) & 3, enemy_element) / 100;
         if (m->intent == 1) damage = (damage + 2) / 3;
         interrupted = m->intent == 2 && focused && (!m->boss || m->enemy_hp > m->enemy_max / 2);
         m->enemy_hp -= damage;
@@ -250,12 +268,12 @@ static void combat(rpg_t *s, int action)
     {
         if (m->mana < 3) { say(s, "Energia bassa: para per ricaricare"); return; }
         m->mana -= 3;
-        int damage = (7 + m->level + beast_level(m, m->active_pet) * 2 + beast_form(m, m->active_pet) * 5) * effectiveness(element, enemy_element) / 100;
+        int damage = (7 + m->level + beast_level(m, m->active_pet) * 2 + beast_form(m, m->active_pet) * 5) * matchup(m, element, enemy_element) / 100;
         if (element == 0) damage += 3;
         if (element == 2) m->hp = clamp(m->hp + 3, 1, hp_max(m));
-        if (m->intent == 1 && effectiveness(element, enemy_element) < 200) damage /= 2;
+        if (m->intent == 1 && matchup(m, element, enemy_element) < 200) damage /= 2;
         m->enemy_hp -= damage;
-        interrupted = m->intent == 2;
+        interrupted = m->intent == 2 && damage > 0;
     }
     else if (action == 2)
     {
@@ -296,6 +314,7 @@ static void combat(rpg_t *s, int action)
     incoming = clamp(incoming, 1, 10000);
     if (m->intent == 1 || m->intent == 2) incoming = 0;
     else if (m->intent == 3) incoming *= m->boss && m->enemy_hp < m->enemy_max / 2 ? 3 : 2;
+    if (m->edition) incoming = incoming * matchup(m, enemy_element, element_of(m, m->active_pet)) / 100;
     if (action == 1 && element == 1) incoming = (incoming + 1) / 2;
     if (action == 1 && element == 3) incoming = clamp(incoming - 3, 0, 10000);
     if (guard) incoming = (incoming + 2) / 3;
@@ -306,7 +325,7 @@ static void combat(rpg_t *s, int action)
         {
             m->mana = clamp(m->mana, 0, 3); m->focus = 0;
             m->intent = (m->intent + 1) % 4;
-            snprintf(s->message, sizeof(s->message), "Entra %s; %s", s_beasts[m->active_pet], s_intents[m->intent]);
+            snprintf(s->message, sizeof(s->message), "Entra %s; %s", beast_name(m, m->active_pet), s_intents[m->intent]);
         }
         else
         {
@@ -322,7 +341,7 @@ static void combat(rpg_t *s, int action)
     {
         m->turn = (m->turn + 1) % 1000000;
         m->intent = interrupted ? 0 : (m->intent + 1) % 4;
-        snprintf(s->message, sizeof(s->message), "%s: %s", s_beasts[m->enemy - 1], s_intents[m->intent]);
+        snprintf(s->message, sizeof(s->message), "%s: %s", enemy_name(m), s_intents[m->intent]);
     }
     s->redraw = true;
 }
@@ -341,7 +360,7 @@ static void interact(rpg_t *s)
         if (!m->quest)
         {
             m->quest = 1;
-            say(s, m->edition ? "Dodici specie: esplora i quattro biomi" : "Il faro e spento: cerca 4 sigilli");
+            say(s, m->edition ? "12 famiglie: esplora, cattura, evolvi" : "Il faro e spento: cerca 4 sigilli");
             return;
         }
         m->quest = 1;
@@ -463,7 +482,7 @@ static void team(rpg_t *s, int slot)
         m->active_slot = (uint8_t)slot;
         m->active_pet = id;
         m->hp = m->creature_hp[id] ? m->creature_hp[id] : hp_for(m, id);
-        snprintf(s->message, sizeof(s->message), "Slot%d: %s LV%d %s", slot + 1, s_beasts[id], beast_level(m, id), s_elements[id / 3]);
+        snprintf(s->message, sizeof(s->message), "Slot%d: %s LV%d %s", slot + 1, beast_name(m, id), beast_level(m, id), s_elements[element_of(m, id)]);
         s->redraw = true;
         return;
     }
@@ -485,7 +504,7 @@ static void take_drop(rpg_t *s, int choice)
     if (choice < 3) m->gear[choice] = (uint16_t)m->drop;
     else m->gold = clamp(m->gold + (m->drop & 63) * 3 + ((m->drop >> 8) & 3) * 5, 0, 10000000);
     m->drop = m->mode = m->choice = 0;
-    if (m->evolved) snprintf(s->message, sizeof(s->message), "Evoluzione di %s: forma %d!", s_beasts[m->active_pet], beast_form(m, m->active_pet) + 1);
+    if (m->evolved) snprintf(s->message, sizeof(s->message), "Evoluzione: %s!", beast_name(m, m->active_pet));
     else snprintf(s->message, sizeof(s->message), "%s. Equipaggia le armi al campo", choice < 3 ? "Oggetto conservato" : "Oggetto venduto");
     s->redraw = true;
 }
@@ -555,11 +574,13 @@ static void step(void *state, int ms)
 {
     rpg_t *s = state;
     rpg_model_t *m = &s->m;
+    int animation = m->clock / 240;
     m->clock = (m->clock + ms) % 60000;
+    if (m->edition && m->mode && m->clock / 240 != animation) s->redraw = true;
     m->move_at = clamp(m->move_at - ms, 0, 500);
     if (!m->mode && m->held && !m->move_at) move(s, m->direction), m->move_at = 180;
 }
-static void draw_beast(mg_canvas_t *c, int id, int form, int x, int y, bool rare)
+static void draw_original(mg_canvas_t *c, int id, int form, int x, int y, bool rare)
 {
     int r = 12 + form * 5, element = id / 3;
     uint32_t color = rare ? 0xF5DB91 : s_colors[element];
@@ -591,6 +612,11 @@ static void draw_beast(mg_canvas_t *c, int id, int form, int x, int y, bool rare
     mg_box_pixels(c, x - 6, y - 3, 2, 2, 0xFFFFFF);
     mg_box_pixels(c, x + 4, y - 3, 2, 2, 0xFFFFFF);
     if (rare) mg_box_pixels(c, x + r + 5, y - r - 4, 3, 9, 0xFFE89F), mg_box_pixels(c, x + r + 2, y - r - 1, 9, 3, 0xFFE89F);
+}
+static void draw_beast(mg_canvas_t *c, const rpg_model_t *m, int id, int form, int x, int y, bool rare)
+{
+    if (m->edition && pokemon_draw(c, id, form, x, y + 34, 2, m->clock / 240, rare)) return;
+    draw_original(c, id, form, x, y, rare);
 }
 static void draw(void *state, mg_canvas_t *c)
 {
@@ -646,6 +672,7 @@ static void draw(void *state, mg_canvas_t *c)
             }
         }
         mg_pet_pixels(c, cx, cy + c->actor_size / 2);
+        if (m->edition) pokemon_draw(c, m->active_pet, beast_form(m, m->active_pet), cx + tile, cy + 20, 1, m->clock / 240, !!(m->shiny & (1 << m->active_pet)));
         static const int dx[5] = {1,0,-1,0,0}, dy[5] = {0,1,0,-1,0};
         mg_box_pixels(c, cx + dx[m->direction] * tile - 3, cy + dy[m->direction] * tile - 3, 7, 7, 0xBDFBE6);
         int mx = c->width - 66, my = 8;
@@ -661,19 +688,19 @@ static void draw(void *state, mg_canvas_t *c)
         if (m->mode != 5 && m->mode != 6)
         {
             mg_pet_pixels(c, w / 5, h * 3 / 5);
-            draw_beast(c, m->active_pet, beast_form(m, m->active_pet), w * 37 / 100, h * 2 / 5, !!(m->shiny & (1 << m->active_pet)));
+            draw_beast(c, m, m->active_pet, beast_form(m, m->active_pet), w * 37 / 100, h * 2 / 5, !!(m->shiny & (1 << m->active_pet)));
         }
         else for (int i = 0; i < 3; i++)
         {
             int id = m->mode == 5 ? i * 3 : m->party[i];
-            if (id < 12) draw_beast(c, id, beast_form(m, id), w * (180 + i * 320) / 1000, h * 2 / 5, !!(m->shiny & (1 << id)));
+            if (id < 12) draw_beast(c, m, id, beast_form(m, id), w * (180 + i * 320) / 1000, h * 2 / 5, !!(m->shiny & (1 << id)));
         }
         if (m->mode == 1)
         {
             int x = w * 2 / 3, y = h / 3, r = m->boss ? 25 : 17;
-            draw_beast(c, m->enemy - 1, m->boss ? m->boss > 3 ? 2 : 1 : 0, x, y, !!m->rare);
+            draw_beast(c, m, m->enemy - 1, enemy_form(m), x, y, !!m->rare);
             mg_box_pixels(c, x - 30, y + r + 7, 60 * m->enemy_hp / m->enemy_max, 4, 0xECA4AD);
-            mg_box_pixels(c, x - 30, y + r + 14, 60, 3, s_colors[(m->enemy - 1) / 3]);
+            mg_box_pixels(c, x - 30, y + r + 14, 60, 3, s_colors[element_of(m, m->enemy - 1)]);
         }
         if (m->mode == 4)
         {
@@ -696,17 +723,17 @@ static void hud(const void *state, char text[MG_HUD_BYTES])
     const rpg_model_t *m = &((const rpg_t *)state)->m;
     if (m->mode == 4) snprintf(text, MG_HUD_BYTES, "Drop %s P%d R%d", s_elements[(m->drop >> 6) & 3], m->drop & 63, (m->drop >> 8) & 3);
     else if (m->mode == 2) snprintf(text, MG_HUD_BYTES, "Oro%d: arma%d dif%d kit12", m->gold, 20 + m->weapon * 20, 15 + m->armour * 20);
-    else if (m->mode == 1) snprintf(text, MG_HUD_BYTES, "%s L%d  V%d E%d Sf%d", s_beasts[m->active_pet], beast_level(m, m->active_pet), m->hp, m->mana, m->capsules);
+    else if (m->mode == 1) snprintf(text, MG_HUD_BYTES, "%s L%d  V%d E%d Sf%d", beast_name(m, m->active_pet), beast_level(m, m->active_pet), m->hp, m->mana, m->capsules);
     else snprintf(text, MG_HUD_BYTES, "LV %d  V%d/%d Oro %d [%d,%d]", m->level, m->hp, hp_max(m), m->gold, m->x, m->y);
 }
 static const char *help(const void *state)
 {
     const rpg_model_t *m = &((const rpg_t *)state)->m;
-    if (m->mode == 1) return "Colpo / magia / scudo / cura / sfera / pet";
+    if (m->mode == 1) return m->edition ? "Colpo / mossa / scudo / cura / ball / pet" : "Colpo / magia / scudo / cura / sfera / pet";
     if (m->mode == 2) return "Arma / difesa / kit / campo / esci";
     if (m->mode == 3) return "Aspetto / ruolo / pet / arma / esci";
     if (m->mode == 4) return "Slot 1 / slot 2 / slot 3 / vendi";
-    if (m->mode == 5) return "Lumos / Coralio / Frondel";
+    if (m->mode == 5) return "Charmander / Squirtle / Bulbasaur";
     if (m->mode == 6) return "Slot 1 / slot 2 / slot 3 / indietro";
     return "Trascina; centro: diario e azioni";
 }

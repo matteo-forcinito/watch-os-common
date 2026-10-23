@@ -7,13 +7,17 @@ pausa, memoria e salvataggi.
 
 Scegli dalla schermata iniziale **Cronache del Faro**, la campagna dei
 quattro sigilli, oppure **Legami selvatici**, il viaggio che comincia
-scegliendo una creatura. Hanno salvataggi indipendenti e condividono
+scegliendo un Pokémon. Hanno salvataggi indipendenti e condividono
 esplorazione, combattimenti e progressione. Il mondo deterministico è di **96 × 96
 caselle**, quattro biomi, nebbia di esplorazione, minimappa, quattro
 villaggi con empori, quattro santuari e una torre. Ci sono combattimenti
 a turni, livelli, armi, armature, pozioni e dodici reliquie da raccogliere.
-Ci sono dodici specie originali, quattro elementi, tre forme evolutive,
-varianti rare e una squadra di tre compagni con vita individuale.
+Cronache conserva dodici creature originali. Legami selvatici usa dodici
+famiglie di Pokémon: **31 specie contando le evoluzioni**, normali e shiny,
+con Charmander, Squirtle e Bulbasaur come starter, oltre a Pikachu e Raichu.
+La squadra ha tre compagni con vita individuale. Le condizioni evolutive
+restano quelle di questo RPG (livelli 5/12 e sigilli); le linee con due
+stadi si fermano alla loro vera evoluzione finale.
 Il protagonista è un pet generato per questa app; non modifica né sposta
 i pet del sistema. Non è ancora un RPG con dialoghi ramificati o decine
 di missioni: la missione del primo capitolo è riaccendere il faro.
@@ -43,7 +47,11 @@ di missioni: la missione del primo capitolo è riaccendere il faro.
 - **Drop:** dopo una vittoria scegli quale dei tre slot occupare oppure
   vendi l'oggetto. Potenza, elemento e rarità contano: conservare armi
   diverse permette di prepararsi per guardiani diversi. Il ciclo dei
-  vantaggi è Fuoco → Natura → Roccia → Acqua → Fuoco; l'inverso dimezza il danno.
+  vantaggi di Cronache è Fuoco → Erba → Roccia → Acqua → Fuoco.
+  In Legami sono adattati ai cinque tipi presenti: ad esempio Acqua batte
+  Fuoco/Roccia, Erba batte Acqua/Roccia, Elettro batte Acqua e non colpisce
+  le famiglie Roccia/Terra incluse. I tipi secondari e tutte le mosse dei
+  giochi originali non sono simulati. Il tipo conta anche quando subisci danni.
   Il titolo mostra il nuovo oggetto, la riga sotto quello dello slot scelto:
   `P` è potenza, `R` rarità. Tieni il dito su uno slot per confrontare,
   trascina per cambiarlo e rilascia per confermare. Sul Knob gira e clicca.
@@ -86,6 +94,30 @@ esterno deve sempre essere quello compilato per quel modello.
 Non flashare `Petland.bin` sopra lo slot del sistema per installarlo:
 il launcher usa l'altro slot OTA e mantiene la via di ritorno. Non cambiare
 le partizioni per provare il gioco. Il comando di build non flasha.
+
+## Grafica Pokémon opzionale
+
+Gli sprite seguono l'ispirazione di [TamaPoke](https://github.com/socquique/TamaPoke)
+e provengono da [PMD SpriteCollab](https://github.com/PMDCollab/SpriteCollab).
+I crediti dei singoli autori vengono conservati in `CREDITS.json` accanto
+al pacchetto generato. Gli sprite seguono i termini non commerciali del
+progetto sorgente; Pokémon appartiene ai rispettivi titolari. Il codice
+di questo motore e il pacchetto grafico sono separati.
+
+Per preparare la stessa grafica delle prove USB:
+
+```powershell
+python -m pip install Pillow
+python tools/prepare_pokemon.py --output ../.release-work/pokemon-assets
+python tools/build_petland.py --board ../ESP32-S3-Touch-AMOLED-1.75C --output ../.release-work/petland-amoled175c --pokemon-assets ../.release-work/pokemon-assets
+```
+
+Il convertitore scarica una revisione fissata, estrae fino a quattro frame
+Idle per specie e li codifica in palette RGB565, a 40×40 pixel con
+trasparenza. I circa 350 KB di pixel stanno nel firmware esterno:
+non richiedono una SD sull'AMOLED 1.75C. `preview.png` mostra il risultato.
+I file scaricati e generati restano nella cartella di output, fuori dal
+repository. Senza il pacchetto, il codice usa il disegno procedurale di base.
 
 ## Modificare il gioco
 

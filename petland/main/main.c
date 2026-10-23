@@ -94,7 +94,7 @@ static void create(lv_obj_t *screen, void *arg)
     s_choices[0] = ui_button(page, "Cronache del Faro", 0x356652, choose, (void *)&mg_petland);
     ui_text(page, "Santuari, rovine, bottino e il mistero del faro.", true);
     s_choices[1] = ui_button(page, "Legami selvatici", 0x355F83, choose, (void *)&mg_wildbond);
-    ui_text(page, "Cattura, allena ed evolvi una squadra di creature.", true);
+    ui_text(page, "Pokemon: cattura, allena ed evolvi la squadra.", true);
     lv_obj_add_event_cb(screen, selector_knob, lv_port_knob_event(), NULL);
 }
 static const app_t s_app = {

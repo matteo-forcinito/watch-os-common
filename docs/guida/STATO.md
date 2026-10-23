@@ -41,7 +41,9 @@ dell'esempio e la registra nel firmware.
 - **[Petland](../../petland/README.md)** è un RPG esterno separato: mondo
   96×96, villaggi, quattro santuari, torre, equipaggiamento e combattimenti
   a turni. Cronache del Faro e Legami selvatici hanno progressi indipendenti;
-  dodici specie, tre forme evolutive, catture, squadra di tre e armi elementali.
+  dodici famiglie, catture, squadra di tre e armi elementali. Il pacchetto
+  Pokémon opzionale aggiunge 31 specie con evoluzioni e versioni shiny,
+  ispirandosi a TamaPoke e usando gli sprite PMD con crediti separati.
   Il codice non viene incluso nel firmware del sistema.
 - **Salvataggi**: due copie compresse nei file del dispositivo, importazione
   dei precedenti record NVS e ripiego NVS per modelli senza spazio file.

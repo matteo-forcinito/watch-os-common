@@ -40,9 +40,14 @@ for line in raw.splitlines():
         env[k.upper()] = v
 compiler = sorted((vs/'VC/Tools/MSVC').glob('*/bin/Hostx64/x64/cl.exe'))[-1]
 def portable_case(name):
+    extra = [str(root/'petland/main/pokemon.c')] if name == 'petland' else []
+    assets = os.environ.get('PETLAND_POKEMON_ASSETS')
+    if name == 'petland' and assets:
+        extra += [str(Path(assets)/'pokemon_assets.c'), '/DPETLAND_POKEMON_ASSETS=1',
+                  '/I'+str(Path(assets)), '/I'+str(root/'petland/main')]
     subprocess.run([str(compiler), '/nologo', '/std:c11', '/utf-8', '/O2', '/W4', '/WX',
                     str(root/f'tools/test_{name}.c'), str(root/'components/apps/minigames/minigame.c'),
-                    str(root/'components/apps/minigames/minigame_canvas.c'), '/Fe:'+str(work/(name+'.exe'))],
+                    str(root/'components/apps/minigames/minigame_canvas.c'), *extra, '/Fe:'+str(work/(name+'.exe'))],
                    cwd=work, env=env, check=True)
     subprocess.run([str(work/(name+'.exe'))], check=True, timeout=90)
 if '--petland-only' in sys.argv:
