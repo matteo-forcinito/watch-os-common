@@ -27,7 +27,7 @@
 
 static const char *TAG = "pet_travel";
 
-enum { OP_RECEIVE = 1, OP_ARRIVE = 2, OP_CANCEL = 3, OP_INFO = 4 };
+enum { OP_RECEIVE = 1, OP_ARRIVE = 2, OP_CANCEL = 3, OP_INFO = 4, OP_HOME = 5 };
 
 typedef struct
 {
@@ -99,6 +99,14 @@ static size_t on_step(const char *from_id, const char *from_name, const uint8_t 
                       size_t max)
 {
     (void)from_id;
+    if (n == 1 && s[0] == OP_HOME)
+    {
+        char native[17];
+        if (max < 9 || !pet_init() || !pet_native(native))
+            return 0;
+        reply[0] = 0;
+        return from_hex(native, reply + 1) ? 9 : 0;
+    }
     if (n >= 1 && s[0] == OP_INFO)
     {
         /* Who lives here: [0][species][name]. */
@@ -221,6 +229,7 @@ static bool finish(const trip_t *t)
 static void travel_task(void *arg)
 {
     trip_t *t = arg;
+    ecos_family_hold(true);
     const char *error = NULL;
     char why[64] = "";
     uint8_t s[ECOS_PET_MAX];
@@ -287,6 +296,7 @@ static void travel_task(void *arg)
     toast(finish(t) ? "Buon viaggio! Il child e arrivato dall'amico"
                     : "Viaggio in pausa: riavvicina i device e riapri la pagina del child");
 done:
+    ecos_family_hold(false);
     free(t);
     s_busy = false;
     vTaskDelete(NULL);
@@ -344,7 +354,7 @@ void pet_travel_init(void)
 
 /* ------------------------------------------------------------- outing */
 
-static pet_friend_t s_friends[PET_FRIENDS_MAX];
+static EXT_RAM_BSS_ATTR pet_friend_t s_friends[PET_FRIENDS_MAX];
 static int s_friend_count;
 static pet_outing_cb_t s_outing_cb;
 
@@ -412,4 +422,74 @@ bool pet_outing_search(pet_outing_cb_t done)
 void pet_outing_cancel(void)
 {
     s_outing_cb = NULL;
+}
+
+/* Ask for the native seed, not the currently selected pet or a mutable name.
+ * This still finds home when its own pet is away or another guest is selected. */
+static void home_task(void *arg)
+{
+    trip_t *t = arg;
+    ecos_family_hold(true);
+    ecos_family_refresh();
+    ecos_family_t *f = heap_caps_malloc(sizeof(*f), MALLOC_CAP_SPIRAM);
+    bool found = false;
+    if (f)
+    {
+        for (int i = 0; i < 40; i++)
+        {
+            vTaskDelay(pdMS_TO_TICKS(300));
+            ecos_family(f);
+            if (i > 3 && !f->busy)
+                break;
+        }
+        uint64_t seed = 0;
+        orbi_parse(t->seed, &seed);
+        for (int i = 0; i < f->count; i++)
+        {
+            if (!f->members[i].reachable)
+                continue;
+            uint8_t q = OP_HOME, reply[9];
+            int n = ecos_family_pet(f->members[i].id, &q, 1, reply, sizeof(reply), 4000);
+            char native[17];
+            uint64_t other = 0;
+            if (n != 9 || reply[0] != 0)
+                continue;
+            to_hex(reply + 1, native);
+            if (orbi_parse(native, &other) && ((seed >> 32) & 0xFFFFFFu) == ((other >> 32) & 0xFFFFFFu))
+            {
+                snprintf(t->id, sizeof(t->id), "%s", f->members[i].id);
+                found = true;
+                break;
+            }
+        }
+        free(f);
+    }
+    ecos_family_hold(false);
+    if (found)
+        travel_task(t); /* Same transaction and retries as any other journey. Deletes this task. */
+    else
+    {
+        toast("Casa non raggiungibile: apri la pagina pet sul device di origine e riprova");
+        free(t);
+        s_busy = false;
+        vTaskDelete(NULL);
+    }
+}
+
+bool pet_travel_home(const char *seed)
+{
+    if (s_busy || pet_at_home(seed))
+        return false;
+    trip_t *t = heap_caps_calloc(1, sizeof(*t), MALLOC_CAP_SPIRAM);
+    if (!t)
+        return false;
+    snprintf(t->seed, sizeof(t->seed), "%s", seed);
+    s_busy = true;
+    if (!sys_task_create(home_task, "pet_home", 6144, t, 4, 0))
+    {
+        free(t);
+        s_busy = false;
+        return false;
+    }
+    return true;
 }

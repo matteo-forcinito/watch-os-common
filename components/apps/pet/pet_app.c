@@ -16,6 +16,9 @@
 #include "orbi/orbi_view.h"
 #include "orbi/pet_sprite.h"
 #include "pet.h"
+#include "pet_game.h"
+/* LVGL 9.6 keeps image-cache invalidation in its private umbrella header. */
+#include "lvgl_private.h"
 #include "services/ecos.h"
 #include "services/weather.h"
 #include "ui/ui.h"
@@ -35,7 +38,7 @@ static const char *TAG = "pet";
 
 /* ------------------------------------------------------------ rendering */
 
-static uint8_t s_grid[PET_GRID * PET_GRID];   /* LVGL task only */
+static EXT_RAM_BSS_ATTR uint8_t s_grid[PET_GRID * PET_GRID];   /* LVGL task only */
 
 typedef struct
 {
@@ -46,6 +49,10 @@ typedef struct
 static void canvas_deleted(lv_event_t *e)
 {
     canvas_t *c = lv_event_get_user_data(e);
+    /* Detach while the descriptor is still alive; cache invalidation may read
+     * its header. These manually painted buffers only need an image widget. */
+    lv_image_set_src(lv_event_get_target_obj(e), NULL);
+    lv_image_cache_drop(c->buf);
     lv_draw_buf_destroy(c->buf);
     free(c);
 }
@@ -61,8 +68,8 @@ static lv_obj_t *canvas_new(lv_obj_t *parent, int w, int h, int k)
     }
     c->buf = buf;
     c->k = k;
-    lv_obj_t *o = lv_canvas_create(parent);
-    lv_canvas_set_draw_buf(o, buf);
+    lv_obj_t *o = lv_image_create(parent);
+    lv_image_set_src(o, buf);
     lv_obj_add_event_cb(o, canvas_deleted, LV_EVENT_DELETE, c);
     lv_obj_set_user_data(o, c);
     return o;
@@ -649,10 +656,18 @@ static bool touching(void)
     return false;
 }
 
+static void menu_close(lv_event_t *e);
+#include "pet_game_ui.inc"
+
 static void tick(lv_timer_t *t)
 {
     (void)t;
-    if (!S.screen || power_screen() != POWER_SCREEN_ON || S.menu || touching())
+    if (!S.screen || power_screen() != POWER_SCREEN_ON || app_current() != &pet_app)
+    {
+        return;
+    }
+    if (s_game) return;
+    if (S.menu || touching())
         return;
     S.ticks++;
     if (S.ticks % 15 == 0)
@@ -711,6 +726,7 @@ static void action(lv_event_t *e)
 static void menu_close(lv_event_t *e)
 {
     (void)e;
+    if (s_game == S.menu) s_game = NULL;
     if (S.menu)
         lv_obj_delete(S.menu);
     S.menu = NULL;
@@ -801,6 +817,16 @@ static void menu_company(lv_event_t *e)
     cJSON_Delete(j);
 }
 
+static void home_start(lv_event_t *e)
+{
+    (void)e;
+    bool home = pet_at_home(S.selected);
+    bool started = !home && pet_travel_home(S.selected);
+    menu_close(NULL);
+    ui_toast(home ? "Il pet e gia a casa" : started ? "Cerco il dispositivo di origine..."
+                                                   : "Un viaggio e gia in corso: riprova dopo");
+}
+
 static void menu_open(lv_event_t *e)
 {
     (void)e;
@@ -814,6 +840,9 @@ static void menu_open(lv_event_t *e)
     lv_obj_set_style_bg_opa(S.menu, LV_OPA_COVER, 0);
     lv_obj_t *page = ui_page(S.menu, "Il tuo child");
     ui_button(page, "Chiudi", 0x24415C, menu_close, NULL);
+    ui_button(page, "Minigiochi", 0x1F4E5F, game_menu, NULL);
+    if (!pet_at_home(S.selected))
+        ui_button(page, "Torna a casa", 0x245544, home_start, NULL);
     ui_button(page, "Snack", 0x245544, menu_action, "snack");
     ui_button(page, "Allenamento", 0x493663, menu_action, "train");
 
@@ -904,6 +933,7 @@ static void create(lv_obj_t *screen, void *arg)
     memset(&S, 0, sizeof(S));
     const board_info_t *b = board_info();
     S.screen = screen;
+    s_game = NULL;
     S.W = b->width;
     S.H = b->height;
     S.k = S.W >= 300 ? 3 : 2;
@@ -992,6 +1022,7 @@ static void create(lv_obj_t *screen, void *arg)
 
 static void destroy(void)
 {
+    s_game = NULL;
     if (S.timer)
         lv_timer_delete(S.timer);
     S.timer = NULL;
@@ -1011,6 +1042,8 @@ const app_t pet_app = {.id = "orbi",
                        .flags = APP_FLAG_HIDDEN,
                        .create = create,
                        .destroy = destroy,
+                       .back = game_back,
+                       .button = game_button,
                        .about = "Il child nato su questo device. Coccole, cibo, gioco, bagnetto e viaggi con Orbit."};
 
 /* ----------------------------------------------------- menu and corner */

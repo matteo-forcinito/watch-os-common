@@ -77,7 +77,20 @@ int main(void){
  cJSON *back=cJSON_Duplicate(item,1);cJSON_Delete(all);
  boot(0);good("receive",seed,tx2,back);good("cancel",seed,tx2,NULL);good("cancel",seed,tx2,NULL);
  boot(1);good("cancel",seed,tx2,NULL);assert(pet_current(&a));assert(!strcmp(a.seed,seed));
- cJSON_Delete(snapshot);cJSON_Delete(back);puts("C pet store: birth, reboot, care, NVS rollback, validation, transfers, retry and cancellation OK");
+ assert(!pet_at_home(seed));char home_seed[17];assert(pet_native(home_seed));assert(pet_at_home(home_seed));
+ int before_xp=a.xp,before_energy=a.energy;
+ for(int score=-1;score<=101;score+=102){cJSON *g=cJSON_CreateObject();cJSON_AddStringToObject(g,"action","game");cJSON_AddStringToObject(g,"game","ski");cJSON_AddStringToObject(g,"seed",seed);cJSON_AddNumberToObject(g,"score",score);const char *error;assert(!pet_command(g,&error));cJSON_Delete(g);}
+ cJSON *g=cJSON_CreateObject();cJSON_AddStringToObject(g,"action","game");cJSON_AddStringToObject(g,"game","stars");cJSON_AddStringToObject(g,"seed",seed);cJSON_AddNumberToObject(g,"score",100);const char *game_error; cJSON *reward=pet_command(g,&game_error);assert(reward);cJSON_Delete(reward);cJSON_Delete(g);
+ assert(pet_current(&a));assert(a.xp==before_xp+24&&a.energy==before_energy-4&&a.joy<=100);
+ boot(1);assert(pet_current(&a)&&a.xp==before_xp+24);
+ const char *home_tx="9876543210abcdef";good("reserve",seed,home_tx,NULL);
+ all=pet_snapshot();arr=cJSON_GetObjectItem(all,"pets");cJSON *return_pet=NULL;
+ for(int i=0;i<cJSON_GetArraySize(arr);i++){cJSON *v=cJSON_GetArrayItem(arr,i);if(!strcmp(cJSON_GetStringValue(cJSON_GetObjectItem(v,"seed")),seed))return_pet=cJSON_Duplicate(v,1);}assert(return_pet);cJSON_Delete(all);
+ boot(0);assert(pet_at_home(seed));good("receive",seed,home_tx,return_pet);
+ boot(1);good("depart",seed,home_tx,NULL);assert(!pet_current(&a)||strcmp(a.seed,seed));
+ boot(0);good("arrive",seed,home_tx,NULL);assert(pet_current(&a)&&!strcmp(a.seed,seed)&&a.xp==before_xp+24);
+ boot(1);good("forget",seed,home_tx,NULL);boot(0);assert(pet_at_home(seed)&&pet_current(&a));
+ cJSON_Delete(return_pet);cJSON_Delete(snapshot);cJSON_Delete(back);puts("C pet store: birth, reboot, care, NVS rollback, validation, transfers, retry, cancellation, return home and bounded persistent game rewards OK");
  return 0;
 }
 '''.replace('PET_SOURCE',(root/'components/apps/pet/pet_store.c').as_posix())
@@ -92,7 +105,10 @@ for line in raw.splitlines():
         k,v=line.split('=',1);env[k.upper()]=v
 compiler=sorted((vs/'VC/Tools/MSVC').glob('*/bin/Hostx64/x64/cl.exe'))[-1]
 subprocess.run([str(compiler),'/nologo','/std:c11','/W3','/D_CRT_SECURE_NO_WARNINGS',
-                '/I'+str(stub),'/I'+str(json_dir),'/I'+str(root/'components/orbi/include'),
+                '/I'+str(stub),'/I'+str(json_dir),'/I'+str(root/'components/orbi/include'),'/I'+str(root/'components/apps/pet'),
                 str(stub/'test.c'),str(root/'components/orbi/orbi_genome.c'),str(root/'components/orbi/pet_sprite.c'),str(json_dir/'cJSON.c'),
+                str(root/'components/apps/pet/pet_game.c'),str(root/'components/apps/pet/pet_game_catalog.c'),
+                str(root/'components/apps/minigames/minigame.c'),str(root/'components/apps/minigames/minigame_canvas.c'),
+                str(root/'components/apps/minigames/games/tap_star.c'),
                 '/Fe:'+str(stub/'pet_tests.exe')],env=env,cwd=stub,check=True)
 subprocess.run([str(stub/'pet_tests.exe')],check=True)

@@ -1,80 +1,40 @@
-# Stato del progetto (17/10/2026, sera)
+# Stato del progetto — 23 ottobre 2026
 
-Regola: gli orologi restano su **1.8.x**. Le novità escono sul canale **Dev** (`1.8.6-dev.N`) dal branch
-`dev`, poi la stessa versione diventa stabile con `-Promote` ([pagina 9](09-release-firmware.md),
-`tools/dev/release_dev.ps1`).
+Questa pagina descrive la release **1.12.0** per AMOLED 1.8, AMOLED 1.75,
+AMOLED 1.75C, Knob 1.8, Watcher e Guition 4848. La versione effettivamente
+disponibile si controlla dal catalogo OTA in **Impostazioni → Aggiornamento**.
 
-## Firmware
+## Pet e giochi
 
-| Firmware | Stabile | Dev |
-|---|---|---|
-| AMOLED 1.8 | 1.8.4 | 1.8.6-dev.8 |
-| AMOLED 1.75 | 1.8.5 (uscita la notte del 17/10, con Bilancio) | 1.8.6-dev.8 |
-| AMOLED 1.75C | 1.8.4 | 1.8.6-dev.8 |
-| Knob 1.8 | 1.8.4 (la 1.8.5 è stata compilata ma mai pubblicata) | 1.8.6-dev.8 |
-| Watcher | 1.8.4 | 1.8.6-dev.8 |
+- **Ecosistema e viaggi**: correzioni della 1.11.0 incluse. Se Ecosistema è
+  spento, la ricerca lo segnala e indica come riattivarlo.
+- **Torna a casa**: dal menu di un pet ospite puoi avviare il ritorno al suo
+  dispositivo d'origine. I dispositivi devono essere abbinati e raggiungibili.
+  Se l'origine non è vicina, il pet resta sul dispositivo attuale: il ritorno
+  automatico differito non è ancora implementato.
+- **Fuga sulla neve**, **Pioggia di stelle** e **Tocca la stella** dal menu
+  Pet → Minigiochi. Premi in XP e gioia, salvataggio tramite worker di sistema.
+- **Base condivisa per i minigiochi**: tempo, pausa, comandi, memoria,
+  disegno, Riprova, Esci e risultato sono gestiti dal motore comune.
 
-- `1.8.6-dev.8` (18/10): app **Sistema** (RAM, PSRAM, file, SD, batteria, Wi-Fi, task, uptime) con
-  **monitor leggero** sempre in primo piano (doppio reset: il secondo appena compare lo schermo, entro
-  4 s; oppure dall'app); Bilancio **a fine mese** (dopo rate e mutui / dopo tutte le spese, barre in
-  dashboard, sezione nel Riepilogo). Provata all'avvio su 1.75C (COM10): avvio pulito.
-- dev.4–7: Sentinel Trova con ARP e Home come Copertura; Bilancio Home a due archi; dashboard non
-  più vuota dopo "Togli il saldo"; l'ultimo stipendio già arrivato conta nel saldo.
-- `1.8.6-dev.3` (18/10): Bilancio, saldo rimovibile, stipendio precedente contato prima che la voce
-  dello stipendio inizi, Menu → Riepilogo sull'orologio. `dev.2`: Sentinel Lite rifatta.
-- `1.8.6-dev.1` (17/10): Bilancio su tutti, con saldo facoltativo e la card "Entrate e uscite"
-  (disponibile ora, risparmio al mese, stima a fine anno, tabella settimana/mese/anno). Libreria `9dfa834`.
-- Su `main` dei firmware ci sono commit "Release 1.9.0" mai pubblicati: la 1.9.0 **non va usata**.
-  Le note `release/notes/1.9.0.md` si possono cancellare.
-- In AMOLED 1.8, 1.75C e Watcher c'è un `CMakeLists.txt` modificato a mano (1.9.0 → 1.8.5), non
-  committato: lo script di release lavora in worktree separate e non lo tocca. Si può scartare
-  (`git checkout CMakeLists.txt`).
+Per creare il tuo gioco, parti da
+[Il tuo primo minigioco](14-minigiochi.md). Il comando
+`python tools/new_minigame.py nome --title "Titolo"` crea una copia funzionante
+dell'esempio e la registra nel firmware.
 
-## Da provare sull'orologio (tu)
+## Verifiche da usare
 
-1. **Bilancio** (dev.1): Home, Questo mese, dashboard dal QR; senza saldo inserito il saldo deve
-   venire da entrate e uscite; card "Entrate e uscite" in Panoramica. Tondo e rettangolare.
-2. **Bilancio dev.3**: "Togli il saldo" in Saldo del conto; Menu → Riepilogo.
-3. **Sentinel Lite** (dev.2): Trova, Cambia Wi-Fi, dashboard nuova; vedi sotto.
+```powershell
+python tools/test_minigames.py
+python tools/test_pet_game.py
+python tools/test_pet_store.py
+```
 
-Se va tutto bene: `release_dev.ps1 -Version 1.8.6 -Notes <note> -Promote`.
+Compilare tutti e sei i firmware prima del rilascio. Provare su hardware
+apertura, comandi, pausa, Riprova, Esci, salvataggio premi e log delle
+prestazioni. Per build e flash vedi [pagina 2](02-ambiente-build-flash.md);
+per pubblicare vedi [pagina 9](09-release-firmware.md).
 
-## Sentinel Lite rifatta (branch `dev` di watch-os-common, compilata, non provata su hardware)
-
-- **Trova (caldo/freddo)**: dal dispositivo → "Trova". L'orologio pinga il dispositivo e legge il
-  segnale delle risposte (ricezione promiscua sul canale, solo l'indirizzo del mittente). Arco da blu
-  a rosso, "Gelido → Bollente", tendenza, miglior valore; massimo 3 minuti. Non funziona per
-  dispositivi a 5 GHz, via cavo o su un altro access point (lo dice).
-- **Cambia Wi-Fi**: sull'orologio le reti salvate (tocco = cambio); dalla dashboard anche una rete
-  nuova con password e "Collegati" dalle reti vicine. La rete scelta diventa preferita.
-- **Nomi condivisi con la Sentinel esterna**: `<storage>/sentinel/names.txt` (MAC, fidato, nome),
-  `sentinel/main/names.h`. Ognuna lo legge all'avvio e lo scrive a ogni modifica; i nomi già dati
-  prima vengono aggiunti al file la prima volta. La Sentinel esterna va ricompilata e ripubblicata
-  sul Market perché lo faccia anche lei (codice già pronto in `probe.c`).
-- **Dashboard nuova**: radar animato, salute della rete, schede con azioni, pagina Trova con
-  termometro, pagina Rete e Wi-Fi.
-- Memoria: ~23 KB di PSRAM per i nomi, il resto invariato; nessun task in più (tutto nel task dei job).
-
-## Companion
-
-- Fix del test Android (clic sul permesso notifiche perso durante l'animazione del dialog su API 35),
-  commit `ab7e067` su `main` e `release/0.4.2-dev.4`: Action passata, **0.4.2-dev.4 pubblicata** il 17/10.
-- Lo `stash` in `Orbit-Companion` (file plugin rigenerati da Flutter) si può scartare: `git stash drop`.
-
-## Bilancio: cosa manca
-
-Passo 2b (matematica dei debiti, bollette a consumo), grafici della dashboard (passo 4), import CSV
-(passo 5), versione esterna per il Market (passo 7), confronto tariffe (passo 8). Dettagli in
-[docs/progetti/BILANCIO.md](../progetti/BILANCIO.md).
-
-## Da fare dopo
-
-- Dashboard web di Sistema. Uso CPU nel monitor (serve `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS`).
-- Sentinel esterna da ripubblicare sul Market (nomi condivisi già nel codice).
-- Dev.6 non è uscita per 1.75C e Watcher (log occupato): coperta dalla dev.7.
-
-## Cose note, non urgenti
-
-- Log `E sleep: sleep_cpu_configure ...` all'avvio: noto, nessun effetto.
-- Latenza minima dello schermo remoto circa 100 ms (coesistenza radio Wi-Fi/Bluetooth).
-- File `build-local.log` non tracciati nelle cartelle dei firmware: log locali, si possono cancellare.
+Le istruzioni e le attività precedenti sono conservate nello
+[stato storico del 17 ottobre](STATO-2026-10-17.md). Le vecchie indicazioni
+di restare sulla linea 1.8.x appartengono a quella fase del progetto.

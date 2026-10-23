@@ -101,6 +101,14 @@ Wi-Fi configurato.
 
 ## Fase 2 - Ritorno a casa e visite (1.11.x)
 
+Build di prova `1.12.0-dev.2`: dal menu del pet ospite è disponibile
+**Torna a casa**. La ricerca interroga il seed nativo dei peer abbinati
+(indipendente dal pet selezionato e dal nome del device), confronta la famiglia
+e usa la transazione di viaggio esistente. Aprire la pagina pet sul device di
+origine; Ecosistema deve essere attivo su entrambi, con firmware aggiornato.
+Se casa non risponde, il pet rimane sul device ospite e si può riprovare.
+Il ritorno automatico differito e le visite a tempo restano da implementare.
+
 - **Torna a casa**: sul device ospite, menu → "Torna a casa". Il device
   nativo è riconosciuto dal campo `family` del seed (bit 32-55) confrontato
   con il seed nativo dei peer in `HELLO`. Se il nativo è vicino: viaggio
@@ -116,24 +124,45 @@ Wi-Fi configurato.
 
 ## Fase 3 - Minigiochi (1.12.0)
 
-Tutti nella scena esistente, un gioco alla volta, al massimo 60 secondi,
-premio in XP e gioia con `pet_command` (azione nuova `game`, con punteggio
-limitato a 0-100 per evitare abusi).
+Implementati: **Fuga sulla neve**, **Pioggia di stelle** e **Tocca la stella**.
+Menu pet > Minigiochi. Il pet selezionato diventa il giocatore, con i propri
+colori e la propria razza. Il pet deve essere sveglio.
 
-1. **Acchiapparella** (tutti i device): un'icona appare in punti casuali,
-   toccarla prima che sparisca; il pet la rincorre.
-2. **Salto** (Knob o IMU): ostacoli che arrivano da destra, il pet salta con
-   un tocco, uno scatto del knob o un colpetto rilevato dall'IMU.
-3. **Memory dei versi** (device con speaker): il pet emette 3-6 note
-   (generatore di toni esistente), il giocatore le ripete toccando 4 zone.
-4. **In coppia via ESP-NOW**: due device vicini, ciascuno col suo pet; tiro
-   alla fune a tocchi. Messaggi `GAME{start, tap_count, end}` ogni 200 ms;
-   chi perde il collegamento per più di 2 s vince a tavolino l'altro.
-- Implementazione: `pet_game.c` con interfaccia
-  `{start, tick(ms), touch(x, y), knob(delta), end -> score}`; la scena
-  delega il tick al gioco attivo. Niente allocazioni durante il gioco.
-- Verifiche: 60 s di gioco a 15 fps senza cali (log del tempo medio di tick
-  < 8 ms), nessuna perdita di memoria dopo 20 partite (PSRAM libera uguale).
+- Colline: pressione in discesa, rilascio sulla cresta, volo dalla tangente,
+  velocita proiettata sulla pendenza all'atterraggio; fuga dalla valanga per
+  60 secondi. Il terreno usa coordinate subpixel.
+- Stelle: tre corsie, stelle da prendere e rocce da evitare; tre vite,
+  massimo 60 secondi. Tocco sinistra/destra o rotazione del Knob.
+- Tocca la stella: esempio completo per chi inizia; 20 secondi per colpire
+  bersagli. Touch oppure corsia del pet selezionata col Knob e clic.
+- Esci annulla senza premio. Riprova azzera lo stato senza nuove allocazioni.
+- Risultato intero 0-100, richiesta premio una sola volta. XP e gioia vengono
+  salvati dal worker di sistema; il gioco non scrive NVS dal timer grafico.
+
+Tutti usano `components/apps/minigames`: ciclo a 33 ms, integrazione a passi
+fissi da 16 ms sul tempo reale, pausa esplicita a schermo spento o app nascosta,
+input normalizzato, stato e framebuffer in PSRAM, disegno RGB565_SWAPPED
+con clipping, rilascio automatico di timer, callback e buffer alla chiusura.
+I renderer delle colline e delle stelle sono adattatori del medesimo host:
+non creano widget o timer propri. Il catalogo guida menu e validazione premi.
+
+[Guida per creare un gioco](guida/14-minigiochi.md): il comando
+`python tools/new_minigame.py nome --title "Titolo"` crea e registra una copia
+dell'esempio. Test motore, pausa, Riprova, risultati, clipping, tutti i renderer
+su tutte le dimensioni e generatore: `python tools/test_minigames.py`.
+Regole/fisica: `python tools/test_pet_game.py`; store/viaggi/premi:
+`python tools/test_pet_store.py`.
+
+Misure precedenti all'estrazione del motore, build dev.2: circa 29 e 30
+aggiornamenti/s su AMOLED 1.75C e Knob, refresh medio 20,7 e 18,1 ms,
+logica/raster 8,4 e 5,0 ms. I log del nuovo host riportano gli stessi dati
+per verificare regressioni; non sono una garanzia di frequenza costante in
+ogni scena o durante screenshot.
+
+Restano futuri: Acchiapparella con movimento libero, Memory dei versi,
+minigiochi in coppia via ESP-NOW, inventario e visite con ritorno automatico.
+Il ritorno manuale a casa e disponibile dalla fase 2; il device d'origine
+deve essere abbinato, vicino e raggiungibile.
 
 ## Fase 4 - Oggetti e passatempo (1.12.x)
 

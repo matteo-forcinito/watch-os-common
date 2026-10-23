@@ -15,6 +15,7 @@
 #include "orbi/orbi_genome.h"
 #include "orbi/pet_sprite.h"
 #include "pet.h"
+#include "pet_game_catalog.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -275,6 +276,24 @@ bool pet_current(pet_record_t *out)
     xSemaphoreGive(s_lock);
     return p != NULL;
 }
+
+bool pet_native(char out[17])
+{
+    if (!s_ready)
+        return false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    memcpy(out, s_store.native, 17);
+    xSemaphoreGive(s_lock);
+    return true;
+}
+
+bool pet_at_home(const char *seed)
+{
+    char native[17];
+    uint64_t a, b;
+    return pet_native(native) && orbi_parse(seed, &a) && orbi_parse(native, &b) &&
+           ((a >> 32) & 0xFFFFFFu) == ((b >> 32) & 0xFFFFFFu);
+}
 static const char *text(const cJSON *j, const char *key)
 {
     const char *s = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(j, key));
@@ -461,6 +480,20 @@ cJSON *pet_command(const cJSON *j, const char **error)
             p->joy = p->joy < 90 ? p->joy + 10 : 100;
             p->xp += 2;
             ok = true;
+        }
+        else if (!p->asleep && !strcmp(action, "game"))
+        {
+            int64_t score;
+            const char *game = text(j, "game");
+            if (pet_game_find(game) &&
+                number(j, "score", 100, &score))
+            {
+                p->energy = p->energy > 4 ? p->energy - 4 : 0;
+                p->xp += 4 + (int)score / 5;
+                p->joy += 5 + (int)score / 10;
+                if (p->joy > 100) p->joy = 100;
+                ok = true;
+            }
         }
         else if (!p->asleep && !strcmp(action, "train") && p->energy >= 20)
         {

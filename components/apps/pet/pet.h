@@ -40,6 +40,10 @@ void pet_travel_init(void);
 bool pet_travel_send(const char *ecos_id, const char *seed);
 void pet_travel_resume(void);
 bool pet_travel_busy(void);
+/* Native seed remains available even when that pet is visiting elsewhere. */
+bool pet_native(char out[17]);
+bool pet_at_home(const char *seed);
+bool pet_travel_home(const char *seed);
 /* Outing: radio on, search nearby paired devices and their pets (async). */
 #define PET_FRIENDS_MAX 6
 typedef struct

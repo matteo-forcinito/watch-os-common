@@ -21,6 +21,7 @@ che ti serve. Se è la prima volta, leggi la 1 e poi la 13.
 | 11 | [La companion (Flutter)](11-companion-flutter.md) | Capire, modificare, provare e rilasciare l'app Orbit Companion |
 | 12 | [Flusso di lavoro dalla A alla Z](12-flusso-di-lavoro.md) | La sequenza completa usata per ogni modifica |
 | 13 | [Leggere il codice](13-leggere-il-codice.md) | VS Code "vai alla definizione", da dove viene una funzione, cicli di vita di app e servizi, memoria |
+| 14 | [Il tuo primo minigioco](14-minigiochi.md) | Creare un gioco da un esempio, anche partendo da zero con il C |
 
 ## Le tre regole da ricordare sempre
 
