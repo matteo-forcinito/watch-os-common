@@ -40,6 +40,18 @@ void pet_travel_init(void);
 bool pet_travel_send(const char *ecos_id, const char *seed);
 void pet_travel_resume(void);
 bool pet_travel_busy(void);
+/* Outing: radio on, search nearby paired devices and their pets (async). */
+#define PET_FRIENDS_MAX 6
+typedef struct
+{
+    char id[13];
+    char device[24];
+    char pet[16];       /* "" if no pet answered */
+    uint8_t species;
+} pet_friend_t;
+typedef void (*pet_outing_cb_t)(const pet_friend_t *friends, int count);   /* LVGL locked */
+bool pet_outing_search(pet_outing_cb_t done);
+void pet_outing_cancel(void);
 /* Seed and genome traits of a record (curiosity, energy, sociability, appetite, playfulness). */
 void pet_traits(const pet_record_t *p, uint8_t out[5]);
 #endif

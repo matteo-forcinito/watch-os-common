@@ -105,7 +105,7 @@ static inline void ecos_link_header(uint8_t *p, uint8_t type, const uint8_t send
 static inline bool ecos_link_valid(const uint8_t *p, size_t n)
 {
     return n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG && n <= ECOS_LINK_FRAME_MAX &&
-           memcmp(p, "EL02", 4) == 0 && p[4] >= ECOS_LINK_STATUS_REQ && p[4] <= ECOS_LINK_ACCESS_REPLY;
+           memcmp(p, "EL02", 4) == 0 && p[4] >= ECOS_LINK_STATUS_REQ && p[4] <= ECOS_LINK_PET_REPLY;
 }
 
 /* Fixed-size text field: copies at most size-1 bytes, always terminated. */

@@ -751,6 +751,45 @@ static void travel_free(lv_event_t *e)
     free(lv_event_get_user_data(e));
 }
 
+/* Outing results: the reachable friends and their pets, LVGL locked. */
+static void outing_done(const pet_friend_t *friends, int count)
+{
+    if (!S.screen || S.menu)
+        return;
+    S.menu = lv_obj_create(S.screen);
+    lv_obj_remove_style_all(S.menu);
+    lv_obj_set_size(S.menu, S.W, S.H);
+    lv_obj_set_style_bg_color(S.menu, ui_color(0x060B12), 0);
+    lv_obj_set_style_bg_opa(S.menu, LV_OPA_COVER, 0);
+    lv_obj_t *page = ui_page(S.menu, "Uscita");
+    for (int i = 0; i < count; i++)
+    {
+        char *id = malloc(sizeof(friends[i].id));
+        if (!id)
+            continue;
+        memcpy(id, friends[i].id, sizeof(friends[i].id));
+        char label[64];
+        if (friends[i].pet[0])
+            snprintf(label, sizeof(label), "Da %s (%s) su %s", friends[i].pet, pet_species_name(friends[i].species),
+                     friends[i].device);
+        else
+            snprintf(label, sizeof(label), "Su %s", friends[i].device);
+        lv_obj_t *b = ui_button(page, label, 0x1F4E5F, travel_go, id);
+        lv_obj_add_event_cb(b, travel_free, LV_EVENT_DELETE, id);
+    }
+    ui_text(page,
+            count ? "Scegli chi andare a trovare: il tuo child parte dal portale."
+                  : "Nessun amico raggiungibile. Apri la pagina del child sull'altro device (o mettilo in carica) e riprova.",
+            true);
+    ui_button(page, "Chiudi", 0x24415C, menu_close, NULL);
+}
+
+static void outing_start(lv_event_t *e)
+{
+    menu_close(e);
+    ui_toast(pet_outing_search(outing_done) ? "Accendo la radio e cerco amici vicini..." : "Ricerca gia in corso");
+}
+
 static void menu_company(lv_event_t *e)
 {
     cJSON *j = cJSON_CreateObject();
@@ -818,30 +857,8 @@ static void menu_open(lv_event_t *e)
     ui_text(page, "Ogni child che nasce o arriva su questo device aggiunge la sua razza.", true);
     ui_button(page, "Altro child sul device", 0x26364D, menu_next, NULL);
 
-    /* Journeys to paired devices nearby (Ecosistema > Famiglia). */
-    ui_text(page, "MANDA DA UN AMICO VICINO", false);
-    ecos_family_t *f = heap_caps_malloc(sizeof(*f), MALLOC_CAP_SPIRAM);
-    int members = 0;
-    if (f)
-    {
-        ecos_family(f);
-        for (int i = 0; i < f->count; i++)
-        {
-            char *id = malloc(sizeof(f->members[i].id));
-            if (!id)
-                continue;
-            memcpy(id, f->members[i].id, sizeof(f->members[i].id));
-            char label[48];
-            snprintf(label, sizeof(label), "Manda da %s", f->members[i].name);
-            lv_obj_t *b = ui_button(page, label, 0x1F4E5F, travel_go, id);
-            lv_obj_add_event_cb(b, travel_free, LV_EVENT_DELETE, id);
-            members++;
-        }
-        free(f);
-    }
-    ui_text(page,
-            members ? "Apri la pagina del child anche sull'altro device: il viaggio parte via radio, senza Orbit."
-                    : "Nessun device abbinato: abbinalo in Ecosistema per far viaggiare il child senza Orbit.",
+    ui_button(page, "Uscita: cerca amici vicini", 0x1F4E5F, outing_start, NULL);
+    ui_text(page, "Accende la radio e cerca i device abbinati in Ecosistema con la pagina del child aperta (o in carica).",
             true);
     ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_BLUE, "Piccola compagnia", pet_company(), menu_company, NULL);
     ui_text(page, "Viaggi: Orbit > Ecosistema > Children. Aspetto, personalita e progressi viaggiano con lui.", true);
@@ -978,6 +995,7 @@ static void destroy(void)
     if (S.timer)
         lv_timer_delete(S.timer);
     S.timer = NULL;
+    pet_outing_cancel();
     ecos_family_hold(false);
     S.screen = NULL;   /* objects go with the screen */
     S.menu = NULL;

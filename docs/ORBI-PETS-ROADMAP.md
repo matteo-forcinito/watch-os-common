@@ -86,6 +86,12 @@ Wi-Fi configurato.
 
 ### 1.3 Verifiche fase 1
 
+- Prima delle prove: **Impostazioni → Bluetooth → Ecosistema = Automatico**
+  (oppure Background) su entrambi. Con "Spento fuori recovery" l'abbinamento
+  può riuscire, ma il collegamento Famiglia resta spento e i peer sono offline.
+  La lista e "Cerca di nuovo" devono indicare che Ecosistema è spento.
+- Il controllo dei frame Famiglia deve accettare anche `PET` (7) e
+  `PET_REPLY` (8): il test host del codec verifica tutti i tipi e le lunghezze.
 - Test host: `tools/test_pet_travel.py` simula due store e un canale con
   perdita del 30%, duplicati e riavvio a ogni passo. Deve sempre finire con
   il pet attivo su **un solo** device.

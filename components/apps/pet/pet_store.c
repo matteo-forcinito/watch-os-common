@@ -41,7 +41,9 @@ typedef struct
     uint16_t keys[DEX_MAX];
 } dex_t;
 static EXT_RAM_BSS_ATTR dex_t s_dex;
-static char s_arrived[4][17];   /* arrivals the page has not animated yet */
+static char s_arrived[4][17];
+/* Rollback copy for pet_command: in PSRAM, not on the caller's stack (link task). */
+static EXT_RAM_BSS_ATTR pet_store_t s_before;   /* arrivals the page has not animated yet */
 static bool s_ready;
 
 static int64_t clock_now(void)
@@ -303,7 +305,7 @@ cJSON *pet_command(const cJSON *j, const char **error)
     if (transfer && (strlen(tx) < 16 || strlen(tx) > 40 || strspn(tx, "0123456789abcdef-") != strlen(tx)))
         return NULL;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    pet_store_t before = s_store;
+    s_before = s_store;
     pet_record_t *p = find(seed);
     bool ok = false;
     if (!strcmp(action, "forget"))
@@ -486,7 +488,7 @@ cJSON *pet_command(const cJSON *j, const char **error)
         out = snapshot_locked();
     else
     {
-        s_store = before;
+        s_store = s_before;
         if (ok)
             *error = "Salvataggio fallito: riprova";
     }

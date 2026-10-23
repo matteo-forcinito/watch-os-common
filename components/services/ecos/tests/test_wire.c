@@ -104,12 +104,12 @@ int ecos_tests(void)
     CHECK(ecos_link_get64(link + 17) == epoch);
     CHECK(ecos_link_get32(link + 25) == UINT32_C(0x99aabbcc));
     CHECK(link[17] == 0x11 && link[28] == 0xcc);
-    for (unsigned type = 0; type <= 7; type++)
+    for (unsigned type = 0; type <= 9; type++)
     {
         link[4] = (uint8_t)type;
         for (size_t n = 0; n <= sizeof(link); n++)
         {
-            bool valid = type >= 1 && type <= 6 && n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG &&
+            bool valid = type >= 1 && type <= 8 && n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG &&
                          n <= ECOS_LINK_FRAME_MAX;
             CHECK(ecos_link_valid(link, n) == valid);
         }

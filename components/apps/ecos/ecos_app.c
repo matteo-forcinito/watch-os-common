@@ -7,6 +7,8 @@
 #include "apps_internal.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#include "core/recovery.h"
+#include "core/settings.h"
 #include "core/sys.h"
 #include "esp_heap_caps.h"
 #include "services/ecos.h"
@@ -117,7 +119,9 @@ static void list_refresh(list_ui_t *ui)
             lv_obj_set_style_bg_color(bubble, lv_color_hex(m->reachable ? UI_COLOR_GREEN : UI_COLOR_GRAY), 0);
         }
     }
-    lv_label_set_text(ui->status, f->busy ? "Cerco i dispositivi..." : f->message[0] ? f->message
+    bool disabled = !recovery_active() && settings_get()->ecos_mode == 2;
+    lv_label_set_text(ui->status, disabled ? "Ecosistema spento: attivalo in Impostazioni > Bluetooth"
+                                : f->busy ? "Cerco i dispositivi..." : f->message[0] ? f->message
                                                                                     : "Famiglia di dispositivi");
     lv_obj_set_state(ui->search, LV_STATE_DISABLED, f->busy);
 }
@@ -136,6 +140,11 @@ static void list_tick(lv_timer_t *timer)
 static void search_click(lv_event_t *e)
 {
     (void)e;
+    if (!recovery_active() && settings_get()->ecos_mode == 2)
+    {
+        ui_toast("Ecosistema spento: attivalo in Impostazioni > Bluetooth");
+        return;
+    }
     if (ecos_family_refresh() != ESP_OK)
     {
         ui_toast("Abbinamento in corso: riprova dopo");

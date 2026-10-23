@@ -14,8 +14,10 @@
 #include "core/sys.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "orbi/orbi_genome.h"
+#include "orbi/pet_sprite.h"
 #include "pet.h"
 #include "services/ecos.h"
 #include "ui/ui.h"
@@ -25,7 +27,7 @@
 
 static const char *TAG = "pet_travel";
 
-enum { OP_RECEIVE = 1, OP_ARRIVE = 2, OP_CANCEL = 3 };
+enum { OP_RECEIVE = 1, OP_ARRIVE = 2, OP_CANCEL = 3, OP_INFO = 4 };
 
 typedef struct
 {
@@ -97,6 +99,22 @@ static size_t on_step(const char *from_id, const char *from_name, const uint8_t 
                       size_t max)
 {
     (void)from_id;
+    if (n >= 1 && s[0] == OP_INFO)
+    {
+        /* Who lives here: [0][species][name]. */
+        pet_record_t p;
+        if (!pet_current(&p) || max < 4)
+            return 0;
+        uint64_t seed = 0;
+        orbi_parse(p.seed, &seed);
+        orbi_genome_t g;
+        orbi_genome(seed, &g);
+        pet_look_t l;
+        pet_look(seed, pet_level(p.xp), &l);
+        reply[0] = 0;
+        reply[1] = l.species;
+        return 2 + (size_t)snprintf((char *)reply + 2, max - 2, "%s", g.name);
+    }
     if (n < 17 || max < 2)
         return 0;
     char tx[17], seed[17];
@@ -282,7 +300,7 @@ static bool start(trip_t *t)
         return false;
     }
     s_busy = true;
-    if (!sys_task_create(travel_task, "pet_travel", 4096, t, 4, 0))
+    if (!sys_task_create(travel_task, "pet_travel", 6144, t, 4, 0))
     {
         s_busy = false;
         free(t);
@@ -322,4 +340,76 @@ bool pet_travel_busy(void)
 void pet_travel_init(void)
 {
     ecos_family_set_pet_handler(on_step);
+}
+
+/* ------------------------------------------------------------- outing */
+
+static pet_friend_t s_friends[PET_FRIENDS_MAX];
+static int s_friend_count;
+static pet_outing_cb_t s_outing_cb;
+
+/* Radio on, search the paired devices, ask the reachable ones who lives there. */
+static void outing_task(void *arg)
+{
+    (void)arg;
+    ecos_family_hold(true);
+    ecos_family_refresh();
+    ecos_family_t *f = heap_caps_malloc(sizeof(*f), MALLOC_CAP_SPIRAM);
+    int count = 0;
+    if (f)
+    {
+        for (int i = 0; i < 40; i++)
+        {
+            vTaskDelay(pdMS_TO_TICKS(300));
+            ecos_family(f);
+            if (i > 3 && !f->busy)
+                break;
+        }
+        for (int i = 0; i < f->count && count < PET_FRIENDS_MAX; i++)
+        {
+            if (!f->members[i].reachable)
+                continue;
+            pet_friend_t *fr = &s_friends[count];
+            memset(fr, 0, sizeof(*fr));
+            snprintf(fr->id, sizeof(fr->id), "%s", f->members[i].id);
+            snprintf(fr->device, sizeof(fr->device), "%s", f->members[i].name);
+            uint8_t q = OP_INFO, reply[48];
+            int r = ecos_family_pet(fr->id, &q, 1, reply, sizeof(reply) - 1, 4000);
+            if (r >= 2 && reply[0] == 0)
+            {
+                reply[r] = 0;
+                fr->species = reply[1];
+                snprintf(fr->pet, sizeof(fr->pet), "%.15s", (const char *)reply + 2);
+            }
+            count++;
+        }
+        free(f);
+    }
+    s_friend_count = count;
+    ecos_family_hold(false);
+    s_busy = false;
+    lv_port_lock();
+    if (s_outing_cb)
+        s_outing_cb(s_friends, count);
+    lv_port_unlock();
+    vTaskDelete(NULL);
+}
+
+bool pet_outing_search(pet_outing_cb_t done)
+{
+    if (s_busy)
+        return false;
+    s_busy = true;
+    s_outing_cb = done;
+    if (!sys_task_create(outing_task, "pet_outing", 6144, NULL, 4, 0))
+    {
+        s_busy = false;
+        return false;
+    }
+    return true;
+}
+
+void pet_outing_cancel(void)
+{
+    s_outing_cb = NULL;
 }
