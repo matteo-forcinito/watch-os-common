@@ -97,7 +97,7 @@ esp_err_t market_parse_catalog(const char *text, const char *board,
     cJSON *apps = cJSON_GetObjectItemCaseSensitive(root, "apps");
     esp_err_t result = ESP_ERR_INVALID_RESPONSE;
     if (!cJSON_IsObject(root) || !cJSON_IsNumber(schema) || schema->valuedouble != 2 ||
-        !cJSON_IsArray(apps) || cJSON_GetArraySize(apps) > 64) goto done;
+        !cJSON_IsArray(apps) || cJSON_GetArraySize(apps) > MARKET_CATALOG_ENTRIES_MAX) goto done;
 
     market_entry_t *entry = calloc(1, sizeof(*entry));
     if (entry == NULL)

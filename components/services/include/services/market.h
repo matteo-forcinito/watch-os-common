@@ -10,6 +10,9 @@
 #include "services/extapp.h"
 
 #define MARKET_MAX_APPS 32
+/* The shared catalogue contains variants for every supported board. This is
+ * separate from the number of applications retained for one device. */
+#define MARKET_CATALOG_ENTRIES_MAX 256
 #define MARKET_URL_MAX 320
 #define MARKET_CATALOG_MAX (128 * 1024)   /* PSRAM; the tools still cap catalogues at 48 KB for older firmware */
 #define MARKET_ICON_MAX (64 * 1024)
