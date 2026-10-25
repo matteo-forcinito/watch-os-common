@@ -14,6 +14,17 @@ Versione locale: `1.15.0-dev.1`, asset Petland inclusi in flash.
 
 ## Dispositivi
 
+Build finale ESP-IDF 6.1 completata sui sei modelli:
+
+| Modello | Immagine applicativa | Slot minimo |
+| --- | ---: | ---: |
+| AMOLED 1.8 | 3.866.528 byte | 6 MiB |
+| AMOLED 1.75C | 3.842.960 byte | 6 MiB |
+| Knob 1.8 | 3.867.600 byte | 6 MiB |
+| AMOLED 1.75 | 3.859.824 byte | 6 MiB |
+| SenseCAP Watcher | 3.929.840 byte | 7 MiB |
+| Guition 4848 | 3.835.296 byte | 6 MiB |
+
 AMOLED 1.8 e AMOLED 1.75C: installazione del solo slot di sistema a `0x20000`,
 con verifica del modello e backup precedente. Non sono stati scritti tabella
 partizioni o NVS dal programma di installazione.
