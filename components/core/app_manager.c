@@ -14,7 +14,7 @@
 
 static const char *TAG = "apps";
 
-#define MAX_APPS        48
+#define MAX_APPS        56
 #define MAX_STACK       8
 #define MAX_RETIRED     16
 #define MAX_OPS         4

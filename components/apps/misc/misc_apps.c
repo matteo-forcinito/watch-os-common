@@ -1,6 +1,7 @@
 #include "apps_internal.h"
 
 #include "core/power.h"
+#include "core/settings.h"
 #include "core/state.h"
 #include "hardware/display.h"
 #include "companion/ble_companion.h"
@@ -78,12 +79,21 @@ static void on_monitor(lv_event_t *e)
 {
     sistema_overlay_set(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
+static void on_energy_saver(lv_event_t *e)
+{
+    settings_t s = *settings_get();
+    s.energy_saver = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    settings_save(&s);
+    power_settings_changed();
+}
 
 static void power_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
 
     lv_obj_t *page = ui_page(screen, "Alimentazione");
+    ui_switch_row(page, LV_SYMBOL_CHARGE, UI_COLOR_GREEN, "Risparmio energetico", settings_get()->energy_saver, on_energy_saver, NULL);
+    ui_text(page, "Luminosita ridotta, schermo dopo 10 s e always-on piu tenue. Orologio, sveglie ed eventi restano attivi.", true);
     ui_row(page, LV_SYMBOL_EYE_CLOSE, UI_COLOR_INDIGO, "Spegni schermo", NULL, on_sleep, NULL);
     ui_row(page, LV_SYMBOL_REFRESH, UI_COLOR_ORANGE, "Riavvia", NULL, on_restart, NULL);
     ui_row(page, LV_SYMBOL_POWER, UI_COLOR_RED, "Spegni", NULL, on_shutdown, NULL);

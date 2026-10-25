@@ -16,6 +16,11 @@
 #include <stddef.h>
 #include <time.h>
 
+/* Lightweight observers for explicit time/timezone changes; callbacks must not block. */
+void clock_add_listener(void (*changed)(void));
+/* Preserve UTC across a software handover when the board has no working RTC. */
+void clock_checkpoint(void);
+
 /* Load the time zone and start the minute tick. */
 void clock_init(void);
 

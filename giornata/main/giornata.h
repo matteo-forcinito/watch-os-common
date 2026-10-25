@@ -24,7 +24,9 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#ifndef WATCH_LITE
 #include "lvgl.h"
+#endif
 
 #define GD_MAX_SOURCES   6
 #define GD_MAX_TASKS     120
@@ -194,7 +196,9 @@ void gd_sync_task_start(void);
 void gd_agenda_start(void);
 
 /* UI and dashboard. */
+#ifndef WATCH_LITE
 void giornata_ui_create(lv_obj_t *screen);
+#endif
 bool giornata_ui_back(void);
 /* Internal app closed (widgets already deleted by the app manager). */
 void giornata_ui_destroy(void);

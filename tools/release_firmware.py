@@ -22,6 +22,11 @@ import zipfile
 PRODUCTS = {'amoled175': 'amoled175_watch', 'amoled175c': 'amoled175c_watch',
             'amoled': 'amoled_watch', 'knob': 'knob_os', 'watcher': 'watcher_os', 'guition4848': 'guition4848_panel'}
 
+def qa_compile_commands(commands):
+    return any(any(flag in c['command'] for flag in
+                   ('WATCH_LOCAL_QA_CONSOLE', 'CONFIG_WATCH_DEV_CONSOLE=1', 'LITE_QA=1'))
+               for c in commands)
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--repo', required=True)
@@ -82,7 +87,7 @@ def main():
             raise RuntimeError('Shared build source differs from the pinned clean revision')
         if config.get('WATCH_DEV_CONSOLE'): raise RuntimeError('Diagnostic console must be disabled')
         commands = json.loads((build/'compile_commands.json').read_text())
-        if any('WATCH_LOCAL_QA_CONSOLE' in c['command'] for c in commands):
+        if qa_compile_commands(commands):
             raise RuntimeError('Local QA console must be disabled')
         artwork = [Path(c['file']).parent/'CREDITS.json' for c in commands
                    if Path(c['file']).name == 'pokemon_assets.c']

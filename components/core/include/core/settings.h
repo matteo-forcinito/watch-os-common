@@ -74,6 +74,8 @@ typedef struct
     uint8_t ecos_mode; /* 0 automatic, 1 background, 2 off outside recovery */
     uint32_t home_preferences_version;
     uint8_t homepage; /* 0 watch face, 1 Casa, 2 app list */
+    uint32_t energy_preferences_version;
+    bool energy_saver; /* cap display power; preserve user brightness/timeout */
 } settings_t;
 
 esp_err_t settings_init(void);

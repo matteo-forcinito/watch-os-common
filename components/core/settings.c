@@ -58,6 +58,10 @@ static void set_defaults(settings_t *s)
 
 static void sanitize(settings_t *s)
 {
+    if (s->energy_preferences_version != 1) {
+        s->energy_preferences_version = 1;
+        s->energy_saver = false;
+    }
     /* Without touch the paged face cannot be navigated: the app list. */
     if (s->home_preferences_version == 1 && s->homepage <= 1)
     {

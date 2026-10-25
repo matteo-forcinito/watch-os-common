@@ -119,6 +119,9 @@ void gd_app_open(bool open)
 
 void gd_sync_background_tick(void)
 {
+    /* Cached reminders remain active. Network synchronization is requested
+     * by opening Giornata or using its explicit refresh control. */
+    return;
 #if CONFIG_APPKIT_HOSTED
     int64_t now = esp_timer_get_time();
     if (s_app_open || s_running || now < BOOT_QUIET_US ||

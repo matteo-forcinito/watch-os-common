@@ -7,6 +7,9 @@
 
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_rtc_time.h"
+#include "esp_system.h"
+#include "nvs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +21,43 @@ static const char *TAG = "clock";
 #define VALID_AFTER 1735689600   /* 2025-01-01 */
 
 static esp_timer_handle_t s_tick = NULL;
+static void (*s_listeners[4])(void);
+static unsigned s_listener_count;
+typedef struct { uint32_t magic, reserved; uint64_t rtc_us; int64_t utc_us; } clock_keep_t;
+void clock_checkpoint(void)
+{
+    struct timeval tv;gettimeofday(&tv,NULL);
+    if(tv.tv_sec <= VALID_AFTER) return;
+    clock_keep_t keep={.magic=0x434C4B31,.rtc_us=esp_rtc_get_time_us(),.utc_us=(int64_t)tv.tv_sec*1000000+tv.tv_usec};
+    nvs_handle_t h;
+    if(nvs_open("clock_keep",NVS_READWRITE,&h)==ESP_OK) {
+        esp_err_t err=nvs_set_blob(h,"v1",&keep,sizeof(keep));
+        if(err==ESP_OK)err=nvs_commit(h);
+        if(err!=ESP_OK)ESP_LOGW(TAG,"Clock handover checkpoint: %s",esp_err_to_name(err));
+        nvs_close(h);
+    }
+}
+static bool restore_checkpoint(void)
+{
+    /* RTC ticks cannot establish elapsed wall time after power loss. */
+    if(esp_reset_reason()!=ESP_RST_SW) return false;
+    nvs_handle_t h;clock_keep_t keep={0};size_t size=sizeof(keep);
+    if(nvs_open("clock_keep",NVS_READONLY,&h)!=ESP_OK)return false;
+    esp_err_t err=nvs_get_blob(h,"v1",&keep,&size);nvs_close(h);
+    uint64_t now=esp_rtc_get_time_us();
+    if(err!=ESP_OK||size!=sizeof(keep)||keep.magic!=0x434C4B31||now<keep.rtc_us||now-keep.rtc_us>7ULL*86400*1000000||keep.utc_us<(int64_t)VALID_AFTER*1000000)return false;
+    int64_t utc=keep.utc_us+(int64_t)(now-keep.rtc_us);
+    struct timeval tv={.tv_sec=(time_t)(utc/1000000),.tv_usec=(suseconds_t)(utc%1000000)};
+    settimeofday(&tv,NULL);return true;
+}
+void clock_add_listener(void (*changed)(void))
+{
+    if(changed && s_listener_count < 4) s_listeners[s_listener_count++] = changed;
+}
+static void changed(void)
+{
+    for(unsigned i=0;i<s_listener_count;i++)s_listeners[i]();
+}
 
 static void schedule_next_minute(void)
 {
@@ -55,6 +95,10 @@ void clock_init(void)
         settimeofday(&tv, NULL);
         ESP_LOGI(TAG, "Time from RTC");
     }
+    else if (restore_checkpoint())
+    {
+        ESP_LOGI(TAG,"Time retained across software handover");
+    }
     else
     {
         ESP_LOGW(TAG, "RTC not set: waiting for NTP / phone");
@@ -72,9 +116,11 @@ void clock_set_utc(time_t utc)
     struct timeval tv = {.tv_sec = utc, .tv_usec = 0};
     settimeofday(&tv, NULL);
     rtc_chip_set_time(utc);
+    clock_checkpoint();
 
     publish_minute();
     schedule_next_minute();
+    changed();
 }
 
 void clock_set_timezone(const char *tz)
@@ -86,6 +132,7 @@ void clock_set_timezone(const char *tz)
     {
         publish_minute();
     }
+    changed();
 }
 
 void clock_local(struct tm *out)

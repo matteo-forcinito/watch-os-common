@@ -51,6 +51,7 @@ struct market_ui
     market_phase_t phase;
     bool last_busy;
     int page; /* 0 entrance, 1 catalog, 2 app cover, 3 information */
+    int catalog_limit;
     int angle;
     uint32_t action_ready_at;
     char queue[MARKET_MAX_APPS][32];   /* "update all": one download at a time */
@@ -403,6 +404,16 @@ static void update_all_confirmed(bool confirmed, void *arg)
     queue_step(ui);
 }
 
+static void more_catalog(lv_event_t *event)
+{
+    market_ui_t *ui=lv_event_get_user_data(event);
+    int y=lv_obj_get_scroll_y(lv_obj_get_child(ui->content,0));
+    ui->catalog_limit=(ui->catalog_limit?ui->catalog_limit:8)+8;
+    render(ui);
+    lv_obj_t *page=lv_obj_get_child(ui->content,0);
+    lv_obj_update_layout(page);
+    lv_obj_scroll_to_y(page,y,LV_ANIM_OFF);
+}
 static void show_catalog(market_ui_t *ui)
 {
     lv_obj_t *page = ui_page(ui->content, "Esplora");
@@ -444,6 +455,7 @@ static void show_catalog(market_ui_t *ui)
             updates++;
         }
     }
+    int shown=0, eligible=0, limit=ui->catalog_limit?ui->catalog_limit:8;
     for (int group = 0; group < 3; group++)
     {
         lv_obj_t *grid = NULL;
@@ -455,6 +467,9 @@ static void show_catalog(market_ui_t *ui)
                           fw_version_compare(entry->version, entry->installed_version) > 0;
             int kind = update ? 0 : entry->installed ? 2 : 1;
             if (kind != group) continue;
+            eligible++;
+            if(shown>=limit)continue;
+            shown++;
             if (!headed)
             {
                 headed = true;
@@ -479,7 +494,9 @@ static void show_catalog(market_ui_t *ui)
             }
             ui->cards[i].ui = ui;
             snprintf(ui->cards[i].id, sizeof(ui->cards[i].id), "%s", entry->id);
-            const char *icon = entry->installed && entry->local.icon[0] != '\0' ? entry->local.icon : symbol(entry->id);
+            /* Decode package artwork only when its detail page is requested.
+             * An overview must not decode every off-screen installed PNG. */
+            const char *icon = symbol(entry->id);
             char version[80];
             if (update)
                 snprintf(version, sizeof(version), "%s " LV_SYMBOL_RIGHT " %s", entry->installed_version, entry->version);
@@ -522,6 +539,7 @@ static void show_catalog(market_ui_t *ui)
         }
     }
     free(entry);
+    if(eligible>shown)ui_button(page,"Mostra altre app",UI_COLOR_BLUE,more_catalog,ui);
     if (count == 0 && !market_busy()) ui_text(page, "Aggiorna il catalogo per scoprire le app.", true);
 }
 

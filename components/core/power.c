@@ -1,4 +1,5 @@
 #include "core/power.h"
+#include "core/clock.h"
 
 #include "core/lv_port.h"
 #include "core/settings.h"
@@ -67,6 +68,16 @@ static bool s_usb_power = false;
 static bool s_inputs_started;
 static _Atomic int s_cpu_boost = 0;
 static bool s_mirror = false;   /* remote mirror: the panel sleeps, the UI keeps running (power task) */
+
+static uint8_t active_brightness(void)
+{
+    uint8_t value = settings_get()->brightness;
+    return settings_get()->energy_saver && value > 80 ? 80 : value;
+}
+static uint8_t aod_brightness(void)
+{
+    return settings_get()->energy_saver ? 8 : AOD_BRIGHTNESS;
+}
 
 /* ------------------------------------------------------------ helpers */
 
@@ -142,7 +153,7 @@ static void go_on(void)
     vTaskDelay(pdMS_TO_TICKS(20));
     lv_port_refresh_now();
 
-    set_brightness(settings_get()->brightness, true);
+    set_brightness(active_brightness(), true);
     atomic_store(&s_last_activity_us, now_us());
 
     ESP_LOGI(TAG, "Screen on");
@@ -155,14 +166,14 @@ static void go_dim(void)
         return;
     }
 
-    uint8_t level = settings_get()->brightness / 4;
+    uint8_t level = active_brightness() / 4;
     set_brightness(level < 10 ? 10 : level, true);
     set_screen(POWER_SCREEN_DIM);
 }
 
 static void go_aod(void)
 {
-    set_brightness(AOD_BRIGHTNESS, true);
+    set_brightness(aod_brightness(), true);
     set_screen(POWER_SCREEN_AOD);  /* the app manager shows the always-on face */
     vTaskDelay(pdMS_TO_TICKS(20));
     lv_port_refresh_now();
@@ -249,7 +260,7 @@ static void set_mirror(bool on)
 
     lv_port_refresh_now();
     s_brightness_now = 0;
-    set_brightness(s_screen == POWER_SCREEN_AOD ? AOD_BRIGHTNESS : settings_get()->brightness, true);
+    set_brightness(s_screen == POWER_SCREEN_AOD ? aod_brightness() : active_brightness(), true);
     ESP_LOGI(TAG, "Panel back on");
 }
 
@@ -410,6 +421,7 @@ static void power_task(void *arg)
         {
             int64_t idle_ms = (now - atomic_load(&s_last_activity_us)) / 1000;
             int64_t timeout_ms = (int64_t)settings_get()->screen_timeout_s * 1000;
+            if (settings_get()->energy_saver && timeout_ms > 10000) timeout_ms = 10000;
 
             if (idle_ms >= timeout_ms)
             {
@@ -488,8 +500,9 @@ static void power_task(void *arg)
             case MSG_SETTINGS:
                 if (s_screen == POWER_SCREEN_ON && !s_mirror)
                 {
-                    set_brightness(settings_get()->brightness, false);
+                    set_brightness(active_brightness(), false);
                 }
+                else if (s_screen == POWER_SCREEN_AOD && !s_mirror) set_brightness(aod_brightness(), false);
                 break;
         }
     }
@@ -604,6 +617,7 @@ void power_set_button_handler(void (*handler)(button_id_t button, button_event_t
 static void prepare_power_down(void)
 {
     settings_flush();
+    clock_checkpoint();
     display_set_brightness(0);
     if (!lv_port_headless()) display_sleep(true);
 }

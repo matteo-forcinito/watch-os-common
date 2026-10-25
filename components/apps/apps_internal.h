@@ -5,6 +5,8 @@
 #include "lvgl.h"
 
 /* ---- apps (each in its own file) */
+extern const app_t raccolta_app;
+extern const app_t zampe_app;
 extern const app_t alarms_app;
 extern const app_t pet_app;
 extern const app_t alarm_edit_app;      /* hidden: arg = alarm id (0 = new) */
@@ -76,6 +78,7 @@ void watchface_create(lv_obj_t *parent);
 void watchface_aod_create(lv_obj_t *screen);
 void launcher_create(lv_obj_t *parent);
 void launcher_refresh(void);
+void launcher_hint_refresh(void);
 void launcher_list_build(lv_obj_t *parent);   /* homepage "Lista app" */
 bool launcher_rotate(int delta); /* select a round icon; touch the centre to open */
 void control_center_create(lv_obj_t *parent);

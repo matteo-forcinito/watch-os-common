@@ -234,6 +234,7 @@ const char *sys_task_purpose(const char *name)
         {"weather", "Aggiornamento meteo richiesto"}, {"time_sync", "Sincronizzazione orologio"},
         {"news", "Notizie aperte dall'utente"}, {"launcher_scan", "Lettura elenco app esterne"},
         {"news_init", "Archivio Notizie: apertura richiesta"},
+        {"care_save", "Salvataggio locale richiesto: Raccolta o Zampe"},
         {"fw_online", "Controllo o installazione firmware richiesti"},
         {"fw_release", "Download versione scelta"}, {"fw_file", "Installazione da file richiesta"},
         {"pet_travel", "Viaggio del pet richiesto"}, {"pet_outing", "Uscita del pet richiesta"},

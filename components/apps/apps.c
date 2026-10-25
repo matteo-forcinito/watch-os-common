@@ -6,6 +6,7 @@
 
 #if CONFIG_APPKIT_HOSTED
 #include "appkit.h"
+#include "life/life_store.h"
 #endif
 
 #include "core/lv_port.h"
@@ -58,6 +59,8 @@ static const app_t *const s_apps[] = {
     &casa_app,
     &copertura_app,
     &bilancio_app,
+    &raccolta_app,
+    &zampe_app,
     &sentinel_app,
     &ombra_app,
 #endif
@@ -311,6 +314,7 @@ void apps_init(void)
     market_init();
 #if CONFIG_APPKIT_HOSTED
     giornata_service_start();   /* reminders ring with the app closed too */
+    life_services_init();
     /* News is loaded on its first explicit open, never as an idle service. */
     /* Dashboard folders exist from boot: opening one opens its app (no cost until then). */
     appkit_hosted_register("News", "news");
@@ -320,6 +324,8 @@ void apps_init(void)
     appkit_hosted_register("Copertura", "copertura");
     appkit_hosted_register("Bilancio", "bilancio");
     appkit_hosted_register("Sentinel", "sentinel");
+    appkit_hosted_register("Raccolta", "raccolta");
+    appkit_hosted_register("Zampe", "zampe");
 #endif
     for (size_t i = 0; i < sizeof(s_apps) / sizeof(s_apps[0]); i++)
     {

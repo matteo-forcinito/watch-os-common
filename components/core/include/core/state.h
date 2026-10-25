@@ -20,7 +20,9 @@
 
 #include <stdint.h>
 
+#ifndef WATCH_LITE
 #include "lvgl.h"
+#endif
 
 typedef enum
 {
@@ -72,7 +74,9 @@ void state_bump(state_id_t id);
 int32_t state_get(state_id_t id);
 
 /* The LVGL subject (use only in the lvgl task). */
+#ifndef WATCH_LITE
 lv_subject_t *state_subject(state_id_t id);
+#endif
 
 /* lvgl task only: push pending values to the subjects. */
 void state_apply_pending(void);

@@ -68,4 +68,14 @@ nel trasporto della console, non pixel del dispositivo.
 
 Build dei sei modelli e test dei lettori C News/Giornata passati. Gli ultimi
 ritocchi diagnostici richiedono la successiva build completa con le nuove app.
-Nessuna nuova release stabile è stata pubblicata durante questa iterazione.
+La successiva 1.16.0 integra Raccolta, Zampe, risparmio energetico e l'app esterna
+Watch Lite. Nel catalogo Market le prime otto schede vengono create subito,
+le altre su richiesta; le immagini dei pacchetti si decodificano nei dettagli.
+Il pet decorativo resta sulla home, senza coprire i contenuti delle app.
+
+Il ciclo fisico BLE dopo la rete è stato verificato: con poca memoria contigua
+l'avvio viene rinviato; chiusa la rete, l'abilitazione riesce senza riavvio.
+La Lite sul tondo lascia circa 265 KiB interni prima della rete e circa 198 KiB
+con Wi-Fi/dashboard accesi; non collega LVGL né Bluetooth. Sono misure RAM,
+non misure di durata della batteria. I limiti delle transizioni sopra restano
+espliciti finché non vengono misurati nuovamente.

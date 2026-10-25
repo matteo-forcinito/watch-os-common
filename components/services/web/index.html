@@ -173,6 +173,7 @@ details.card>summary{cursor:pointer;font-weight:700;padding:8px 0}details.card[o
       <label class="field">Spegnimento schermo (s)<input type="number" id="screen_timeout" min="5" max="120"></label>
       <label class="field">Volume <input type="range" id="volume" min="0" max="100"></label>
       <label class="row"><input type="checkbox" id="always_on"> Always on</label>
+      <label class="row"><input type="checkbox" id="energy_saver"> Risparmio energetico</label>
       <label class="row"><input type="checkbox" id="tap_to_wake"> Tocca per accendere</label>
       <label class="row"><input type="checkbox" id="wake_on_notification"> Accendi con le notifiche</label></div></div>
     <div class="card"><h2>Ora e dispositivo</h2><div class="grid" style="gap:12px">
@@ -423,7 +424,7 @@ async function pollWifi(n) {
 
 /* -------------------------------------------------------- settings */
 const NUMS = ['brightness', 'screen_timeout', 'volume'], TEXTS = ['timezone', 'device_name'],
-  FLAGS = ['always_on', 'tap_to_wake', 'wake_on_notification', 'time_24h', 'auto_time', 'ble'];
+  FLAGS = ['always_on', 'energy_saver', 'tap_to_wake', 'wake_on_notification', 'time_24h', 'auto_time', 'ble'];
 async function loadSettings() {
   const st = (await kit.api('/api/state')).settings;
   for (const k of NUMS.concat(TEXTS)) $('#' + k).value = st[k];

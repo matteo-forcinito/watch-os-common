@@ -189,6 +189,7 @@ static void tile_changed(lv_event_t *e)
 
     /* The launcher survives tile changes. Rebuilding it here interrupts the
      * swipe and rescans storage in the LVGL task. Mutations refresh it explicitly. */
+    launcher_hint_refresh();
 }
 
 static void on_knob(lv_event_t *event)

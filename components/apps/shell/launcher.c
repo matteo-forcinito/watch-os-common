@@ -8,6 +8,11 @@
 #include "services/fw_version.h"
 #include "services/market.h"
 #include "ui/ui.h"
+#include "core/state.h"
+#include "core/sys.h"
+#if CONFIG_APPKIT_HOSTED
+#include "life/life_store.h"
+#endif
 
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
@@ -15,6 +20,51 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+
+#if CONFIG_APPKIT_HOSTED
+static lv_obj_t *s_waste_hint;
+static atomic_bool s_hint_work;
+static int s_hint_day = LIFE_NO_DAY;
+static uint32_t s_hint_revision = UINT32_MAX;
+static void hint_job(void *arg)
+{
+    (void)arg;
+    char text[180] = "";
+    bool show = life_menu_hint(text, sizeof(text));
+    lv_port_lock();
+    if (s_waste_hint) {
+        lv_label_set_text(s_waste_hint, show ? text : "");
+        lv_obj_set_hidden(s_waste_hint, !show);
+    }
+    lv_port_unlock();
+    atomic_store(&s_hint_work, false);
+}
+void launcher_hint_refresh(void)
+{
+    int day = life_today(); uint32_t revision = life_revision(LIFE_RACCOLTA);
+    if (s_hint_day == day && s_hint_revision == revision) return;
+    if (atomic_exchange(&s_hint_work, true)) return;
+    if (sys_post(hint_job, NULL)) { s_hint_day = day; s_hint_revision = revision; }
+    else atomic_store(&s_hint_work, false);
+}
+static void hint_changed(lv_observer_t *observer, lv_subject_t *subject)
+{
+    (void)observer; (void)subject; launcher_hint_refresh();
+}
+static void hint_create(lv_obj_t *parent, int width)
+{
+    s_waste_hint = ui_text(parent, "", true);
+    lv_obj_set_width(s_waste_hint, width);
+    lv_obj_set_style_text_font(s_waste_hint, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_align(s_waste_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_hidden(s_waste_hint, true);
+    s_hint_revision = UINT32_MAX;
+    launcher_hint_refresh();
+}
+#else
+void launcher_hint_refresh(void) {}
+#endif
 
 /*
  * The menu (home screen, swipe left from the watch face).
@@ -521,6 +571,9 @@ static void ring_build(void)
     lv_obj_set_style_text_align(s_center_name, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(s_center_name, UI_FONT_LARGE, 0);
     select_slot(s_selected < s_slot_count ? s_selected : 0);
+#if CONFIG_APPKIT_HOSTED
+    hint_create(s_center, 176);
+#endif
 }
 
 void launcher_refresh(void)
@@ -542,6 +595,9 @@ void launcher_refresh(void)
 void launcher_create(lv_obj_t *parent)
 {
     scan_external();
+#if CONFIG_APPKIT_HOSTED
+    lv_subject_add_observer_obj(state_subject(STATE_MINUTE), hint_changed, parent, NULL);
+#endif
     if (board_info()->round)
     {
         s_ring = lv_obj_create(parent);
@@ -552,6 +608,9 @@ void launcher_create(lv_obj_t *parent)
         return;
     }
     lv_obj_t *page = ui_page(parent, "Menu");
+#if CONFIG_APPKIT_HOSTED
+    hint_create(page, lv_pct(100));
+#endif
     s_menu = lv_obj_create(page);
     lv_obj_remove_style_all(s_menu);
     lv_obj_set_size(s_menu, LV_PCT(100), LV_SIZE_CONTENT);

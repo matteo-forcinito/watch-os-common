@@ -1,0 +1,16 @@
+"""Package the two offline dashboards. No personal profile fixtures or assets."""
+from pathlib import Path
+
+folder = Path(__file__).resolve().parents[1] / 'components/apps/life'
+css = (folder/'dashboard.css').read_text(encoding='utf-8')
+js = (folder/'dashboard.js').read_text(encoding='utf-8')
+art = {
+'raccolta': '<svg viewBox="0 0 160 180" fill="none" aria-hidden="true"><path d="M38 54h84l-9 104H47z" fill="#177459"/><path d="M30 48h100M60 37h40M64 76v52m32-52v52" stroke="#173137" stroke-width="8" stroke-linecap="round"/><path d="M52 20c22-26 45-18 52-8-24 0-29 20-33 27" fill="#79b97e"/><circle cx="57" cy="164" r="8" fill="#173137"/><circle cx="103" cy="164" r="8" fill="#173137"/></svg>',
+'zampe': '<svg viewBox="0 0 180 180" fill="none" aria-hidden="true"><path d="M46 62 30 24l43 17m62 21 16-38-43 17" fill="#a56944" stroke="#613e2e" stroke-width="5"/><path d="M39 76c0-52 102-52 102 0v30c0 62-102 62-102 0z" fill="#d6aa7f"/><ellipse cx="90" cy="112" rx="34" ry="29" fill="#f2d8ba"/><circle cx="65" cy="84" r="5" fill="#352e2b"/><circle cx="115" cy="84" r="5" fill="#352e2b"/><path d="m78 107 12 10 12-10z" fill="#352e2b"/><path d="M90 117v13m0 0c-9 9-17 2-17 2m17-2c9 9 17 2 17 2" stroke="#352e2b" stroke-width="4" stroke-linecap="round"/><path d="M59 158c20 9 42 9 62 0" stroke="#925634" stroke-width="9" stroke-linecap="round"/></svg>'}
+for slug, title in [('raccolta', 'Raccolta'), ('zampe', 'Zampe')]:
+    html = f'''<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>{title} · Dashboard</title><link rel="stylesheet" href="/kit.css"><style>{css}</style></head>
+<body data-app="{slug}" class="{'dogs' if slug == 'zampe' else 'waste'}"><div class="shell"><header><div class="brandmark" aria-hidden="true">{'♡' if slug == 'zampe' else '↻'}</div><div><div class="brand">{title}</div><div class="eyebrow">Il tuo spazio quotidiano</div></div><div class="actions"><span class="status" id="status" role="status">Connessione…</span><button id="reload" type="button">Aggiorna</button><button id="export" type="button">Esporta dati</button></div></header>
+<div class="hero"><div><div class="eyebrow">{'Una vita insieme' if slug == 'zampe' else 'Più ordine, meno pensieri'}</div><h1 id="hero-title" style="white-space:pre-line">{title}</h1><p class="lead" id="hero-sub">Collega il dispositivo per aprire i tuoi dati.</p></div><div class="hero-art">{art[slug]}<div><div class="stat" id="stat">—</div><p class="stat-caption" id="stat-caption">Tutto sotto controllo</p></div></div></div>
+<div class="layout"><aside id="side" class="panel side" aria-label="{'Profili' if slug == 'zampe' else 'Città'}"></aside><main id="main"><div class="panel">Abbina il browser al dispositivo per iniziare.</div></main></div><footer><span>{title} · Dati privati sul dispositivo</span><span>Dashboard locale · Nessun servizio cloud</span></footer></div><dialog id="editor" aria-label="Modifica dati"></dialog><script src="/kit.js"></script><script>{js}</script></body></html>'''
+    (folder/f'{slug}_dashboard.html').write_text(html, encoding='utf-8')
+    print(f'{title}: {len(html.encode())} bytes')

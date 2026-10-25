@@ -69,7 +69,7 @@ static bool s_mdns;
 static SemaphoreHandle_t s_lock;
 static void lock_init(void);
 
-#define FOLDERS_MAX 8
+#define FOLDERS_MAX 12
 typedef struct
 {
     char uri[24];
@@ -461,6 +461,7 @@ static esp_err_t handle_state(httpd_req_t *req)
     cJSON_AddNumberToObject(set, "brightness", s->brightness);
     cJSON_AddNumberToObject(set, "screen_timeout", s->screen_timeout_s);
     cJSON_AddBoolToObject(set, "always_on", s->always_on);
+    cJSON_AddBoolToObject(set, "energy_saver", s->energy_saver);
     cJSON_AddBoolToObject(set, "tap_to_wake", s->tap_to_wake);
     cJSON_AddBoolToObject(set, "wake_on_notification", s->wake_on_notification);
     cJSON_AddNumberToObject(set, "volume", s->volume);
@@ -491,6 +492,7 @@ static esp_err_t handle_settings(httpd_req_t *req)
     s.brightness = (uint8_t)get_int(json, "brightness", s.brightness);
     s.screen_timeout_s = (uint8_t)get_int(json, "screen_timeout", s.screen_timeout_s);
     s.always_on = get_bool(json, "always_on", s.always_on);
+    s.energy_saver = get_bool(json, "energy_saver", s.energy_saver);
     s.tap_to_wake = get_bool(json, "tap_to_wake", s.tap_to_wake);
     s.wake_on_notification = get_bool(json, "wake_on_notification", s.wake_on_notification);
     s.volume = (uint8_t)get_int(json, "volume", s.volume);
@@ -978,7 +980,7 @@ void web_server_add_routes(void (*register_routes)(httpd_handle_t server))
 static esp_err_t start_httpd(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 106;
+    config.max_uri_handlers = 128;
     config.stack_size = 6144;
     config.uri_match_fn = httpd_uri_match_wildcard; /* folders like /pieno/... */
     config.lru_purge_enable = true;

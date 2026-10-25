@@ -6,6 +6,7 @@
 #include "apps_internal.h"
 #include "core/lv_port.h"
 #include "core/power.h"
+#include "core/settings.h"
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -1268,8 +1269,8 @@ static void ambient(lv_timer_t *timer)
     (void)timer;
     pet_record_t p;
     const app_t *app = app_current();
-    bool show = pet_company() && power_screen() == POWER_SCREEN_ON &&
-                (!app || (app != &pet_app && app != &ring_app && app != &call_app)) && !link_scene_busy() &&
+    bool show = !settings_get()->energy_saver && pet_company() && power_screen() == POWER_SCREEN_ON &&
+                !app && !link_scene_busy() &&
                 pet_current(&p);
     if (!show)
     {

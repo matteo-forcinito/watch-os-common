@@ -847,6 +847,11 @@ void gd_store_flush(bool force)
         }
         storage_files_release();
     }
+    else {
+        gd_lock();
+        gd_changed(true); /* A concurrent file transfer must not discard a save. */
+        gd_unlock();
+    }
     cJSON_free(text);
 }
 

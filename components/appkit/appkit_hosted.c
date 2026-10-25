@@ -47,7 +47,7 @@ static bool s_server_held;                /* this app holds one web_server_start
 static char s_folder[FOLDER_MAX];         /* "/pieno" */
 
 /* Folders registered at boot, so a dashboard can open its app. */
-#define REGISTERED_MAX 8
+#define REGISTERED_MAX 12
 typedef struct
 {
     char folder[FOLDER_MAX];
@@ -381,7 +381,11 @@ void appkit_hosted_register(const char *name, const char *app_id)
     snprintf(r->name, sizeof(r->name), "%s", name);
     char wildcard[FOLDER_MAX + 2];
     snprintf(wildcard, sizeof(wildcard), "%s/*", r->folder);
-    web_server_add_folder(wildcard, app_id, dispatch);
+    esp_err_t err = web_server_add_folder(wildcard, app_id, dispatch);
+    if (err != ESP_OK) {
+        s_registered_count--;
+        ESP_LOGE(TAG,"Dashboard %s not registered: %s",name,esp_err_to_name(err));
+    }
 }
 
 void appkit_web_activate(void)
