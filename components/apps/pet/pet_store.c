@@ -152,7 +152,7 @@ bool pet_init(void)
     {
         memset(&s_store, 0, sizeof(s_store));
         s_store.magic = PET_MAGIC;
-        s_store.company = 1;
+        s_store.company = 0; /* Decoration starts only after an explicit choice. */
         const board_info_t *b = board_info();
         uint8_t mac[6];
         if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK)

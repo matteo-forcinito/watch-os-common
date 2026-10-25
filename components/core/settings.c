@@ -40,7 +40,7 @@ static void set_defaults(settings_t *s)
     s->time_24h = true;
     strcpy(s->timezone, "CET-1CEST,M3.5.0,M10.5.0/3");   /* Italy */
     s->auto_time = true;
-    s->ble_enabled = true;
+    s->ble_enabled = false; /* Fresh installations: optional services are opt-in. */
     /* "Bangle.js" prefix: Gadgetbridge pairs it. Then the watch's own name. */
     snprintf(s->device_name, sizeof(s->device_name), "Bangle.js %s", sys_nickname());
     strcpy(s->weather_city, "Civita Castellana");
