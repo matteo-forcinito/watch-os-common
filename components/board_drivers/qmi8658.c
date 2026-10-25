@@ -3,6 +3,11 @@
 #include "qmi8658.h"
 #include <stddef.h>
 
+/* Normal sensor apps retain their ODR; Studio selects code 6 (~112 Hz in 6DOF). */
+#ifndef WATCH_QMI8658_ODR
+#define WATCH_QMI8658_ODR 8
+#endif
+
 static const uint8_t s_registers[] = {0x02, 0x03, 0x04, 0x06, 0x08};
 static esp_err_t read_reg(qmi8658_t *s, uint8_t reg, uint8_t *data, size_t size)
 {
@@ -74,16 +79,29 @@ esp_err_t qmi8658_start(qmi8658_t *s, i2c_master_bus_handle_t bus, uint8_t addre
     /* Do not take over a sensor already used by another board feature. */
     if (err == ESP_OK && (s->saved[4] & 0x0F) != 0)
     {
-        err = ESP_ERR_INVALID_STATE;
+#if defined(WATCH_QMI8658_RECOVER_SAME_PROFILE) && WATCH_QMI8658_RECOVER_SAME_PROFILE
+        if (s->saved[1] == (0x10 | WATCH_QMI8658_ODR) &&
+            s->saved[2] == (0x60 | WATCH_QMI8658_ODR) && s->saved[3] == 0 && s->saved[4] == 0x83)
+        {
+            /* Standalone opt-in: recover this exact profile after a warm reset.
+             * Restore an inactive sensor later, rather than inheriting ourselves. */
+            s->saved[4] &= ~0x0F;
+            err = write_reg(s, 0x08, s->saved[4]);
+        }
+        else
+#endif
+        {
+            err = ESP_ERR_INVALID_STATE;
+        }
     }
     if (err == ESP_OK)
     {
         s->restore = true;
         err = write_reg(s, 0x02, (s->saved[0] | 0x40) & ~0x01);
     }
-    const uint8_t values[] = {0x18, 0x68, 0x00, 0x83};
+    const uint8_t values[] = {0x10 | WATCH_QMI8658_ODR, 0x60 | WATCH_QMI8658_ODR, 0x00, 0x83};
     const uint8_t regs[] = {0x03, 0x04, 0x06, 0x08};
-    /* +/-4 g, +/-1024 dps, 31.25 Hz; synchronized output locking. */
+    /* +/-4 g, +/-1024 dps; equal ODR codes and synchronized output locking. */
     for (size_t i = 0; err == ESP_OK && i < sizeof(regs); i++)
     {
         err = write_reg(s, regs[i], values[i]);
