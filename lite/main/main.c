@@ -122,7 +122,7 @@ void app_main(void)
     bool menu = false, idle = false, asleep = false, dirty = true, was_alert = false, touch_down = false,
          touch_low = false;
     int selected = 0;
-    int64_t active = esp_timer_get_time(), battery_at = 0;
+    int64_t active = esp_timer_get_time(), battery_at = 0, usb_retry_at = 0;
     int old_battery = -999;
     ESP_LOGI("lite", "Ready without LVGL; internal free %u B",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -145,8 +145,10 @@ void app_main(void)
                 esp_pm_lock_release(usb);
             usb_held = power;
         }
-        if (usb_held && !usb_console_connected())
+        if (usb_held && !usb_console_connected() && now >= usb_retry_at) {
+            usb_retry_at = now + 5000000;
             usb_console_reconnect();
+        }
         if (event)
         {
             if (e.kind == LITE_EXIT)
