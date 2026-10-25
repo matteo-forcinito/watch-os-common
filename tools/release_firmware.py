@@ -81,14 +81,25 @@ def main():
         if shared_head != shared_commit or shared_dirty:
             raise RuntimeError('Shared build source differs from the pinned clean revision')
         if config.get('WATCH_DEV_CONSOLE'): raise RuntimeError('Diagnostic console must be disabled')
+        commands = json.loads((build/'compile_commands.json').read_text())
+        if any('WATCH_LOCAL_QA_CONSOLE' in c['command'] for c in commands):
+            raise RuntimeError('Local QA console must be disabled')
+        artwork = [Path(c['file']).parent/'CREDITS.json' for c in commands
+                   if Path(c['file']).name == 'pokemon_assets.c']
+        if artwork and not artwork[0].is_file():
+            raise RuntimeError('Pokemon artwork credits are missing')
         if description['project_name'] != PRODUCTS[a.product] or description['project_version'] != a.version:
             raise RuntimeError('Build description identity/version mismatch')
         packages=work/'packages-local';packages.mkdir()
+        if artwork:
+            shutil.copyfile(artwork[0], packages/'CREDITS.json')
         shutil.copyfile(build/(PRODUCTS[a.product]+'.bin'), packages/'firmware.bin')
         flash=json.loads((build/'flasher_args.json').read_text())
         archive_path=packages/(a.product+'-'+a.version+'-usb-flash.zip')
         prefix=a.product+'-'+a.version
         with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as archive:
+            if artwork:
+                archive.write(packages/'CREDITS.json', prefix+'/CREDITS.json')
             for offset,name in flash['flash_files'].items():
                 if Path(name).name.lower() in ['nvs.bin','nvsfactory.bin','merged.bin']:
                     raise RuntimeError('Refusing destructive recovery image')
@@ -152,6 +163,8 @@ def main():
                 if not any(n.endswith('/'+PRODUCTS[a.product]+'.bin') for n in names): raise RuntimeError('Wrong USB package identity')
                 if any(Path(n).name.lower() in ['nvs.bin','nvsfactory.bin','merged.bin'] for n in names): raise RuntimeError('Unsafe USB recovery package')
     assets=[firmware,*zips]
+    if (packages/'CREDITS.json').is_file():
+        assets.append(packages/'CREDITS.json')
     provenance={'source_repository':a.repo,'source_commit':source_sha,'product':a.product,'version':a.version,
         'build_run':('https://github.com/'+a.repo+'/actions/runs/'+str(run)) if run else None,
         'build_type':'actions' if run else 'local', 'shared_commit':shared_commit,
