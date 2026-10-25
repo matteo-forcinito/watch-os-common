@@ -1,6 +1,7 @@
 /* Pixel-art animals, see orbi/pet_sprite.h and docs/ORBI-PETS.md.
  * Geometry is integer, in quarter pixels (Q4): ports must give the same grid. */
 #include "orbi/pet_sprite.h"
+#include "orbi/pet_pokemon.h"
 
 #include <string.h>
 
@@ -140,6 +141,9 @@ void pet_look(uint64_t seed, int level, pet_look_t *out)
     int g = (level - 1) * 255 / 14;
     out->growth = (uint8_t)(g > 255 ? 255 : g);
     out->stage = level < 5 ? 0 : level < 10 ? 1 : level < 20 ? 2 : 3;
+#ifdef WATCH_PET_POKEMON
+    pet_pokemon_get(seed, &out->pokemon_dex, &out->pokemon_shiny);
+#endif
 }
 
 uint16_t pet_breed_key(const pet_look_t *l)
@@ -152,8 +156,19 @@ const char *pet_species_name(int species)
     return species >= 0 && species < PET_SPECIES ? SPECIES[species].name : "?";
 }
 
+const char *pet_look_name(const pet_look_t *l)
+{
+#ifdef WATCH_PET_POKEMON
+    if (l->pokemon_dex) return pet_pokemon_name(l->pokemon_dex);
+#endif
+    return pet_species_name(l->species);
+}
+
 const char *pet_variant_name(const pet_look_t *l)
 {
+#ifdef WATCH_PET_POKEMON
+    if (l->pokemon_dex) return l->pokemon_shiny ? "Shiny" : "";
+#endif
     const species_t *s = &SPECIES[l->species % PET_SPECIES];
     return s->variants[l->variant % s->count].name;
 }
@@ -196,6 +211,10 @@ static uint32_t mix(uint32_t a, uint32_t b, int pct_b)
 
 void pet_palette(const pet_look_t *l, int mood, uint32_t out[PET_COLORS])
 {
+    memset(out, 0, PET_COLORS * sizeof(*out));
+#ifdef WATCH_PET_POKEMON
+    if (l->pokemon_dex && pet_pokemon_palette(l->pokemon_dex, l->pokemon_shiny, out)) return;
+#endif
     const species_t *s = &SPECIES[l->species % PET_SPECIES];
     variant_t v = s->variants[l->variant % s->count];
     if (l->species == PET_HEN && l->growth < 90)
@@ -775,6 +794,11 @@ static void outline(uint8_t *G)
 
 void pet_draw(const pet_look_t *l, pet_pose_t pose, uint32_t frame, bool blink, uint8_t grid[PET_GRID * PET_GRID])
 {
+#ifdef WATCH_PET_POKEMON
+    /* Petland has Idle frames only; sleep is still, care uses scene effects. */
+    if (l->pokemon_dex && pet_pokemon_draw(l->pokemon_dex, l->pokemon_shiny,
+                                          pose == PET_POSE_SLEEP ? 0 : frame, grid)) return;
+#endif
     memset(grid, PET_C_CLEAR, PET_GRID * PET_GRID);
     ctx_t c = {.l = l, .G = grid, .g = l->growth, .frame = (int)(frame & 0xFFFF), .pose = pose};
     c.eyes = pose == PET_POSE_SLEEP ? 1 : pose == PET_POSE_HAPPY ? 2 : pose == PET_POSE_SAD ? 3 : blink ? 1 : 0;

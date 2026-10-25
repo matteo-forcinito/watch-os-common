@@ -218,6 +218,9 @@ static cJSON *record_json(pet_record_t *p)
     cJSON_AddNumberToObject(j, "joy", p->joy);
     cJSON_AddNumberToObject(j, "xp", p->xp);
     pet_look_t l = look_of(p);
+    /* The current companion protocol still renders original seed-based art. */
+    l.pokemon_dex = 0;
+    l.pokemon_shiny = false;
     cJSON_AddStringToObject(j, "species", pet_species_name(l.species));
     cJSON_AddStringToObject(j, "breed", pet_variant_name(&l));
     cJSON_AddNumberToObject(j, "level", l.level);

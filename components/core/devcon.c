@@ -136,7 +136,16 @@ static void print_base64(uint32_t row, const uint8_t *data, size_t length)
         }
 
         out[o] = '\0';
+        /* The stdout VFS may discard a full USB TX buffer. Snapshot payloads
+         * need backpressure, otherwise missing chunks corrupt entire rows. */
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+        char line[112];
+        int len = snprintf(line, sizeof(line), "@D %u %s\n", (unsigned)row, out);
+        fflush(stdout);
+        usb_serial_jtag_write_bytes(line, (size_t)len, portMAX_DELAY);
+#else
         printf("@D %u %s\n", (unsigned)row, out);
+#endif
         data += n;
         length -= n;
     }
@@ -200,7 +209,14 @@ static void take_shot(void *arg)
     shot->screen = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
 
     /* Dialogs and toasts live on the top layer: a second picture with transparency. */
-    if (lv_obj_get_child_count(lv_layer_top()) > 0)
+    bool overlay_visible = false;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(lv_layer_top()); i++)
+    {
+        lv_obj_t *child = lv_obj_get_child(lv_layer_top(), (int32_t)i);
+        if (!lv_obj_is_hidden(child) && lv_obj_get_style_opa(child, 0) != LV_OPA_TRANSP)
+            overlay_visible = true;
+    }
+    if (overlay_visible)
     {
         shot->top = lv_snapshot_take(lv_layer_top(), LV_COLOR_FORMAT_ARGB8888);
     }

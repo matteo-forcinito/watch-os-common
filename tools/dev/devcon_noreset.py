@@ -1,5 +1,8 @@
 """devcon commands without resetting the board:
-python devcon_noreset.py COM10 path/to/devcon.py "open web" wait:10 shot:x.png"""
+python devcon_noreset.py COM10 path/to/devcon.py "open web" wait:10 shot:x.png
+Add --dtr for Windows USB Serial/JTAG sessions that require an open-data signal;
+RTS remains deasserted, so asserting DTR alone does not reset native USB boards.
+"""
 import importlib.util
 import sys
 import time
@@ -12,11 +15,14 @@ spec.loader.exec_module(devcon)
 
 port = serial.Serial()
 port.port, port.baudrate, port.timeout, port.write_timeout = sys.argv[1], 115200, 0.5, 3
-port.dtr = port.rts = False
+port.dtr = '--dtr' in sys.argv[3:]
+port.rts = False
 port.open()
 time.sleep(0.3)
 
 for arg in sys.argv[3:]:
+    if arg == '--dtr':
+        continue
     if arg.startswith('wait:'):
         time.sleep(float(arg[5:]))
     elif arg.startswith('shot:'):

@@ -22,6 +22,7 @@ struct mg_canvas
     const uint8_t *actor_grid;
     const uint16_t *actor_palette;
     int actor_size;
+    int actor_colors; /* 0 = legacy 12-color actor; explicit count for optional art */
     bool full;
     int dirty_count;
     mg_rect_t dirty[MG_DIRTY_RECTS];

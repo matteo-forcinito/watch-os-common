@@ -15,6 +15,7 @@
 #include "link/link_internal.h"
 #include "orbi/orbi_view.h"
 #include "orbi/pet_sprite.h"
+#include "orbi/pet_pokemon.h"
 #include "pet.h"
 #include "pet_game.h"
 /* LVGL 9.6 keeps image-cache invalidation in its private umbrella header. */
@@ -517,7 +518,8 @@ static void actor_tick(actor_t *a)
             break;
         }
         }
-    if (a->ticks % step == 0)
+    if (a->look.pokemon_dex && step < 4) step = 4;
+    if (a->ticks % step == 0 && !(a->look.pokemon_dex && pose == PET_POSE_SLEEP))
         a->frame++;
     if (a->blink > 0)
         a->blink--;
@@ -562,9 +564,12 @@ static void hud_update(void)
     orbi_parse(a->rec.seed, &seed);
     orbi_genome_t g;
     orbi_genome(seed, &g);
-    a->look = look_of(&a->rec);
+    pet_look_t updated = look_of(&a->rec);
+    if (updated.pokemon_dex != a->look.pokemon_dex || updated.pokemon_shiny != a->look.pokemon_shiny)
+        a->drawn_mood = -1;
+    a->look = updated;
     lv_label_set_text_fmt(S.hud_name, "%s  LV %d", g.name, a->look.level);
-    lv_label_set_text_fmt(S.hud_info, "%s %s - %s", pet_species_name(a->look.species), pet_variant_name(&a->look),
+    lv_label_set_text_fmt(S.hud_info, "%s %s - %s", pet_look_name(&a->look), pet_variant_name(&a->look),
                           a->rec.asleep ? "dorme" : pet_stage_name(a->look.stage));
     lv_bar_set_value(S.bars[0], 100 - a->rec.hunger, LV_ANIM_OFF);
     lv_bar_set_value(S.bars[1], a->rec.energy, LV_ANIM_OFF);
@@ -827,6 +832,128 @@ static void home_start(lv_event_t *e)
                                                    : "Un viaggio e gia in corso: riprova dopo");
 }
 
+/* Cosmetic appearance is committed by the system worker, never the LVGL task. */
+typedef struct { char seed[17]; uint16_t dex; bool shiny, ok; } appearance_job_t;
+static bool s_appearance_busy, s_picker_shiny;
+static int s_picker_index;
+static lv_obj_t *s_picker_image, *s_picker_name;
+
+static void appearance_done(void *arg)
+{
+    appearance_job_t *job = arg;
+    s_appearance_busy = false;
+    if (S.screen && app_current() == &pet_app)
+    {
+        for (int i = 0; i < ACTORS; i++) if (S.actors[i].used)
+        {
+            S.actors[i].look = look_of(&S.actors[i].rec);
+            S.actors[i].drawn_mood = -1;
+        }
+        menu_close(NULL);
+        hud_update();
+    }
+    ui_toast(job->ok ? "Aspetto salvato" : "Aspetto non salvato: riprova a casa");
+    free(job);
+}
+static void appearance_worker(void *arg)
+{
+    appearance_job_t *job = arg;
+    uint64_t seed;
+    pet_record_t pets[PET_SLOTS_VISIBLE];
+    int count = pet_list(pets, PET_SLOTS_VISIBLE);
+    for (int i = 0; i < count; i++)
+        if (!strcmp(pets[i].seed, job->seed) && pet_at_home(job->seed) &&
+            !pet_travel_busy() && orbi_parse(job->seed, &seed))
+            job->ok = pet_pokemon_set(seed, job->dex, job->shiny);
+    /* Retry delivery without losing ownership if the UI queue is momentarily full. */
+    while (!ui_async(appearance_done, job)) vTaskDelay(pdMS_TO_TICKS(20));
+}
+static void appearance_apply(lv_event_t *e)
+{
+    if (s_appearance_busy) return;
+    actor_t *a = selected_actor();
+    if (!a || !pet_at_home(a->rec.seed) || pet_travel_busy())
+    {
+        ui_toast("Scegli l'aspetto quando il tuo child e a casa");
+        return;
+    }
+    appearance_job_t *job = calloc(1, sizeof(*job));
+    if (!job) { ui_toast("Memoria insufficiente"); return; }
+    snprintf(job->seed, sizeof(job->seed), "%s", a->rec.seed);
+    bool original = lv_event_get_user_data(e) != NULL;
+    job->dex = original ? 0 : pet_pokemon_dex(s_picker_index);
+    job->shiny = !original && s_picker_shiny;
+    s_appearance_busy = true;
+    if (!sys_post(appearance_worker, job))
+    {
+        s_appearance_busy = false;
+        free(job);
+        ui_toast("Sistema occupato: riprova");
+    }
+}
+static void picker_paint(void)
+{
+    actor_t *a = selected_actor();
+    if (!a) return;
+    pet_look_t look = a->look;
+    look.pokemon_dex = pet_pokemon_dex(s_picker_index);
+    look.pokemon_shiny = s_picker_shiny;
+    uint32_t palette[PET_COLORS];
+    pet_palette(&look, 0, palette);
+    pet_draw(&look, PET_POSE_IDLE, 0, false, s_grid);
+    canvas_paint(s_picker_image, s_grid, PET_GRID, PET_GRID, palette, false);
+    lv_label_set_text_fmt(s_picker_name, "#%03u  %s%s", look.pokemon_dex,
+                          pet_look_name(&look), s_picker_shiny ? "  Shiny" : "");
+}
+static void picker_step(lv_event_t *e)
+{
+    int direction = (int)(intptr_t)lv_event_get_user_data(e);
+    s_picker_index = (s_picker_index + pet_pokemon_count() + direction) % pet_pokemon_count();
+    picker_paint();
+}
+static void picker_shiny(lv_event_t *e)
+{
+    s_picker_shiny = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
+    picker_paint();
+}
+static void appearance_open(lv_event_t *e)
+{
+    (void)e;
+    actor_t *a = selected_actor();
+    if (!a || !pet_pokemon_count()) return;
+    s_picker_index = 0;
+    for (int i = 0; i < pet_pokemon_count(); i++)
+        if (pet_pokemon_dex(i) == a->look.pokemon_dex) s_picker_index = i;
+    s_picker_shiny = a->look.pokemon_shiny;
+    menu_close(NULL);
+    S.menu = lv_obj_create(S.screen);
+    lv_obj_remove_style_all(S.menu);
+    lv_obj_set_size(S.menu, S.W, S.H);
+    lv_obj_set_style_bg_color(S.menu, ui_color(0x101B25), 0);
+    lv_obj_set_style_bg_opa(S.menu, LV_OPA_COVER, 0);
+    lv_obj_t *page = ui_page(S.menu, "Aspetto Pokemon");
+    s_picker_image = sprite_new(page, &a->look, 3, PET_POSE_IDLE, 0);
+    if (!s_picker_image) { menu_close(NULL); ui_toast("Memoria insufficiente"); return; }
+    s_picker_name = lv_label_create(page);
+    lv_obj_set_style_text_color(s_picker_name, ui_color(0xFFE6A7), 0);
+    lv_obj_set_style_text_font(s_picker_name, UI_FONT_BODY, 0);
+    lv_obj_t *row = lv_obj_create(page);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t *prev = ui_button(row, "<", 0x24415C, picker_step, (void *)(intptr_t)-1);
+    lv_obj_t *next = ui_button(row, ">", 0x24415C, picker_step, (void *)(intptr_t)1);
+    lv_obj_set_width(prev, LV_PCT(40));
+    lv_obj_set_width(next, LV_PCT(40));
+    ui_switch_row(page, LV_SYMBOL_IMAGE, UI_COLOR_BLUE, "Shiny", s_picker_shiny, picker_shiny, NULL);
+    ui_button(page, "Usa questo Pokemon", 0x386C52, appearance_apply, NULL);
+    ui_button(page, "Aspetto originale", 0x24415C, appearance_apply, (void *)1);
+    ui_button(page, "Chiudi", 0x26364D, menu_close, NULL);
+    ui_text(page, "Un nuovo aspetto per lo stesso child. Nome, cure e progressi restano tuoi.", true);
+    picker_paint();
+}
+
 static void menu_open(lv_event_t *e)
 {
     (void)e;
@@ -840,6 +967,8 @@ static void menu_open(lv_event_t *e)
     lv_obj_set_style_bg_opa(S.menu, LV_OPA_COVER, 0);
     lv_obj_t *page = ui_page(S.menu, "Il tuo child");
     ui_button(page, "Chiudi", 0x24415C, menu_close, NULL);
+    if (pet_pokemon_count() && pet_at_home(S.selected))
+        ui_button(page, "Aspetto Pokemon", 0x386C52, appearance_open, NULL);
     ui_button(page, "Minigiochi", 0x1F4E5F, game_menu, NULL);
     if (!pet_at_home(S.selected))
         ui_button(page, "Torna a casa", 0x245544, home_start, NULL);
@@ -854,8 +983,9 @@ static void menu_open(lv_event_t *e)
     int order[PET_TRAITS];
     int shown = pet_qualities(seed, a->traits, a->look.level, days < 0 ? 0 : days, q, order);
     char text[420];
-    int len = snprintf(text, sizeof(text), "%s %s%s%s - %s, nato su %s.\n\nPERSONALITA'\n", pet_species_name(a->look.species),
-                       pet_variant_name(&a->look), a->look.mark ? " " : "", pet_mark_name(a->look.mark),
+    int len = snprintf(text, sizeof(text), "%s %s%s%s - %s, nato su %s.\n\nPERSONALITA'\n", pet_look_name(&a->look),
+                       pet_variant_name(&a->look), a->look.mark && !a->look.pokemon_dex ? " " : "",
+                       a->look.pokemon_dex ? "" : pet_mark_name(a->look.mark),
                        pet_stage_name(a->look.stage), a->rec.origin);
     for (int i = 0; i < PET_TRAITS && len < (int)sizeof(text) - 80; i++)
         len += i < shown ? snprintf(text + len, sizeof(text) - len, "%s: %s\n", q[order[i]].name, q[order[i]].about)
@@ -890,15 +1020,16 @@ static void menu_open(lv_event_t *e)
     ui_text(page, "Accende la radio e cerca i device abbinati in Ecosistema con la pagina del child aperta (o in carica).",
             true);
     ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_BLUE, "Piccola compagnia", pet_company(), menu_company, NULL);
-    ui_text(page, "Viaggi: Orbit > Ecosistema > Children. Aspetto, personalita e progressi viaggiano con lui.", true);
+    ui_text(page, "Viaggi: Orbit > Ecosistema > Children. Identita e cure viaggiano con lui. "
+                  "L'aspetto Pokemon e una scelta locale di questo device.", true);
 }
 
 static lv_obj_t *round_button(lv_obj_t *parent, icon_t icon, lv_event_cb_t cb, void *data, int size)
 {
     lv_obj_t *b = lv_button_create(parent);
     lv_obj_remove_style_all(b);
-    lv_obj_set_size(b, size, size);
-    lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_size(b, size, size + 18);
+    lv_obj_set_style_radius(b, 16, 0);
     lv_obj_set_style_bg_color(b, ui_color(0x111A26), 0);
     lv_obj_set_style_bg_opa(b, LV_OPA_80, 0);
     lv_obj_set_style_border_color(b, ui_color(0x34C6F4), 0);
@@ -906,7 +1037,13 @@ static lv_obj_t *round_button(lv_obj_t *parent, icon_t icon, lv_event_cb_t cb, v
     lv_obj_set_style_bg_color(b, ui_color(0x1F2C3D), LV_STATE_PRESSED);
     lv_obj_t *i = icon_new(b, icon, size >= 52 ? 3 : 2);
     if (i)
-        lv_obj_center(i);
+        lv_obj_align(i, LV_ALIGN_TOP_MID, 0, 9);
+    static const char *const LABELS[ICONS] = {"Cura", "Cibo", "Gioco", "Bagno", "Sonno", "Scheda", "", ""};
+    lv_obj_t *label = lv_label_create(b);
+    lv_label_set_text(label, LABELS[icon]);
+    lv_obj_set_style_text_font(label, UI_FONT_CAPTION, 0);
+    lv_obj_set_style_text_color(label, ui_color(0xEEF4FB), 0);
+    lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -5);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, data);
     lv_port_set_focusable(b);
     return b;
@@ -936,7 +1073,7 @@ static void create(lv_obj_t *screen, void *arg)
     s_game = NULL;
     S.W = b->width;
     S.H = b->height;
-    S.k = S.W >= 300 ? 3 : 2;
+    S.k = S.W >= 400 ? 5 : S.W >= 300 ? 4 : 2;
     S.S = PET_GRID * S.k;
     S.ground_y = S.H * 68 / 100;
     S.margin = b->round ? S.W / 9 : 8;
@@ -981,6 +1118,10 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_set_style_border_color(S.portal, ui_color(0x7EE8FF), 0);
     lv_obj_set_hidden(S.portal, true);
 
+    lv_obj_t *panel = box(screen, 0x101B25, LV_OPA_70);
+    lv_obj_set_size(panel, S.W * 76 / 100, 106);
+    lv_obj_set_style_radius(panel, 24, 0);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, (b->round ? S.H / 12 : 10) - 8);
     S.hud_name = hud_label(b->round ? S.H / 12 : 10, ui_font_title, 0xFFFFFF);
     S.hud_info = hud_label((b->round ? S.H / 12 : 10) + 28, UI_FONT_SMALL, 0xEEF4FB);
     static const uint32_t BAR[3] = {0xF2C14E, 0x5AC8FA, 0xFF5D7A};
@@ -993,22 +1134,34 @@ static void create(lv_obj_t *screen, void *arg)
         lv_obj_set_style_bg_color(S.bars[i], ui_color(0x111A26), 0);
         lv_obj_set_style_bg_opa(S.bars[i], LV_OPA_70, 0);
         lv_obj_set_style_bg_color(S.bars[i], ui_color(BAR[i]), LV_PART_INDICATOR);
-        lv_obj_align(S.bars[i], LV_ALIGN_TOP_MID, (i - 1) * (bw + 8), (b->round ? S.H / 12 : 10) + 56);
+        lv_obj_align(S.bars[i], LV_ALIGN_TOP_MID, (i - 1) * (bw + 8), (b->round ? S.H / 12 : 10) + 80);
+        static const char *const NAMES[3] = {"Sazieta", "Energia", "Felicita"};
+        lv_obj_t *caption = lv_label_create(screen);
+        lv_label_set_text(caption, NAMES[i]);
+        lv_obj_set_style_text_color(caption, ui_color(BAR[i]), 0);
+        lv_obj_set_style_text_font(caption, UI_FONT_CAPTION, 0);
+        lv_obj_align(caption, LV_ALIGN_TOP_MID, (i - 1) * (bw + 8), (b->round ? S.H / 12 : 10) + 59);
     }
 
     /* Actions on the ground. */
     int size = S.W >= 400 ? 54 : S.W >= 300 ? 48 : 40;
     lv_obj_t *row = lv_obj_create(screen);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, S.W * (b->round ? 80 : 94) / 100, size + 4);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_align(row, LV_ALIGN_TOP_MID, 0, S.ground_y + (S.H - S.ground_y - size) * (b->round ? 30 : 50) / 100);
-    round_button(row, ICON_FOOD, action, "feed", size);
-    round_button(row, ICON_BALL, action, "play", size);
-    round_button(row, ICON_DROP, action, "wash", size);
-    round_button(row, ICON_MOON, action, "sleep", size);
-    round_button(row, ICON_MORE, menu_open, NULL, size);
+    lv_obj_set_size(row, S.W, S.H - S.ground_y);
+    lv_obj_set_pos(row, 0, S.ground_y);
+    lv_obj_t *buttons[5] = {
+        round_button(row, ICON_FOOD, action, "feed", size),
+        round_button(row, ICON_BALL, action, "play", size),
+        round_button(row, ICON_DROP, action, "wash", size),
+        round_button(row, ICON_MOON, action, "sleep", size),
+        round_button(row, ICON_MORE, menu_open, NULL, size)
+    };
+    for (int i = 0; i < 5; i++)
+    {
+        /* Lift the outer controls into the circle; labels stay visible too. */
+        int y = b->round ? (i == 0 || i == 4 ? 2 : S.H * (i == 2 ? 7 : 5) / 100) : 12;
+        lv_obj_set_pos(buttons[i], S.W / 2 + (i - 2) * S.W * 15 / 100 - size / 2, y);
+    }
 
     sky_paint();
     weather_refresh(1800);
@@ -1077,7 +1230,7 @@ void pet_cta(lv_obj_t *parent)
         orbi_genome_t g;
         orbi_genome(seed, &g);
         pet_look_t l = look_of(&p);
-        lv_label_set_text_fmt(title, "%s - %s\nApri il tuo child  >", g.name, pet_species_name(l.species));
+        lv_label_set_text_fmt(title, "%s - %s\nApri il tuo child  >", g.name, pet_look_name(&l));
         lv_obj_t *s = sprite_new(card, &l, 2, PET_POSE_IDLE, mood_of(&p));
         if (s)
         {
@@ -1140,6 +1293,7 @@ static void ambient(lv_timer_t *timer)
         lv_obj_align(s_ambient, LV_ALIGN_BOTTOM_RIGHT, -inset, -inset);
     }
     lv_obj_set_hidden(s_ambient, false);
+    s_ambient_look = look_of(&p);
     uint32_t pal[PET_COLORS];
     pet_palette(&s_ambient_look, mood_of(&p), pal);
     pet_draw(&s_ambient_look, p.asleep ? PET_POSE_SLEEP : PET_POSE_IDLE, (uint32_t)(s_ambient_frame++), false, s_grid);
@@ -1148,6 +1302,7 @@ static void ambient(lv_timer_t *timer)
 
 void pet_companion_start(void)
 {
+    pet_pokemon_init();
     pet_travel_init();
     lv_timer_create(ambient, 1500, NULL);
 }

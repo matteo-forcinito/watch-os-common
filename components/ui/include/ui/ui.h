@@ -56,6 +56,7 @@ extern const lv_font_t *ui_font_large;      /* 24 px */
 #define UI_FONT_BODY    (ui_font_body)
 #define UI_FONT_LARGE   (ui_font_large)
 #define UI_FONT_ICON    (&lv_font_montserrat_24)
+#define UI_FONT_CAPTION (&lv_font_montserrat_12) /* short ASCII labels on compact controls */
 
 /* Theme, fonts and the shared widgets (call once, with the LVGL lock held). */
 void ui_init(void);

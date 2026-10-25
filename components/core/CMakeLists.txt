@@ -32,3 +32,9 @@ idf_component_register(
 # LVGL calls the allocator in lv_mem_psram.c, but LVGL is linked after core:
 # make the linker take that object file anyway.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u lv_mem_init")
+
+# Local hardware QA can enable diagnostics without changing the shared SDK
+# configuration (and rebuilding every IDF library). Never set for releases.
+if("$ENV{WATCH_LOCAL_QA_CONSOLE}" STREQUAL "1")
+    set_source_files_properties("devcon.c" PROPERTIES COMPILE_DEFINITIONS CONFIG_WATCH_DEV_CONSOLE=1)
+endif()

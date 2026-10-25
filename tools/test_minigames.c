@@ -89,6 +89,18 @@ int main(void)
         mg_circle(&c, INT_MIN, INT_MAX, INT_MAX, 0xFFFFFF);
         mg_star(&c, INT_MIN, INT_MAX, INT_MAX, 0xFFFFFF);
         mg_pet(&c, -1000, 2000);
+        /* Optional Pokemon palettes include indices above the legacy 12.
+         * An explicit count must paint them without touching guard bytes. */
+        uint16_t full_palette[256] = {0};
+        full_palette[200] = mg_color(0x00FF00);
+        memset(actor, 200, sizeof(actor));
+        c.actor_palette = full_palette;
+        c.actor_colors = 256;
+        mg_pet_pixels(&c, c.actor_size / 2, c.actor_size);
+        assert(*(uint16_t *)c.pixels == full_palette[200]);
+        memset(actor, 2, sizeof(actor));
+        c.actor_palette = palette;
+        c.actor_colors = 0;
         for (size_t i = 0; i < pet_game_count(); i++)
         {
             const mg_game_t *g = pet_game_at(i);

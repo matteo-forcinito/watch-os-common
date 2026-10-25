@@ -299,7 +299,7 @@ lv_obj_t *mg_screen_open(lv_obj_t *parent, const mg_game_t *game, const mg_scree
     s->canvas = (mg_canvas_t){.pixels = s->buffer->data, .width = W, .height = H * 45 / 100,
                               .stride = (int)s->buffer->header.stride, .screen_width = W, .screen_height = H,
                               .top = H * 28 / 100, .actor_grid = s->grid, .actor_palette = s->colors,
-                              .actor_size = PET_GRID * (W >= 400 ? 2 : 1)};
+                              .actor_size = PET_GRID * (W >= 400 ? 2 : 1), .actor_colors = PET_COLORS};
     mg_fill_pixels(&s->canvas, game->sky);
     s->root = box(parent, game->sky);
     lv_obj_set_user_data(s->root, s);

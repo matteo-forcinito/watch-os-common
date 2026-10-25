@@ -123,7 +123,8 @@ void mg_pet_pixels(mg_canvas_t *c, int x, int foot)
         {
             int dx = x - c->actor_size / 2 + px;
             uint8_t index = c->actor_grid[(py / scale) * 32 + px / scale];
-            if (dx >= 0 && dx < c->width && index > 0 && index < 12) row[dx] = c->actor_palette[index];
+            int colors = c->actor_colors > 0 ? c->actor_colors : 12;
+            if (dx >= 0 && dx < c->width && index > 0 && index < colors) row[dx] = c->actor_palette[index];
         }
     }
     mg_dirty(c, x - c->actor_size / 2, foot - c->actor_size, x + c->actor_size / 2, foot);

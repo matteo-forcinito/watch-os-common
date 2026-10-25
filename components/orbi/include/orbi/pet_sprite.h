@@ -47,7 +47,7 @@ enum
     PET_C_CHEEK,
     PET_C_GLASS,      /* the fish's water bubble, translucent */
     PET_C_ACCENT2,    /* comb, horns, hooves, crest */
-    PET_COLORS
+    PET_COLORS = 256  /* original art uses 12; optional indexed Pokemon use up to 255 */
 };
 
 typedef struct
@@ -59,6 +59,8 @@ typedef struct
     uint8_t level;
     uint8_t stage;         /* 0 cucciolo, 1 giovane, 2 adulto, 3 saggio */
     bool cheeks;
+    uint16_t pokemon_dex;  /* optional visual only, never part of pet_record_t */
+    bool pokemon_shiny;
 } pet_look_t;
 
 /* Level from experience points (same formula as the page and the companion). */
@@ -68,6 +70,7 @@ void pet_look(uint64_t seed, int level, pet_look_t *out);
 /* Breed key for the discovered-breeds list: species, variant, mark. */
 uint16_t pet_breed_key(const pet_look_t *look);
 const char *pet_species_name(int species);      /* "Cane" */
+const char *pet_look_name(const pet_look_t *look);
 const char *pet_variant_name(const pet_look_t *look);   /* "Biscotto" */
 const char *pet_mark_name(int mark);            /* "a macchie" or "" */
 const char *pet_stage_name(int stage);          /* "Cucciolo" */

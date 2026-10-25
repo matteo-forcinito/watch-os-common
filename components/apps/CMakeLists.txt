@@ -122,3 +122,6 @@ idf_component_register(
     EMBED_TXTFILES
         ${INTERNAL_PAGES}
 )
+if("$ENV{WATCH_LOCAL_QA_CONSOLE}" STREQUAL "1")
+    set_source_files_properties("market/market_app.c" PROPERTIES COMPILE_DEFINITIONS CONFIG_WATCH_DEV_CONSOLE=1)
+endif()

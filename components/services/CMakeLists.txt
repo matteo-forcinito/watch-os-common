@@ -59,3 +59,7 @@ idf_component_register(
         "web/kit.js"
         "web/kit.css"
 )
+if("$ENV{WATCH_LOCAL_QA_CONSOLE}" STREQUAL "1")
+    set_source_files_properties("apps/market_catalog.c" "wifi/wifi.c"
+        PROPERTIES COMPILE_DEFINITIONS CONFIG_WATCH_DEV_CONSOLE=1)
+endif()

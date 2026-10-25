@@ -14,6 +14,8 @@
 #include "cJSON.h"
 
 #if CONFIG_WATCH_DEV_CONSOLE
+#include "../pet/pet.h"
+#include "orbi/pet_pokemon.h"
 #include "core/sys.h"
 #include "hardware/audio.h"
 #include "services/sound.h"
@@ -795,6 +797,35 @@ static void tone_task(void *arg)
 /* Keep application QA commands above the core/services dependency boundary. */
 bool devcon_app_command(char *line)
 {
+    if (strncmp(line, "pet", 3) == 0 && (line[3] == 0 || line[3] == ' '))
+    {
+        pet_record_t p;
+        uint64_t seed;
+        if (!pet_current(&p) || !orbi_parse(p.seed, &seed))
+        {
+            printf("@ERR pet unavailable\n");
+            return true;
+        }
+        if (strncmp(line, "pet appearance ", 15) == 0)
+        {
+            unsigned dex, shiny;
+            if (sscanf(line + 15, "%u %u", &dex, &shiny) != 2 || dex > 151 || shiny > 1 ||
+                !pet_at_home(p.seed) || pet_travel_busy() ||
+                !pet_pokemon_set(seed, (uint16_t)dex, shiny != 0))
+            {
+                printf("@ERR appearance rejected\n");
+                return true;
+            }
+        }
+        uint16_t dex;
+        bool shiny;
+        pet_pokemon_get(seed, &dex, &shiny);
+        printf("@PET seed=%s dex=%u shiny=%d roster=%d hunger=%ld energy=%ld joy=%ld xp=%ld asleep=%ld\n",
+               p.seed, dex, shiny, pet_pokemon_count(), (long)p.hunger, (long)p.energy,
+               (long)p.joy, (long)p.xp, (long)p.asleep);
+        printf("@OK pet\n");
+        return true;
+    }
     if (strncmp(line, "orbi", 4) == 0 && (line[4] == 0 || line[4] == ' '))
     {
         /* "orbi <code>": the genome's traits (checked against tools/orbi_vectors.json);
