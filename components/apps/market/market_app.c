@@ -325,7 +325,7 @@ static void show_hero(market_ui_t *ui)
     lv_obj_set_style_bg_opa(ui->orb, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(ui->orb, 2, 0);
     lv_obj_set_style_border_color(ui->orb, lv_color_hex(0xB9B7FF), 0);
-    lv_obj_set_style_shadow_width(ui->orb, 35, 0);
+    lv_obj_set_style_shadow_width(ui->orb, 0, 0);
     lv_obj_set_style_shadow_color(ui->orb, lv_color_hex(0x695CFF), 0);
     lv_obj_set_style_shadow_opa(ui->orb, LV_OPA_30, 0);
     lv_obj_set_clickable(ui->orb, false);
@@ -591,7 +591,7 @@ static void show_details(market_ui_t *ui)
     lv_obj_t *bubble = ui_icon_bubble(scene, icon, entry->color, width * 38 / 100);
     lv_obj_align(bubble, LV_ALIGN_CENTER, 0, -width * 17 / 100);
     lv_obj_set_style_shadow_color(bubble, lv_color_hex(entry->color), 0);
-    lv_obj_set_style_shadow_width(bubble, 30, 0);
+    lv_obj_set_style_shadow_width(bubble, 0, 0);
     lv_obj_set_style_shadow_opa(bubble, LV_OPA_20, 0);
     lv_obj_t *title = label(scene, entry->name, ui_font_headline, 0xFFFFFF);
     lv_obj_set_width(title, LV_PCT(76));
@@ -713,13 +713,17 @@ static void poll(lv_timer_t *timer)
                                     state.phase == MARKET_PUBLISHING ? "Salvataggio" : "Download");
             else snprintf(caption, sizeof(caption), "%s%s", ui->selected.version,
                           ui->selected.installed ? " · nella libreria" : "");
-            lv_label_set_text(ui->status, caption);
+            if (strcmp(lv_label_get_text(ui->status), caption)) lv_label_set_text(ui->status, caption);
         }
         else if (state.busy || state.phase == MARKET_DONE || state.phase == MARKET_FAILED || state.phase == MARKET_CANCELLED)
-            lv_label_set_text(ui->status, state.message);
+            if (strcmp(lv_label_get_text(ui->status), state.message)) lv_label_set_text(ui->status, state.message);
     }
     if (ui->action != NULL && state.busy)
-        lv_label_set_text(lv_obj_get_child(ui->action, 0), state.phase == MARKET_PUBLISHING ? "Salvo..." : "Annulla");
+    {
+        lv_obj_t *text = lv_obj_get_child(ui->action, 0);
+        const char *caption = state.phase == MARKET_PUBLISHING ? "Salvo..." : "Annulla";
+        if (strcmp(lv_label_get_text(text), caption)) lv_label_set_text(text, caption);
+    }
     if (!state.busy && ui->queue_next < ui->queue_count && queue_step(ui)) return;
     if (!state.busy && ui->queue_count > 0 && ui->queue_next >= ui->queue_count) queue_step(ui);
     if (!state.busy) lv_timer_pause(ui->poll);
@@ -736,8 +740,8 @@ static void deleted(lv_event_t *event)
 static bool back(void)
 {
     market_ui_t *ui = lv_obj_get_user_data(lv_screen_active());
-    if (ui == NULL || ui->page == 0) return false;
-    ui->page = ui->page >= 2 ? ui->page - 1 : 0;
+    if (ui == NULL || ui->page <= 1) return false;
+    ui->page--;
     render(ui);
     return true;
 }
@@ -752,6 +756,7 @@ static void create(lv_obj_t *screen, void *arg)
         return;
     }
     ui->screen = screen;
+    ui->page = 1; /* Go straight to useful content, without an animated entrance. */
     lv_obj_set_user_data(screen, ui);
     lv_obj_add_event_cb(screen, deleted, LV_EVENT_DELETE, ui);
     ui->content = lv_obj_create(screen);
@@ -767,7 +772,9 @@ static void create(lv_obj_t *screen, void *arg)
         return;
     }
     lv_timer_pause(ui->poll);
+    if (market_count() == 0 && !market_busy()) market_refresh();
     render(ui);
+    if (market_busy()) lv_timer_resume(ui->poll);
 }
 
 const app_t market_app = {

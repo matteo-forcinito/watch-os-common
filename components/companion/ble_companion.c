@@ -827,22 +827,12 @@ static void slow_timer_cb(void *arg)
 
 static esp_err_t start(void);
 
-/* While Bluetooth is off its controller pool (~38 KiB of contiguous internal
- * RAM) is kept aside, so turning it on later never finds the heap too
- * fragmented (Wi-Fi, dashboards). Same cost as Bluetooth on. */
-#define BLE_RESERVE (44 * 1024)
-static void *s_reserve;
+/* No persistent reservation while Bluetooth is off. */
 
 static void reserve_take(void)
 {
-    if (s_reserve == NULL)
-    {
-        s_reserve = heap_caps_malloc(BLE_RESERVE, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        if (s_reserve == NULL)
-        {
-            ESP_LOGW(TAG, "No room to keep Bluetooth's memory aside");
-        }
-    }
+    /* Off really releases the controller pool. start() checks both total and
+     * contiguous internal RAM before entering the controller's allocator. */
 }
 
 void ble_companion_reserve(void)
@@ -852,8 +842,6 @@ void ble_companion_reserve(void)
 
 static void reserve_release(void)
 {
-    free(s_reserve);
-    s_reserve = NULL;
 }
 
 static void retry_job(void *arg)
@@ -974,7 +962,7 @@ static void stop(void)
 
     s_conn = BLE_HS_CONN_HANDLE_NONE;
     state_set(STATE_BLE, STATE_BLE_OFF);
-    reserve_take();   /* the controller's pool is free again: keep it */
+    reserve_take();   /* off keeps no controller allocation */
     ESP_LOGI(TAG, "Bluetooth off");
 }
 
@@ -1030,7 +1018,7 @@ esp_err_t ble_companion_init(void)
     if (s_send_lock == NULL) s_send_lock = xSemaphoreCreateMutex();
     if (s_send_lock == NULL) return ESP_ERR_NO_MEM;
     ble_bridge_init(bridge_send);
-    s_line = malloc(BLE_LINE_MAX);
+    s_line = heap_caps_malloc(BLE_LINE_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     if (s_line == NULL)
     {

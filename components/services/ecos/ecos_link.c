@@ -2,7 +2,7 @@
 /* Famiglia: the paired devices talk to each other over ESP-NOW.
  *
  *   ecos_family_hold() / _touch()      the UI or the dashboard looks
- *   power cable + screen off           this device answers the others
+ *   explicit background opt-in         this device answers the others
  *          │
  *          ▼
  *   link task (only while needed) ── owns the radio, ESP-NOW, the keys
@@ -222,8 +222,9 @@ static bool auto_wanted(void)
 {
     if (recovery_active()) return true;
     if (family_disabled() || background_busy()) return false;
-    return settings_get()->ecos_mode == 1 || web_server_running() ||
-           (powered() && state_get(STATE_SCREEN) >= POWER_SCREEN_AOD);
+    /* Charging is not consent to run the radio indefinitely. Automatic mode
+     * serves explicit UI/web leases; only Background is an always-on opt-in. */
+    return settings_get()->ecos_mode == 1 || web_server_running();
 }
 
 static bool wanted(void)

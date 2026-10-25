@@ -9,7 +9,6 @@
 #define CARD_RADIUS     22
 #define BUBBLE_SIZE     40
 #define PAGE_PAD_X      12
-#define PRESS_SCALE     246   /* 256 = 100 %: a pressed card shrinks to ~96 % */
 
 /*
  * Round panels. The circle is narrow at the top and bottom, so a page:
@@ -36,8 +35,9 @@ static void init_styles(void)
         return;
     }
 
-    static const lv_style_prop_t props[] = {LV_STYLE_TRANSFORM_SCALE_X, LV_STYLE_TRANSFORM_SCALE_Y,
-                                            LV_STYLE_BG_COLOR, 0};
+    /* Scaling a row forces a temporary compositing layer on every touch and
+     * scroll. A colour transition gives feedback without allocating a layer. */
+    static const lv_style_prop_t props[] = {LV_STYLE_BG_COLOR, 0};
     lv_style_transition_dsc_init(&s_transition, props, lv_anim_path_ease_out, 110, 0, NULL);
 
     lv_style_init(&s_card);
@@ -52,8 +52,6 @@ static void init_styles(void)
 
     lv_style_init(&s_card_pressed);
     lv_style_set_bg_color(&s_card_pressed, lv_color_hex(UI_COLOR_CARD_HI));
-    lv_style_set_transform_scale_x(&s_card_pressed, PRESS_SCALE);
-    lv_style_set_transform_scale_y(&s_card_pressed, PRESS_SCALE);
 
     s_styles_ready = true;
 }

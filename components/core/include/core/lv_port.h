@@ -156,6 +156,10 @@ esp_err_t lv_port_mirror_start(void);
 void lv_port_mirror_stop(bool takeover);
 lv_draw_buf_t *lv_port_mirror_take(bool full, lv_area_t *area);
 bool lv_port_mirror_active(void);
+typedef struct {
+    uint32_t passes, slow_16ms, slow_33ms, max_ms;
+} lv_port_perf_t;
+void lv_port_perf_snapshot(lv_port_perf_t *out, bool reset);
 void lv_port_mirror_lease(void);
 uint32_t lv_port_mirror_seq(void);
 /* Called in the lvgl task whenever a mirror session ends (never block in it). */

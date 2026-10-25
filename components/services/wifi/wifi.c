@@ -367,6 +367,15 @@ static wifi_mode_t wanted_mode(bool need_sta)
  */
 static bool s_driver = false;
 
+bool wifi_activity_snapshot(wifi_activity_t *out)
+{
+    if (out == NULL || s_mutex == NULL || xSemaphoreTake(s_mutex, 0) != pdTRUE) return false;
+    *out = (wifi_activity_t){.driver=s_driver, .started=s_started, .access_point=s_ap_on,
+        .holders=s_refs, .radio_holders=s_radio_refs, .fast_holders=s_fast_refs, .scans=s_scans};
+    xSemaphoreGive(s_mutex);
+    return true;
+}
+
 static bool driver_up(void)
 {
     if (s_driver)

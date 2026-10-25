@@ -1277,6 +1277,10 @@ static void ambient(lv_timer_t *timer)
             lv_obj_set_hidden(s_ambient, true);
         return;
     }
+    /* Decorative animation never competes with a gesture or page transition. */
+    if (lv_anim_count_running() != 0) return;
+    for (lv_indev_t *input = lv_indev_get_next(NULL); input != NULL; input = lv_indev_get_next(input))
+        if (lv_indev_get_state(input) == LV_INDEV_STATE_PRESSED || lv_indev_get_scroll_obj(input) != NULL) return;
     int k = board_info()->width >= 400 ? 2 : 1;
     if (!s_ambient || strcmp(s_ambient_seed, p.seed))
     {

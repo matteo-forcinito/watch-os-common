@@ -588,6 +588,25 @@ static void handle(char *line)
     {
         cmd_pmu();
     }
+    else if (strcmp(cmd, "perf") == 0)
+    {
+        lv_port_perf_t perf;
+        lv_port_perf_snapshot(&perf, a1 != NULL && strcmp(a1, "reset") == 0);
+        printf("@PERF passes=%lu over16=%lu over33=%lu max_ms=%lu internal=%u largest=%u psram=%u\n",
+               (unsigned long)perf.passes, (unsigned long)perf.slow_16ms, (unsigned long)perf.slow_33ms,
+               (unsigned long)perf.max_ms, (unsigned)sys_internal_free(), (unsigned)sys_internal_largest(),
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    }
+    else if (strcmp(cmd, "tasks") == 0)
+    {
+        sys_task_info_t *tasks = heap_caps_calloc(48, sizeof(*tasks), MALLOC_CAP_SPIRAM);
+        size_t n = tasks != NULL ? sys_tasks_snapshot(tasks, 48) : 0;
+        for (size_t i = 0; i < n; i++)
+            printf("@TASK %s state=%d stack=%lu free_min=%lu reason=%s\n", tasks[i].name,
+                   tasks[i].state, (unsigned long)tasks[i].stack_bytes,
+                   (unsigned long)tasks[i].stack_free_min, sys_task_purpose(tasks[i].name));
+        free(tasks);
+    }
     else if (strcmp(cmd, "health") == 0)
     {
         sys_health_log();

@@ -67,16 +67,19 @@ static const struct
 static lv_obj_t *s_menu = NULL;          /* rectangle: rebuilt content of the menu page */
 static extapp_t *s_ext = NULL;
 static int s_ext_count = 0;
+static bool s_ext_loaded;
 
 /* ------------------------------------------------------------ helpers */
 
 static void scan_external(void)
 {
+    if (s_ext_loaded) return;
     if (s_ext == NULL)
     {
         s_ext = heap_caps_calloc(EXTAPP_MAX, sizeof(extapp_t), MALLOC_CAP_SPIRAM);
     }
     s_ext_count = s_ext != NULL ? extapp_scan(s_ext, EXTAPP_MAX) : 0;
+    s_ext_loaded = s_ext != NULL;
 }
 
 static int visible_apps(void)
@@ -522,6 +525,9 @@ static void ring_build(void)
 
 void launcher_refresh(void)
 {
+    /* Installation/favourite mutations explicitly invalidate the index.
+     * Opening a list or swiping the shell only reads the cached catalogue. */
+    s_ext_loaded = false;
     scan_external();
     if (s_ring != NULL)
     {
@@ -565,6 +571,8 @@ typedef struct
     lv_obj_t *pages;
     lv_obj_t *dots;
     int page_count;
+    int cards, cell_w, cell_h, icon;
+    bool lazy;
 } pages_t;
 
 static void pages_delete(lv_event_t *e)
@@ -593,11 +601,65 @@ static void on_card(lv_event_t *e)
     }
 }
 
+static void page_fill(pages_t *p, int pg)
+{
+    lv_obj_t *page = lv_obj_get_child(p->pages, pg);
+    if (lv_obj_get_child_count(page) != 0) return;
+    int cards = p->cards, cell_w = p->cell_w, cell_h = p->cell_h, icon = p->icon;
+        for (int k = 0; k < cards; k++)
+        {
+            int index = pg * cards + k;
+            if (index >= p->count)
+            {
+                break;
+            }
+            const launcher_item_t *item = &p->items[index];
+            lv_obj_t *card = lv_obj_create(page);
+            lv_obj_remove_style_all(card);
+            lv_obj_set_size(card, cell_w, cell_h);
+            lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_set_style_pad_row(card, 6, 0);
+            lv_obj_set_style_radius(card, 18, 0);
+            lv_obj_set_style_bg_color(card, lv_color_hex(UI_COLOR_CARD), LV_STATE_PRESSED);
+            lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_STATE_PRESSED);
+            lv_obj_set_scrollable(card, false);
+            lv_obj_set_clickable(card, true);
+            lv_obj_set_user_data(card, (void *)(intptr_t)index);
+            lv_port_set_focusable(card);
+            lv_obj_t *bubble = ui_icon_bubble(card, item_icon(item), item_color(item), icon);
+            lv_obj_set_clickable(bubble, false);
+            lv_obj_t *label = lv_label_create(card);
+            lv_label_set_text(label, item_name(item));
+            lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+            lv_obj_set_width(label, cell_w - 8);
+            lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_text_font(label, cards == 9 ? UI_FONT_SMALL : UI_FONT_BODY, 0);
+            lv_obj_add_event_cb(card, on_card, LV_EVENT_SHORT_CLICKED, p);
+            lv_obj_add_event_cb(card, on_card, LV_EVENT_LONG_PRESSED, p);
+        }
+
+}
+
+static void pages_window(pages_t *p, int current)
+{
+    for (int pg = 0; pg < p->page_count; pg++) {
+        if (!p->lazy || abs(pg - current) <= 1) page_fill(p, pg);
+        else {
+            lv_obj_t *page = lv_obj_get_child(p->pages, pg);
+            if (lv_obj_get_child_count(page) != 0) lv_obj_clean(page);
+        }
+    }
+}
+
 static void on_pages_scroll(lv_event_t *e)
 {
     pages_t *p = lv_event_get_user_data(e);
     int32_t height = lv_obj_get_height(p->pages);
     int page = height > 0 ? (int)((lv_obj_get_scroll_y(p->pages) + height / 2) / height) : 0;
+    if (page < 0) page = 0;
+    if (page >= p->page_count) page = p->page_count - 1;
+    pages_window(p, page);
     for (int i = 0; i < (int)lv_obj_get_child_count(p->dots); i++)
     {
         lv_obj_set_style_bg_opa(lv_obj_get_child(p->dots, i), i == page ? LV_OPA_COVER : LV_OPA_30, 0);
@@ -684,6 +746,9 @@ static void pages_create(lv_obj_t *screen, void *arg)
 
     int32_t cell_w = width / cols, cell_h = height / rows;
     int32_t icon = (cell_w < cell_h ? cell_w : cell_h) * 56 / 100;
+    p->cards = cards; p->cell_w = cell_w; p->cell_h = cell_h; p->icon = icon;
+    p->lazy = !lv_port_focus_mode();
+    lv_obj_set_scroll_one(p->pages, true);
     p->page_count = (p->count + cards - 1) / cards;
     for (int pg = 0; pg < p->page_count; pg++)
     {
@@ -693,39 +758,9 @@ static void pages_create(lv_obj_t *screen, void *arg)
         lv_obj_set_flex_flow(page, LV_FLEX_FLOW_ROW_WRAP);
         lv_obj_set_scrollable(page, false);
         lv_obj_set_snappable(page, true);
-        for (int k = 0; k < cards; k++)
-        {
-            int index = pg * cards + k;
-            if (index >= p->count)
-            {
-                break;
-            }
-            const launcher_item_t *item = &p->items[index];
-            lv_obj_t *card = lv_obj_create(page);
-            lv_obj_remove_style_all(card);
-            lv_obj_set_size(card, cell_w, cell_h);
-            lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-            lv_obj_set_flex_align(card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-            lv_obj_set_style_pad_row(card, 6, 0);
-            lv_obj_set_style_radius(card, 18, 0);
-            lv_obj_set_style_bg_color(card, lv_color_hex(UI_COLOR_CARD), LV_STATE_PRESSED);
-            lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_STATE_PRESSED);
-            lv_obj_set_scrollable(card, false);
-            lv_obj_set_clickable(card, true);
-            lv_obj_set_user_data(card, (void *)(intptr_t)index);
-            lv_port_set_focusable(card);
-            lv_obj_t *bubble = ui_icon_bubble(card, item_icon(item), item_color(item), icon);
-            lv_obj_set_clickable(bubble, false);
-            lv_obj_t *label = lv_label_create(card);
-            lv_label_set_text(label, item_name(item));
-            lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
-            lv_obj_set_width(label, cell_w - 8);
-            lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_set_style_text_font(label, cards == 9 ? UI_FONT_SMALL : UI_FONT_BODY, 0);
-            lv_obj_add_event_cb(card, on_card, LV_EVENT_SHORT_CLICKED, p);
-            lv_obj_add_event_cb(card, on_card, LV_EVENT_LONG_PRESSED, p);
-        }
     }
+
+    pages_window(p, 0);
 
     /* Page dots on the right (round: inside the circle). */
     p->dots = lv_obj_create(screen);

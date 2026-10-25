@@ -35,6 +35,26 @@ typedef struct
 static QueueHandle_t s_jobs = NULL;
 static char s_reset_text[64] = "";
 static bool s_crashed = false;
+static struct { char name[configMAX_TASK_NAME_LEN]; uint32_t stack; } s_task_sizes[32];
+static portMUX_TYPE s_task_sizes_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static void remember_stack(const char *name, uint32_t stack)
+{
+    portENTER_CRITICAL(&s_task_sizes_lock);
+    for (size_t i = 0; i < 32; i++) {
+        if (!s_task_sizes[i].name[0] || !strcmp(s_task_sizes[i].name, name)) {
+            snprintf(s_task_sizes[i].name, sizeof(s_task_sizes[i].name), "%s", name);
+            s_task_sizes[i].stack = stack;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&s_task_sizes_lock);
+}
+
+void sys_task_record_stack(const char *name, uint32_t bytes)
+{
+    remember_stack(name, bytes);
+}
 
 static void worker_task(void *arg)
 {
@@ -60,6 +80,7 @@ void sys_worker_init(void)
 
     s_jobs = xQueueCreate(WORKER_QUEUE, sizeof(job_t));
     xTaskCreatePinnedToCore(worker_task, "sys", WORKER_STACK, NULL, 3, NULL, 0);
+    remember_stack("sys", WORKER_STACK);
 }
 
 bool sys_post(sys_job_fn_t fn, void *arg)
@@ -161,6 +182,8 @@ bool sys_task_create(TaskFunction_t fn, const char *name, uint32_t stack, void *
 {
     if (xTaskCreatePinnedToCore(fn, name, stack, arg, priority, NULL, core) == pdPASS)
     {
+        remember_stack(name, stack);
+        ESP_LOGI(TAG, "Task start: %s, stack %u B (%s)", name, (unsigned)stack, sys_task_purpose(name));
         return true;
     }
 
@@ -168,6 +191,63 @@ bool sys_task_create(TaskFunction_t fn, const char *name, uint32_t stack, void *
     sys_heap_log(name);
 
     return false;
+}
+
+size_t sys_tasks_snapshot(sys_task_info_t *out, size_t capacity)
+{
+#if configUSE_TRACE_FACILITY
+    if (out == NULL || capacity == 0) return 0;
+    UBaseType_t room = uxTaskGetNumberOfTasks() + 8;
+    TaskStatus_t *tasks = heap_caps_calloc(room, sizeof(*tasks), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (tasks == NULL) return 0;
+    /* Copy task names before deleted tasks can have their TCB reclaimed. */
+    vTaskSuspendAll();
+    UBaseType_t count = uxTaskGetSystemState(tasks, room, NULL);
+    size_t n = count < capacity ? count : capacity;
+    for (size_t i = 0; i < n; i++) {
+        snprintf(out[i].name, sizeof(out[i].name), "%s", tasks[i].pcTaskName);
+        out[i].state = tasks[i].eCurrentState;
+        out[i].stack_free_min = tasks[i].usStackHighWaterMark;
+        out[i].stack_bytes = 0;
+        if (!strcmp(out[i].name, "swdraw")) out[i].stack_bytes = LV_DRAW_THREAD_STACK_SIZE;
+    }
+    xTaskResumeAll();
+    free(tasks);
+    portENTER_CRITICAL(&s_task_sizes_lock);
+    for (size_t i = 0; i < n; i++)
+        for (size_t j = 0; j < 32; j++)
+            if (!strcmp(out[i].name, s_task_sizes[j].name)) out[i].stack_bytes = s_task_sizes[j].stack;
+    portEXIT_CRITICAL(&s_task_sizes_lock);
+    return n;
+#else
+    return 0;
+#endif
+}
+
+const char *sys_task_purpose(const char *name)
+{
+    static const struct { const char *name, *why; } reasons[] = {
+        {"sys", "Orologio, sveglie e lavori di sistema"}, {"power", "Batteria, tasti e risveglio"},
+        {"lvgl", "Interfaccia e input"}, {"swdraw", "Disegno interfaccia"},
+        {"sound", "Audio: sveglie e avvisi"}, {"wifi", "Radio richiesta da un servizio"},
+        {"ecos_link", "Family: pagina, comando o background abilitato"},
+        {"weather", "Aggiornamento meteo richiesto"}, {"time_sync", "Sincronizzazione orologio"},
+        {"news", "Notizie aperte dall'utente"}, {"launcher_scan", "Lettura elenco app esterne"},
+        {"news_init", "Archivio Notizie: apertura richiesta"},
+        {"fw_online", "Controllo o installazione firmware richiesti"},
+        {"fw_release", "Download versione scelta"}, {"fw_file", "Installazione da file richiesta"},
+        {"pet_travel", "Viaggio del pet richiesto"}, {"pet_outing", "Uscita del pet richiesta"},
+        {"pet_home", "Ritorno del pet richiesto"}, {"web_connect", "Apertura server web richiesta"},
+        {"nimble_host", "Companion Bluetooth abilitato"}, {"devcon", "Console diagnostica USB"},
+        {"market", "Catalogo o installazione richiesta"}, {"fw_update", "Aggiornamento richiesto"},
+        {"httpd", "Server web aperto"}, {"esp_timer", "Scadenze di sistema"},
+        {"tcpip", "Infrastruttura rete"}, {"sys_evt", "Eventi driver"}, {"Tmr Svc", "Timer FreeRTOS"},
+    };
+    for (size_t i = 0; i < sizeof(reasons)/sizeof(reasons[0]); i++)
+        if (!strcmp(name, reasons[i].name)) return reasons[i].why;
+    if (!strncmp(name, "IDLE", 4)) return "CPU disponibile / risparmio energetico";
+    if (!strncmp(name, "ipc", 3)) return "Comunicazione tra i due core";
+    return "Task driver o attivita non classificata";
 }
 
 /* ------------------------------------------------------------- health */
@@ -195,7 +275,7 @@ void sys_health_log(void)
 
 #if configUSE_TRACE_FACILITY
     UBaseType_t room = uxTaskGetNumberOfTasks() + 4;   /* a few may start meanwhile */
-    TaskStatus_t *tasks = malloc(sizeof(TaskStatus_t) * room);
+    TaskStatus_t *tasks = heap_caps_malloc(sizeof(TaskStatus_t) * room, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     if (tasks == NULL)
     {

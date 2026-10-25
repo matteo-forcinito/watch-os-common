@@ -187,10 +187,8 @@ static void tile_changed(lv_event_t *e)
 #endif
     }
 
-    if (active == lv_obj_get_child(tiles, 3))   /* child 3 = app list (see below) */
-    {
-        launcher_refresh();
-    }
+    /* The launcher survives tile changes. Rebuilding it here interrupts the
+     * swipe and rescans storage in the LVGL task. Mutations refresh it explicitly. */
 }
 
 static void on_knob(lv_event_t *event)

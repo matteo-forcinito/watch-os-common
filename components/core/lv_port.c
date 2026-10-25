@@ -3,6 +3,7 @@
 #include "core/power.h"
 #include "core/settings.h"
 #include "core/state.h"
+#include "core/sys.h"
 
 #include "hardware/board.h"
 #include "hardware/display.h"
@@ -66,6 +67,19 @@ static bool s_headless;
 static _Atomic int64_t s_pass_start_us = 0;
 static _Atomic uint32_t s_max_pass_ms = 0;
 static _Atomic uint32_t s_flush_timeouts = 0;
+static _Atomic uint32_t s_perf_passes, s_perf_slow16, s_perf_slow33, s_perf_max;
+
+void lv_port_perf_snapshot(lv_port_perf_t *out, bool reset)
+{
+    if (out == NULL) return;
+    if (reset) {
+        *out = (lv_port_perf_t){atomic_exchange(&s_perf_passes, 0), atomic_exchange(&s_perf_slow16, 0),
+            atomic_exchange(&s_perf_slow33, 0), atomic_exchange(&s_perf_max, 0)};
+    } else {
+        *out = (lv_port_perf_t){atomic_load(&s_perf_passes), atomic_load(&s_perf_slow16),
+            atomic_load(&s_perf_slow33), atomic_load(&s_perf_max)};
+    }
+}
 
 /* Synthetic touch (monkey test): 0 = none, else FAKE_xxx flags | x << 12 | y. */
 #define FAKE_PRESSED  (1u << 30)
@@ -932,6 +946,7 @@ static void run_async_items(void)
 static void lvgl_task(void *arg)
 {
     (void)arg;
+    sys_task_record_stack("lvgl", TASK_STACK);
 
     bool boosted = false;
 
@@ -996,6 +1011,10 @@ static void lvgl_task(void *arg)
 
         uint32_t pass_ms = (uint32_t)((esp_timer_get_time() - pass_start) / 1000);
         atomic_store(&s_pass_start_us, 0);
+        atomic_fetch_add(&s_perf_passes, 1);
+        if (pass_ms > 16) atomic_fetch_add(&s_perf_slow16, 1);
+        if (pass_ms > 33) atomic_fetch_add(&s_perf_slow33, 1);
+        if (pass_ms > atomic_load(&s_perf_max)) atomic_store(&s_perf_max, pass_ms);
 
         if (pass_ms > atomic_load(&s_max_pass_ms))
         {

@@ -311,7 +311,7 @@ void apps_init(void)
     market_init();
 #if CONFIG_APPKIT_HOSTED
     giornata_service_start();   /* reminders ring with the app closed too */
-    news_service_start();       /* background rounds keep the archive growing */
+    /* News is loaded on its first explicit open, never as an idle service. */
     /* Dashboard folders exist from boot: opening one opens its app (no cost until then). */
     appkit_hosted_register("News", "news");
     appkit_hosted_register("Giornata", "giornata");

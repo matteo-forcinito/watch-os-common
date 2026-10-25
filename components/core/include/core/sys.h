@@ -69,4 +69,16 @@ size_t sys_internal_free(void);
 size_t sys_internal_largest(void);
 size_t sys_internal_min_free(void);
 
+/* On-demand scheduler snapshot. No polling task and no allocation when closed.
+ * stack_bytes is the requested stack for tasks created through this module;
+ * zero means untracked (driver/SDK task), never an estimate of its heap. */
+typedef struct {
+    char name[configMAX_TASK_NAME_LEN];
+    uint32_t stack_bytes, stack_free_min;
+    eTaskState state;
+} sys_task_info_t;
+size_t sys_tasks_snapshot(sys_task_info_t *out, size_t capacity);
+const char *sys_task_purpose(const char *name);
+void sys_task_record_stack(const char *name, uint32_t bytes);
+
 #endif

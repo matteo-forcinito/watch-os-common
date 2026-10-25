@@ -1050,6 +1050,14 @@ esp_err_t nw_store_init(void)
     if (s_lock == NULL || nw_item_table == NULL || s_stories == NULL || s_feeds == NULL || s_trends == NULL ||
         nw_hits == NULL || nw_ctx_text == NULL)
     {
+        if (s_lock != NULL) vSemaphoreDelete(s_lock);
+        s_lock = NULL;
+        free(nw_item_table); nw_item_table = NULL;
+        free(s_stories); s_stories = NULL;
+        free(s_feeds); s_feeds = NULL;
+        free(s_trends); s_trends = NULL;
+        free(nw_hits); nw_hits = NULL;
+        free(nw_ctx_text); nw_ctx_text = NULL;
         return ESP_ERR_NO_MEM;
     }
     load_sources();

@@ -49,6 +49,7 @@ static void main_create(lv_obj_t *screen, void *arg)
     (void)arg;
 
     lv_obj_t *page = ui_page(screen, "Impostazioni");
+    ui_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_TEAL, "Sistema e attivita", NULL, apps_open_cb, (void *)"sistema");
     ui_row(page, LV_SYMBOL_LIST, UI_COLOR_GREEN, "Tutte le app", NULL, apps_open_cb, (void *)"launcher.all");
     ui_row(page, LV_SYMBOL_DOWNLOAD, UI_COLOR_PURPLE, "Marketplace", NULL, apps_open_cb, (void *)"market");
     ui_row(page, LV_SYMBOL_IMAGE, UI_COLOR_BLUE, "Display", NULL, apps_open_cb, (void *)"settings.display");
@@ -190,7 +191,7 @@ static void display_create(lv_obj_t *screen, void *arg)
     snprintf(value, sizeof(value), "%u s", st->screen_timeout_s);
     ui_row(page, LV_SYMBOL_EYE_CLOSE, UI_COLOR_INDIGO, "Spegnimento", value, cycle_timeout, NULL);
     ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_PURPLE, "Always on", st->always_on, set_aod, NULL);
-    ui_switch_row(page, LV_SYMBOL_LOOP, UI_COLOR_TEAL, "Progresso sul bordo", st->border_progress, set_border_progress, NULL);
+    ui_switch_row(page, LV_SYMBOL_LOOP, UI_COLOR_TEAL, "Progresso compatto", st->border_progress, set_border_progress, NULL);
     ui_switch_row(page, LV_SYMBOL_UP, UI_COLOR_BLUE, "Tocca per accendere", st->tap_to_wake, set_tap, NULL);
     ui_switch_row(page, LV_SYMBOL_BELL, UI_COLOR_ORANGE, "Accendi con notifiche", st->wake_on_notification,
                   set_wake_notify, NULL);
@@ -575,7 +576,7 @@ static void bluetooth_create(lv_obj_t *screen, void *arg)
     lv_obj_t *page = ui_page(screen, "Bluetooth");
     s_ble_status = ui_text(page, "", true);
     ui_switch_row(page, LV_SYMBOL_BLUETOOTH, UI_COLOR_INDIGO, "Bluetooth", settings_get()->ble_enabled, set_ble, NULL);
-    static const char *const ecos_modes[] = {"Automatico", "Background", "Spento fuori recovery"};
+    static const char *const ecos_modes[] = {"Su richiesta", "Background autorizzato", "Spento fuori recovery"};
     ui_row(page, LV_SYMBOL_LOOP, UI_COLOR_TEAL, "Ecosistema", ecos_modes[settings_get()->ecos_mode], on_ecos_mode, NULL);
     ui_row(page, LV_SYMBOL_EDIT, UI_COLOR_GRAY, "Nome", settings_get()->device_name, on_name, NULL);
     ui_row(page, LV_SYMBOL_GPS, UI_COLOR_GREEN, "Trova telefono", NULL, on_find_phone, NULL);

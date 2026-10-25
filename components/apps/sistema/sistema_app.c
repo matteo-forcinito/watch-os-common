@@ -18,6 +18,14 @@
 #include "hardware/pmu.h"
 #include "hardware/sdcard.h"
 #include "core/sys.h"
+#include "core/settings.h"
+#include "core/state.h"
+#include "services/weather.h"
+#include "services/market.h"
+#include "services/web_server.h"
+#if CONFIG_WATCH_ECOS_PAIRING
+#include "services/ecos.h"
+#endif
 #include "services/storage.h"
 #include "services/wifi.h"
 #include "ui/ui.h"
@@ -33,6 +41,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define NS "sysmon"
 #define DOUBLE_RESET_MS 10000
@@ -181,7 +190,7 @@ void sistema_boot(void)
 #define C_INK  0xE3F4F5
 #define C_DIM  0x8A9BB0
 
-enum { HOME, DETAILS };
+enum { HOME, DETAILS, ACTIVITIES };
 
 typedef struct
 {
@@ -190,6 +199,7 @@ typedef struct
     lv_obj_t *ram_arc, *psram_arc, *big, *sub, *info, *eye;   /* HOME */
     lv_obj_t *ram, *psram, *flash, *sd, *battery, *wifi, *system;   /* DETAILS */
     lv_timer_t *timer;
+    lv_obj_t *activity_summary, *activity_tasks;
     int ticks;
 } sistema_ui_t;
 
@@ -306,6 +316,13 @@ static void toggle_overlay(lv_event_t *e)
     home_update(s_ui);
 }
 
+static void open_activities(lv_event_t *e)
+{
+    (void)e;
+    s_ui->view = ACTIVITIES;
+    render(s_ui);
+}
+
 static void home(sistema_ui_t *ui)
 {
     const board_info_t *b = board_info();
@@ -317,7 +334,7 @@ static void home(sistema_ui_t *ui)
     lv_obj_align_to(ui->psram_arc, ui->ram_arc, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *col = box(ui->content);
-    lv_obj_set_size(col, size * 56 / 100, LV_SIZE_CONTENT);
+    lv_obj_set_size(col, size * 80 / 100, LV_SIZE_CONTENT);
     lv_obj_align_to(col, ui->ram_arc, LV_ALIGN_CENTER, 0, -size / 16);
     lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -331,7 +348,7 @@ static void home(sistema_ui_t *ui)
     lv_obj_set_size(buttons, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(buttons, 10, 0);
-    round_button(buttons, LV_SYMBOL_LIST, 0x4DA3FF, open_details);
+    round_button(buttons, LV_SYMBOL_LIST, 0x4DA3FF, open_activities);
     ui->eye = round_button(buttons, LV_SYMBOL_EYE_OPEN, C_DIM, toggle_overlay);
     lv_obj_align(buttons, LV_ALIGN_BOTTOM_MID, 0, -10);
     home_update(ui);
@@ -423,6 +440,97 @@ static void details(sistema_ui_t *ui)
     details_update(ui);
 }
 
+static void activities_update(sistema_ui_t *ui)
+{
+    char summary[512];
+    wifi_activity_t wifi;
+    lv_port_perf_t perf;
+    lv_port_perf_snapshot(&perf, false);
+    bool radio = wifi_activity_snapshot(&wifi);
+    const char *family = "non disponibile";
+#if CONFIG_WATCH_ECOS_PAIRING
+    family = settings_get()->ecos_mode == 1 ? "background autorizzato" :
+             settings_get()->ecos_mode == 2 ? "spenta" : "su richiesta";
+#endif
+    snprintf(summary, sizeof(summary),
+             "RAM interna libera %u KB / blocco %u KB\nPSRAM libera %u KB\n"
+             "Bluetooth: %s (nessuna riserva da spento)\nFamily: %s\n"
+             "Wi-Fi: %s; richieste %u, radio %u\nWeb: %s / Meteo: %s / Market: %s\n"
+             "UI: picco %lu ms; %lu passaggi oltre 33 ms",
+             (unsigned)(sys_internal_free()/1024), (unsigned)(sys_internal_largest()/1024),
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)/1024),
+             settings_get()->ble_enabled ? "abilitato dall'utente" : "spento",
+             family, !radio ? "in transizione" : wifi.started ? "accesa" : "spenta",
+             radio ? wifi.holders : 0, radio ? wifi.radio_holders : 0,
+             web_server_running() ? "attivo" : "spento", weather_is_updating() ? "scaricamento" : "fermo",
+             market_busy() ? "operazione attiva" : "fermo",
+             (unsigned long)perf.max_ms, (unsigned long)perf.slow_33ms);
+    if (strcmp(lv_label_get_text(ui->activity_summary), summary)) lv_label_set_text(ui->activity_summary, summary);
+    sys_task_info_t *tasks = heap_caps_calloc(48, sizeof(*tasks), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    char *text = heap_caps_calloc(1, 7000, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (tasks == NULL || text == NULL) { free(tasks); free(text); return; }
+    size_t n = sys_tasks_snapshot(tasks, 48), used = 0;
+    for (size_t i = 0; i < n && used < 6700; i++) {
+        const char *state = tasks[i].state == eRunning ? "in esecuzione" :
+                            tasks[i].state == eReady ? "pronto" :
+                            tasks[i].state == eBlocked ? "in attesa" : "sospeso";
+        int written = snprintf(text+used, 7000-used, "%s - %s\n%s\nStack: %lu B riservati; margine minimo %lu B\n\n",
+            tasks[i].name, state, sys_task_purpose(tasks[i].name),
+            (unsigned long)tasks[i].stack_bytes, (unsigned long)tasks[i].stack_free_min);
+        if (written < 0 || (size_t)written >= 7000-used) break;
+        used += written;
+    }
+    if (strcmp(lv_label_get_text(ui->activity_tasks), text)) lv_label_set_text(ui->activity_tasks, text);
+    free(text); free(tasks);
+}
+
+static void activity_refresh(lv_event_t *e)
+{
+    (void)e;
+    if (s_ui != NULL) activities_update(s_ui);
+}
+
+static void activity_reset(lv_event_t *e)
+{
+    (void)e;
+    lv_port_perf_t previous;
+    lv_port_perf_snapshot(&previous, true);
+    activities_update(s_ui);
+    ui_toast("Misure UI azzerate: ora prova la navigazione");
+}
+
+#if CONFIG_WATCH_ECOS_PAIRING
+static void family_policy(lv_event_t *e)
+{
+    (void)e;
+    settings_t next = *settings_get();
+    next.ecos_mode = next.ecos_mode == 1 ? 0 : 1;
+    settings_save(&next);
+    ui_toast(next.ecos_mode == 1 ? "Family: background autorizzato" : "Family: solo su richiesta");
+    activities_update(s_ui);
+}
+#endif
+
+static void activities(sistema_ui_t *ui)
+{
+    lv_obj_t *page = ui_page(ui->content, "Attivita");
+    ui_section(page, "SEMPRE DISPONIBILI");
+    ui_text(page, "Orologio, sveglie, timer ed eventi programmati. I task in attesa non stanno usando la CPU, ma il loro stack resta allocato.", true);
+    ui_section(page, "SERVIZI E MEMORIA");
+    ui->activity_summary = ui_text(page, "", false);
+    ui_row(page, LV_SYMBOL_LIST, UI_COLOR_PURPLE, "Dettagli memoria e archivi", NULL, open_details, NULL);
+    ui_row(page, LV_SYMBOL_REFRESH, UI_COLOR_BLUE, "Aggiorna elenco", NULL, activity_refresh, NULL);
+    ui_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_TEAL, "Azzera misure UI", NULL, activity_reset, NULL);
+    ui_row(page, LV_SYMBOL_BLUETOOTH, UI_COLOR_BLUE, "Gestisci Bluetooth", NULL, apps_open_cb, (void *)"settings.bluetooth");
+#if CONFIG_WATCH_ECOS_PAIRING
+    ui_row(page, LV_SYMBOL_WIFI, UI_COLOR_TEAL, "Family: su richiesta / background", NULL, family_policy, NULL);
+#endif
+    ui_section(page, "TASK PRESENTI");
+    ui_text(page, "Lo stack e solo una parte della RAM. Zero riservati = dimensione non registrata dal driver. Il margine e il minimo dall'avvio del task, non la RAM libera ora. Non e una misura della CPU.", true);
+    ui->activity_tasks = ui_text(page, "", false);
+    activities_update(ui);
+}
+
 static void render(sistema_ui_t *ui)
 {
     if (ui->content != NULL)
@@ -435,19 +543,23 @@ static void render(sistema_ui_t *ui)
     lv_obj_set_style_bg_opa(ui->content, LV_OPA_COVER, 0);
     ui->ram_arc = NULL;
     ui->ram = NULL;
+    ui->activity_summary = NULL;
+    ui->activity_tasks = NULL;
     if (ui->view == HOME)
     {
         home(ui);
     }
-    else
+    else if (ui->view == DETAILS)
     {
         details(ui);
     }
+    else activities(ui);
 }
 
 static void refresh(lv_timer_t *t)
 {
     sistema_ui_t *ui = lv_timer_get_user_data(t);
+    if (lv_screen_active() != ui->screen) return;
     ui->ticks++;
     if (ui->ram_arc != NULL)
     {
@@ -457,6 +569,7 @@ static void refresh(lv_timer_t *t)
     {
         details_update(ui);
     }
+    else if (ui->view == ACTIVITIES && ui->ticks % 3 == 0) activities_update(ui);
 }
 
 static bool back(void)
@@ -495,6 +608,7 @@ static void create(lv_obj_t *screen, void *arg)
     }
     s_ui = ui;
     ui->screen = screen;
+    ui->view = ACTIVITIES;
     lv_obj_set_style_bg_color(screen, ui_color(C_BG), 0);
     lv_obj_add_event_cb(screen, deleted, LV_EVENT_DELETE, ui);
     render(ui);

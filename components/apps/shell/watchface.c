@@ -227,16 +227,8 @@ static void update_music(lv_observer_t *observer, lv_subject_t *subject)
     }
 }
 
-/* Coming back to the face: refresh old weather (cheap no-op if recent). */
-static void screen_changed(lv_observer_t *observer, lv_subject_t *subject)
-{
-    (void)observer;
-
-    if (lv_subject_get_int(subject) == POWER_SCREEN_ON)
-    {
-        weather_refresh(2 * 3600);
-    }
-}
+/* The face displays cached/phone weather. Opening Weather explicitly refreshes
+ * it; waking the clock must not start a network request. */
 
 /* ------------------------------------------------------------- layout */
 
@@ -493,7 +485,6 @@ static void watchface_observe(lv_obj_t *root)
     lv_subject_add_observer_obj(state_subject(STATE_MINUTE), update_alarm, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_MUSIC_VERSION), update_music, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_BLE), update_music, root, NULL);
-    lv_subject_add_observer_obj(state_subject(STATE_SCREEN), screen_changed, root, NULL);
 }
 
 /* ================================================================ AOD */

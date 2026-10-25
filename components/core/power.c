@@ -4,6 +4,7 @@
 #include "core/settings.h"
 #include "core/recovery.h"
 #include "core/state.h"
+#include "core/sys.h"
 
 #include "hardware/display.h"
 #include "hardware/pmu.h"
@@ -533,7 +534,7 @@ esp_err_t power_init(void)
     s_screen = POWER_SCREEN_OFF;   /* panel starts dark: go_on() lights it */
     s_brightness_now = 0;
 
-    if (xTaskCreatePinnedToCore(power_task, "power", TASK_STACK, NULL, TASK_PRIORITY, NULL, 0) != pdPASS)
+    if (!sys_task_create(power_task, "power", TASK_STACK, NULL, TASK_PRIORITY, 0))
     {
         return ESP_ERR_NO_MEM;
     }

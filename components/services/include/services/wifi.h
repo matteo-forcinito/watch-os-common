@@ -73,6 +73,12 @@ uint8_t wifi_home_channel(void);
 void wifi_set_fast(bool fast);
 
 bool wifi_is_connected(void);
+typedef struct {
+    bool driver, started, access_point;
+    unsigned holders, radio_holders, fast_holders, scans;
+} wifi_activity_t;
+/* Nonblocking: false while another operation owns the radio mutex. */
+bool wifi_activity_snapshot(wifi_activity_t *out);
 #if CONFIG_WATCH_DEV_CONSOLE
 /* Local QA only: drop STA without changing saved networks or owners. */
 void wifi_diagnostic_drop(void);
