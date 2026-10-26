@@ -1,6 +1,99 @@
 <!doctype html><html lang="it"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Deck · sviluppo</title>
 <style>
 :root{color-scheme:dark;--bg:#0c0d0f;--panel:#15171b;--line:#30333a;--ink:#eeeae2;--muted:#959aab;--orange:#ff9559;--green:#a8d5a0;--blue:#a8bbfa}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px system-ui,sans-serif}button,input,select{font:inherit}button{cursor:pointer;color:inherit;background:#202329;border:1px solid var(--line);border-radius:9px;padding:10px 15px}button:hover,button:focus-visible{border-color:var(--orange)}button:disabled{opacity:.4;cursor:default}header{display:flex;align-items:center;justify-content:space-between;padding:25px 4vw;border-bottom:1px solid var(--line);gap:20px}.brand{font-size:20px;letter-spacing:-.7px}.brand b{color:var(--orange)}.eyebrow{font:11px ui-monospace,monospace;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted)}.live{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:9px}.muted{color:var(--muted)}main{max-width:1430px;margin:auto;padding:35px 4vw}h1{font-size:clamp(26px,4vw,42px);font-weight:500;letter-spacing:-1.8px;margin:10px 0 18px}h2{font-size:20px;font-weight:500}p{line-height:1.6}.toolbar,.tabs,.stats{display:flex;flex-wrap:wrap;align-items:center;gap:12px}.stats{margin:22px 0 30px}.stat{padding:14px 20px;border:1px solid var(--line);border-radius:12px;min-width:150px}.stat strong{font:28px ui-monospace,monospace;margin-right:14px}.stat span{font-size:12px;color:var(--muted)}.tabs{margin:28px 0 20px}.tabs button{border:0;background:transparent;color:var(--muted)}.tabs button.on{background:#27252a;color:var(--orange)}input,select{background:var(--panel);border:1px solid var(--line);color:var(--ink);padding:10px 12px;border-radius:9px}input{min-width:260px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.tile{position:relative;text-align:left;min-height:232px;padding:20px;border-radius:15px;border:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;gap:10px;overflow:hidden}.tile.working{border-color:#9b603f;background:#211b18}.tile.needs_input{background:var(--orange);color:#26150b;border-color:var(--orange)}.tile.needs_input .muted,.tile.needs_input .eyebrow{color:#6d3c23}.tile.done{border-color:#40533d}.tile.error{border-color:#b56d6d}.tile canvas{image-rendering:pixelated;width:64px;height:64px;align-self:center;margin:5px}.tile .name{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tile .activity{font-size:12px;line-height:1.5;min-height:36px}.tile .repo{font:11px ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.context{height:3px;background:#373a42;border-radius:3px;overflow:hidden;margin-top:auto}.context i{display:block;height:100%;background:var(--orange)}.needs_input .context i{background:#382010}.tag{font:10px ui-monospace,monospace;letter-spacing:1px;text-transform:uppercase}.tile-top{display:flex;justify-content:space-between;gap:5px}.empty{border:1px dashed var(--line);padding:40px;border-radius:15px;grid-column:1/-1;color:var(--muted)}.pager{display:flex;justify-content:center;align-items:center;gap:20px;margin:24px}.table{overflow:auto;border:1px solid var(--line);border-radius:12px}table{border-collapse:collapse;width:100%;text-align:left;white-space:nowrap}th,td{padding:15px 18px;border-bottom:1px solid #282b31;font-size:13px}th{color:var(--muted);font-weight:400}.table code{color:var(--blue)}.banner{background:#231c17;color:#efba96;border:1px solid #533a2b;padding:13px 18px;border-radius:10px;margin-bottom:20px}.hide{display:none!important}dialog{background:var(--bg);color:var(--ink);border:1px solid #494744;border-radius:20px;width:min(680px,94vw);max-height:90vh;padding:28px}dialog::backdrop{background:#000b;backdrop-filter:blur(5px)}.detail-head{display:flex;align-items:flex-start;gap:20px}.detail-head canvas{image-rendering:pixelated;width:80px;height:80px}.detail-head h2{margin:0 0 8px}.detail-head button{margin-left:auto}.fields{display:grid;grid-template-columns:130px 1fr;gap:14px;margin:25px 0;font-size:13px}.fields dt{color:var(--muted)}.fields dd{margin:0;overflow-wrap:anywhere}.quote{white-space:pre-wrap;background:var(--panel);padding:17px;border-radius:10px;font:12px/1.7 ui-monospace,monospace;overflow-wrap:anywhere}.quota{padding:14px 0;border-top:1px solid var(--line)}.quota strong{color:var(--green)}footer{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding:22px 4vw;line-height:1.7}a{color:var(--blue)}@media(max-width:900px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:650px){header{padding:20px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tile{min-height:210px;padding:14px}.stat{min-width:0;flex:1;padding:12px}.stat strong{font-size:23px}.stats{gap:8px}.fields{grid-template-columns:90px 1fr}input{width:100%;min-width:0}.toolbar>*{flex:1}.brand{font-size:17px}}
+/* ---------- sprite ---------- */
+.b { fill: var(--body); }
+.c { fill: var(--cut); }
+.cx { stroke: var(--cut); fill: none; }
+.zt { fill: var(--body); font-family: var(--f-label); }
+.fl { fill: #E8E4DC; } /* the finish flag's light squares */
+
+@keyframes la { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+@keyframes lb { 0%, 49% { opacity: 0 } 50%, 100% { opacity: 1 } }
+@keyframes bob { 0%, 49% { transform: translateY(0) } 50%, 100% { transform: translateY(-0.5px) } }
+@keyframes blink { 0%, 59% { opacity: 1 } 60%, 100% { opacity: 0.15 } }
+@keyframes dots { 0% { opacity: .2 } 50% { opacity: 1 } 100% { opacity: .2 } }
+@keyframes zz { 0%, 100% { transform: translateY(0); opacity: .9 } 50% { transform: translateY(-0.6px); opacity: .4 } }
+.la { animation: la .5s infinite; }
+.lb { animation: lb .5s infinite; }
+.bob { animation: bob .5s infinite; }
+.blink { animation: blink 1s infinite; }
+.dots { animation: dots 1.2s steps(3) infinite; }
+.zz { animation: zz 2.4s steps(4) infinite; }
+/* working poses (mirrors critter.dart on the panel) */
+.fast { animation-duration: .2s !important; }
+.slow { animation-duration: .8s !important; }
+@keyframes glance { 0%, 49% { transform: translateX(-1px) } 50%, 100% { transform: translateX(1px) } }
+@keyframes scan { 0%, 24% { transform: translateX(0) } 25%, 49% { transform: translateX(-1px) } 50%, 74% { transform: translateX(0) } 75%, 100% { transform: translateX(1px) } }
+@keyframes rise1 { 0%, 100% { opacity: 1 } }
+@keyframes rise2 { 0%, 24% { opacity: 0 } 25%, 100% { opacity: 1 } }
+@keyframes rise3 { 0%, 49% { opacity: 0 } 50%, 100% { opacity: 1 } }
+@keyframes tapA { 0%, 49% { transform: translateY(0) } 50%, 100% { transform: translateY(0.6px) } }
+@keyframes tapB { 0%, 49% { transform: translateY(0) } 50%, 100% { transform: translateY(-0.6px) } }
+@keyframes cursor { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+@keyframes tick0 { 0%, 24% { opacity: 1 } 25%, 100% { opacity: 0 } }
+@keyframes tick1 { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+@keyframes tick2 { 0%, 74% { opacity: 1 } 75%, 100% { opacity: 0 } }
+@keyframes hop { 0%, 49% { transform: translateY(0) } 50%, 100% { transform: translateY(-1.5px) } }
+@keyframes spark { 0%, 33% { opacity: 1 } 34%, 100% { opacity: .45 } }
+.glance { animation: glance 1.2s infinite; }
+.scan { animation: scan 1.2s infinite; }
+.t1 { animation: rise1 1.2s infinite; } .t2 { animation: rise2 1.2s infinite; } .t3 { animation: rise3 1.2s infinite; }
+.tapA { animation: tapA .3s infinite; } .tapB { animation: tapB .3s infinite; }
+.cursor { animation: cursor 1s infinite; }
+.tick0 { animation: tick0 2s infinite; } .tick1 { animation: tick1 2s infinite; } .tick2 { animation: tick2 2s infinite; }
+.hop { animation: hop .4s infinite; }
+.spark { animation: spark .6s infinite; }
+@keyframes bobc { 0%, 49% { transform: translateY(0) } 50%, 100% { transform: translateY(0.6px) } }
+.bobc { animation: bobc .6s infinite; }
+.s1 { animation-delay: .2s; } .s2 { animation-delay: .4s; }
+/* hat frames while working: frame i of n shows during slot i of each n x ms cycle */
+@keyframes hf2 { 0%, 49.99% { opacity: 1 } 50.00%, 100% { opacity: 0 } }
+@keyframes hf3 { 0%, 33.32% { opacity: 1 } 33.33%, 100% { opacity: 0 } }
+@keyframes hf4 { 0%, 24.99% { opacity: 1 } 25.00%, 100% { opacity: 0 } }
+.hfo { opacity: 0; } /* frames after the first stay hidden when motion is reduced */
+.hf-2-350-0 { animation: hf2 700ms linear infinite; animation-delay: -0ms; }
+.hf-2-350-1 { animation: hf2 700ms linear infinite; animation-delay: -350ms; }
+.hf-2-400-0 { animation: hf2 800ms linear infinite; animation-delay: -0ms; }
+.hf-2-400-1 { animation: hf2 800ms linear infinite; animation-delay: -400ms; }
+.hf-2-450-0 { animation: hf2 900ms linear infinite; animation-delay: -0ms; }
+.hf-2-450-1 { animation: hf2 900ms linear infinite; animation-delay: -450ms; }
+.hf-3-200-0 { animation: hf3 600ms linear infinite; animation-delay: -0ms; }
+.hf-3-200-1 { animation: hf3 600ms linear infinite; animation-delay: -400ms; }
+.hf-3-200-2 { animation: hf3 600ms linear infinite; animation-delay: -200ms; }
+.hf-4-120-0 { animation: hf4 480ms linear infinite; animation-delay: -0ms; }
+.hf-4-120-1 { animation: hf4 480ms linear infinite; animation-delay: -360ms; }
+.hf-4-120-2 { animation: hf4 480ms linear infinite; animation-delay: -240ms; }
+.hf-4-120-3 { animation: hf4 480ms linear infinite; animation-delay: -120ms; }
+.hf-4-280-0 { animation: hf4 1120ms linear infinite; animation-delay: -0ms; }
+.hf-4-280-1 { animation: hf4 1120ms linear infinite; animation-delay: -840ms; }
+.hf-4-280-2 { animation: hf4 1120ms linear infinite; animation-delay: -560ms; }
+.hf-4-280-3 { animation: hf4 1120ms linear infinite; animation-delay: -280ms; }
+.hf-4-300-0 { animation: hf4 1200ms linear infinite; animation-delay: -0ms; }
+.hf-4-300-1 { animation: hf4 1200ms linear infinite; animation-delay: -900ms; }
+.hf-4-300-2 { animation: hf4 1200ms linear infinite; animation-delay: -600ms; }
+.hf-4-300-3 { animation: hf4 1200ms linear infinite; animation-delay: -300ms; }
+.hf-4-320-0 { animation: hf4 1280ms linear infinite; animation-delay: -0ms; }
+.hf-4-320-1 { animation: hf4 1280ms linear infinite; animation-delay: -960ms; }
+.hf-4-320-2 { animation: hf4 1280ms linear infinite; animation-delay: -640ms; }
+.hf-4-320-3 { animation: hf4 1280ms linear infinite; animation-delay: -320ms; }
+.hf-4-350-0 { animation: hf4 1400ms linear infinite; animation-delay: -0ms; }
+.hf-4-350-1 { animation: hf4 1400ms linear infinite; animation-delay: -1050ms; }
+.hf-4-350-2 { animation: hf4 1400ms linear infinite; animation-delay: -700ms; }
+.hf-4-350-3 { animation: hf4 1400ms linear infinite; animation-delay: -350ms; }
+.hf-4-450-0 { animation: hf4 1800ms linear infinite; animation-delay: -0ms; }
+.hf-4-450-1 { animation: hf4 1800ms linear infinite; animation-delay: -1350ms; }
+.hf-4-450-2 { animation: hf4 1800ms linear infinite; animation-delay: -900ms; }
+.hf-4-450-3 { animation: hf4 1800ms linear infinite; animation-delay: -450ms; }
+/* compact: four frames, squashed around the feet (x 7, y 7) */
+@keyframes squash { 0%, 24% { transform: none } 25%, 49%, 75%, 100% { transform: scale(1.1, .8) } 50%, 74% { transform: scale(1.2, .62) } }
+@keyframes press1 { 0%, 24% { transform: none } 25%, 49%, 75%, 100% { transform: translateY(0.4px) } 50%, 74% { transform: translateY(1.1px) } }
+@keyframes press2 { 0%, 24% { transform: none } 25%, 49%, 75%, 100% { transform: translateY(0.8px) } 50%, 74% { transform: translateY(2.2px) } }
+.squash { animation: squash 1.2s infinite; transform-box: view-box; transform-origin: 7px 7px; }
+.press1 { animation: press1 1.2s infinite; } .press2 { animation: press2 1.2s infinite; }
+
+
+.deck-sprite{display:inline-block;width:96px;height:72px;align-self:center;--body:#ff4d00;--cut:#0a0a0a}.deck-sprite svg{width:100%;height:100%}.tile.needs_input .deck-sprite{--body:#0a0a0a;--cut:#ff4d00}.tile{border-radius:8px;background:#10120e}.tile.working{border-color:#302f25;background:#10120e}.tile.needs_input{background:#ff4d00;color:#0a0a0a}.tile .name{font-family:ui-monospace,monospace}.tile .deck-sprite{width:110px;height:85px;margin:8px auto}.detail-head .deck-sprite,.identity .deck-sprite{width:108px;height:84px}.agent-page{overflow-wrap:anywhere}.agent-page table{white-space:normal}
 </style>
 <header><div class="brand"><b>▦</b> agent deck <span class="eyebrow">/ development control</span></div><div id="connection" class="eyebrow"><i class="live"></i>Collegamento</div></header>
 <main><div class="eyebrow">Codex · Claude Code · Build & release</div><h1>Il lavoro, a colpo d'occhio.</h1><p class="muted">Chi sta lavorando, cosa aspetta te e da dove riprendere.</p><div id="warning" class="banner hide" role="status"></div>
@@ -13,7 +106,381 @@
 <script>
 'use strict';const key='__CSRF__', $=s=>document.querySelector(s), statusNames={working:'In corso',needs_input:'Serve il tuo input',done:'Completato',error:'Errore',idle:'Inattivo',unknown:'Da verificare',interrupted:'Interrotto'};let state={},tab='deck',page=0,selected=null,online=false,dragId=null;let order;try{order=JSON.parse(localStorage.getItem('agent-deck-order')||'[]');if(!Array.isArray(order))order=[]}catch{order=[]}
 function el(tag,text,cls){const n=document.createElement(tag);if(text!=null)n.textContent=String(text);if(cls)n.className=cls;return n}function age(t){if(!t)return'Non disponibile';const s=Math.max(0,Date.now()/1000-t);return s<60?'ora':s<3600?Math.floor(s/60)+' min fa':Math.floor(s/3600)+' ore fa'}function date(t){return typeof t==='number'?new Date(t*1000).toLocaleString('it-IT'):'Non disponibile'}
-function hash(s){let n=0;for(const c of s||'')n=(n*31+c.charCodeAt(0))>>>0;return n}function critter(canvas,item){const c=canvas.getContext('2d');c.clearRect(0,0,16,16);const palette=['#a8bbfa','#e7aa89','#b6cca4','#ccb0e0','#e2ca85'],color=palette[hash(item.repo||item.name)%palette.length];c.fillStyle=color;for(const [x,y,w,h] of [[4,5,8,6],[3,7,1,3],[12,7,1,3],[5,11,2,2],[9,11,2,2],[5,3,6,2]])c.fillRect(x,y,w,h);c.fillStyle='#20232a';c.fillRect(5,7,2,2);c.fillRect(9,7,2,2);c.fillRect(7,10,2,1);c.fillStyle=item.agent==='claude'?'#f19462':'#a8bbfa';c.fillRect(4,3,8,2);c.fillRect(6,1,4,2);if(item.status==='done'){c.fillStyle='#a8d5a0';c.fillRect(13,2,1,2);c.fillRect(14,1,1,2)}if(item.status==='needs_input'){c.fillStyle='#26150b';c.fillRect(13,1,1,3);c.fillRect(13,5,1,1)}}
+// BEGIN_AGENTDECK_SPRITES
+// Reused from brushknight/agents-deck e52251b backend/internal/web/static/app.js
+(function(){
+const BODY = 'M1 0h12v6h-12z';
+const LEGS_A = [2, 4, 9, 11];
+const LEGS_B = [3, 5, 8, 10];
+const critterLegs = (xs, cls = '') => xs.map((x) => `<rect class="b ${cls}" x="${x}" y="6" width="1" height="1.6"/>`).join('');
+// Codex onigiri: a rounded rice triangle wrapped in nori, on two little feet that
+// step in turn (legs B lifts the left foot).
+const botFeet = (xs, cls = '') => `<rect class="b ${cls}" x="3.5" y="${xs === LEGS_B ? 6.4 : 7}" width="2" height="1.4"/><rect class="b ${cls}" x="8.5" y="7" width="2" height="1.4"/>`;
+const BOT_BODY = 'M6 -3h2v1h1v1h1v1h1v1h1v2h1v2h1v1h-1v1h-12v-1h-1v-1h1v-2h1v-2h1v-1h1v-1h1v-1h1z';
+const BOT_NORI = '<rect class="c" x="4" y="5.4" width="6" height="1.6"/>';
+let legs = critterLegs;
+const eyesOpen = (y) => `<rect class="c" x="4" y="${y}" width="1" height="2"/><rect class="c" x="9" y="${y}" width="1" height="2"/>`;
+const eyesOpenAt = (y, h) => `<rect class="c" x="4" y="${y}" width="1" height="${h}"/><rect class="c" x="9" y="${y}" width="1" height="${h}"/>`;
+const eyesShut = '<rect class="c" x="3.5" y="3.2" width="2" height="0.55"/><rect class="c" x="8.5" y="3.2" width="2" height="0.55"/>';
+const DOTS = '<g class="dots"><rect class="b" x="14.6" y="-2.6" width="0.9" height="0.9"/><rect class="b" x="15.9" y="-2.6" width="0.9" height="0.9"/><rect class="b" x="17.2" y="-2.6" width="0.8" height="0.9"/></g>';
+const pixels = (rows, x0, w, cls, h = 0.9, y0 = -4) => `<g class="${cls}">` + rows.flatMap((row, r) => [...row].map((ch, c) =>
+  ch === '#' ? `<rect class="b" x="${x0 + c * w}" y="${y0 + r * h}" width="${w}" height="${h}"/>` : '')).join('') + '</g>';
+
+const MINI = (x, y, s) => `<g transform="translate(${x} ${y}) scale(${s})"><g class="bob"><path class="b" d="${BODY}"/>` +
+  '<rect class="b" x="0" y="2" width="1" height="2"/><rect class="b" x="13" y="2" width="1" height="2"/>' +
+  `<rect class="c" x="4" y="1.5" width="1" height="2"/><rect class="c" x="9" y="1.5" width="1" height="2"/></g>${critterLegs(LEGS_A, 'la')}${critterLegs(LEGS_B, 'lb')}</g>`;
+
+// Hats: bitmap rows placed at (x, top); a = the hat's colour, b = its shade,
+// c = highlight, d = near-black; extras are single cells (x, y, key). Every hat
+// has a still version and the frames it cycles through while its agent works,
+// for the critter and for the onigiri (narrower, sitting over its tip). The
+// bandana's knot and tails sit on the left. Mirrors critter.dart; generated
+// from the approved design, so edit both together.
+const HAT_ART = {
+  "hard hat": {
+  ms: 400,
+  critterStill: { x: 0, top: -4, rows: ["....aaaaa.....", "...acaaaaa....", "..aaaaaaaaa...", ".bbbbbbbbbbbb."], extras: [] },
+  critter: [
+    { x: 0, top: -4, rows: ["....aaaaa.....", "...acaaaaa....", "..aaaaccaaa...", ".bbbbbbbbbbbb."], extras: [] },
+    { x: 0, top: -4, rows: ["....aaaaa.....", "...acaaaaa....", "..aaaabbaaa...", ".bbbbbbbbbbbb."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -3, rows: [".....aaaa.....", "....acaaaa....", "...bbbbbbbb..."], extras: [] },
+  onigiri: [
+    { x: 0, top: -3, rows: [".....aaaa.....", "....acccaa....", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -3, rows: [".....aaaa.....", "....acbbaa....", "...bbbbbbbb..."], extras: [] },
+  ],
+  },
+  cap: {
+  ms: 300,
+  critterStill: { x: -3, top: -3, rows: ["........aaaaaa", ".......aaaaacaa", "bbbbbbbbbbbbbbb"], extras: [] },
+  critter: [
+    { x: -3, top: -3, rows: ["........aaaaaa", ".......aaaaacaa", "bbbbbbbbbbbbbbb"], extras: [] },
+    { x: -3, top: -3, rows: ["........aaaaaa", ".......aaaaacaa", "bbbbbbbbbbbbbbb"], extras: [] },
+    { x: -3, top: -3, rows: ["........aaaaaa", ".......aaaaacaa", "...bbbbbbbbbbbb"], extras: [[-3, 0, "b"], [-2, 0, "b"]] },
+    { x: -3, top: -3, rows: ["........aaaaaa", ".......aaaaacaa", "bbbbbbbbbbbbbbb"], extras: [] },
+  ],
+  onigiriStill: { x: -1, top: -3, rows: ["......aaaa", ".....aaacaa", "bbbbbbbbbbbb"], extras: [] },
+  onigiri: [
+    { x: -1, top: -3, rows: ["......aaaa", ".....aaacaa", "bbbbbbbbbbbb"], extras: [] },
+    { x: -1, top: -3, rows: ["......aaaa", ".....aaacaa", "bbbbbbbbbbbb"], extras: [] },
+    { x: -1, top: -3, rows: ["......aaaa", ".....aaacaa", "..bbbbbbbbbb"], extras: [[-1, 0, "b"]] },
+    { x: -1, top: -3, rows: ["......aaaa", ".....aaacaa", "bbbbbbbbbbbb"], extras: [] },
+  ],
+  },
+  beanie: {
+  ms: 350,
+  critterStill: { x: 0, top: -4, rows: [".....cc.......", "....aaaaaa....", "...aaaaaaaa...", "..babababab..."], extras: [] },
+  critter: [
+    { x: 0, top: -4, rows: [".....cc.......", "....aaaaaa....", "...aaaaaaaa...", "..babababab..."], extras: [] },
+    { x: 0, top: -3, rows: ["....aaaaaa....", "...aaaaaaaa...", "..babababab..."], extras: [[5, -5, "c"], [6, -5, "c"]] },
+  ],
+  onigiriStill: { x: 0, top: -4, rows: ["......cc......", ".....aaaa.....", "....aaaaaa....", "...babababa..."], extras: [] },
+  onigiri: [
+    { x: 0, top: -4, rows: ["......cc......", ".....aaaa.....", "....aaaaaa....", "...babababa..."], extras: [] },
+    { x: 0, top: -3, rows: [".....aaaa.....", "....aaaaaa....", "...babababa..."], extras: [[6, -5, "c"], [7, -5, "c"]] },
+  ],
+  },
+  helmet: {
+  ms: 280,
+  critterStill: { x: 0, top: -4, rows: ["....aaaaaa....", "...aaaaaaaa...", "..aaaacaaaaa..", "..bbbbbbbbbb.."], extras: [] },
+  critter: [
+    { x: 0, top: -4, rows: ["....aaaaaa....", "...aaaaaaaa...", "..acaaaaaaaa..", "..bbbbbbbbbb.."], extras: [] },
+    { x: 0, top: -4, rows: ["....aaaaaa....", "...aaaaaaaa...", "..aaaaacaaaa..", "..bbbbbbbbbb.."], extras: [] },
+    { x: 0, top: -4, rows: ["....aaaaaa....", "...aaaaaaaa...", "..aaaaaaaaca..", "..bbbbbbbbbb.."], extras: [] },
+    { x: 0, top: -4, rows: ["....aaaaaa....", "...aaaaaaaa...", "..aaaaaaaaaa..", "..bbbbbbbbbb.."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -3, rows: [".....aaaa.....", "....aacaaa....", "...bbbbbbbb..."], extras: [] },
+  onigiri: [
+    { x: 0, top: -3, rows: [".....aaaa.....", "....acaaaa....", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -3, rows: [".....aaaa.....", "....aaacaa....", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -3, rows: [".....aaaa.....", "....aaaaca....", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -3, rows: [".....aaaa.....", "....aaaaaa....", "...bbbbbbbb..."], extras: [] },
+  ],
+  },
+  wizard: {
+  ms: 300,
+  critterStill: { x: 0, top: -5, rows: ["........a.....", ".......aa.....", "......aaca....", ".....aaaaaa...", "..bbbbbbbbbb.."], extras: [] },
+  critter: [
+    { x: 0, top: -5, rows: ["........a.....", ".......aa.....", "......aaca....", ".....aaaaaa...", "..bbbbbbbbbb.."], extras: [] },
+    { x: 0, top: -5, rows: [".........a....", ".......aa.....", "......aaca....", ".....aaaaaa...", "..bbbbbbbbbb.."], extras: [[11, -6, "c"]] },
+    { x: 0, top: -5, rows: ["........a.....", ".......aa.....", "......aaca....", ".....aaaaaa...", "..bbbbbbbbbb.."], extras: [] },
+    { x: 0, top: -5, rows: [".......a......", ".......aa.....", "......aaca....", ".....aaaaaa...", "..bbbbbbbbbb.."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -5, rows: ["......aa......", "......aa......", ".....acaa.....", "....aaaaaa....", "...bbbbbbbb..."], extras: [] },
+  onigiri: [
+    { x: 0, top: -5, rows: ["......a.......", "......aa......", ".....acaa.....", "....aaaaaa....", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -5, rows: [".......a......", "......aa......", ".....acaa.....", "....aaaaaa....", "...bbbbbbbb..."], extras: [[9, -6, "c"]] },
+    { x: 0, top: -5, rows: ["......a.......", "......aa......", ".....acaa.....", "....aaaaaa....", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -5, rows: [".....a........", "......aa......", ".....acaa.....", "....aaaaaa....", "...bbbbbbbb..."], extras: [] },
+  ],
+  },
+  beret: {
+  ms: 300,
+  critterStill: { x: 0, top: -4, rows: ["......b.......", "...aaaaaaaa...", "..aaaaaaaaaaa.", "...bbbbbbbb..."], extras: [] },
+  critter: [
+    { x: 0, top: -4, rows: ["......b.......", "...aaaaaaaa...", "..aaaaaaaaaaa.", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -4, rows: [".......b......", "...aaaaaaaa...", "..aaaaaaaaaaa.", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -4, rows: ["......b.......", "...aaaaaaaa...", "..aaaaaaaaaaa.", "...bbbbbbbb..."], extras: [] },
+    { x: 0, top: -4, rows: [".....b........", "...aaaaaaaa...", "..aaaaaaaaaaa.", "...bbbbbbbb..."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -4, rows: ["......bb......", "....aaaaaa....", "..aaaaaaaaaa..", "....bbbbbb...."], extras: [] },
+  onigiri: [
+    { x: 0, top: -4, rows: ["......b.......", "....aaaaaa....", "..aaaaaaaaaa..", "....bbbbbb...."], extras: [] },
+    { x: 0, top: -4, rows: [".......b......", "....aaaaaa....", "..aaaaaaaaaa..", "....bbbbbb...."], extras: [] },
+    { x: 0, top: -4, rows: ["......b.......", "....aaaaaa....", "..aaaaaaaaaa..", "....bbbbbb...."], extras: [] },
+    { x: 0, top: -4, rows: [".....b........", "....aaaaaa....", "..aaaaaaaaaa..", "....bbbbbb...."], extras: [] },
+  ],
+  },
+  chef: {
+  ms: 450,
+  critterStill: { x: 0, top: -4, rows: ["...cc.cc.cc...", "..cccccccccc..", "...cccccccc...", "...aaaaaaaa..."], extras: [] },
+  critter: [
+    { x: 0, top: -4, rows: ["...cc.cc.cc...", "..cccccccccc..", "...cccccccc...", "...aaaaaaaa..."], extras: [] },
+    { x: 0, top: -5, rows: ["....cccccc....", "..cccccccccc..", "..cccccccccc..", "...cccccccc...", "...aaaaaaaa..."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -4, rows: ["....cccccc....", "....cccccc....", ".....cccc.....", "....aaaaaa...."], extras: [] },
+  onigiri: [
+    { x: 0, top: -4, rows: ["....cccccc....", "....cccccc....", ".....cccc.....", "....aaaaaa...."], extras: [] },
+    { x: 0, top: -5, rows: [".....cccc.....", "....cccccc....", "....cccccc....", ".....cccc.....", "....aaaaaa...."], extras: [] },
+  ],
+  },
+  crown: {
+  ms: 280,
+  critterStill: { x: 0, top: -4, rows: ["...a..aa..a...", "...aa.aa.aa...", "...aaaaaaaa...", "...acaacaaca.."], extras: [] },
+  critter: [
+    { x: 0, top: -4, rows: ["...c..aa..a...", "...aa.aa.aa...", "...aaaaaaaa...", "...acaacaaca.."], extras: [] },
+    { x: 0, top: -4, rows: ["...a..ca..a...", "...aa.aa.aa...", "...aaaaaaaa...", "...acaacaaca.."], extras: [] },
+    { x: 0, top: -4, rows: ["...a..ac..a...", "...aa.aa.aa...", "...aaaaaaaa...", "...acaacaaca.."], extras: [] },
+    { x: 0, top: -4, rows: ["...a..aa..a...", "...aa.aa.aa...", "...aaaaaaaa...", "...acaacaaca.."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -3, rows: ["....a.aa.a....", "....aaaaaa....", "....acaaca...."], extras: [] },
+  onigiri: [
+    { x: 0, top: -3, rows: ["....c.aa.a....", "....aaaaaa....", "....acaaca...."], extras: [] },
+    { x: 0, top: -3, rows: ["....a.ca.a....", "....aaaaaa....", "....acaaca...."], extras: [] },
+    { x: 0, top: -3, rows: ["....a.ac.a....", "....aaaaaa....", "....acaaca...."], extras: [] },
+    { x: 0, top: -3, rows: ["....a.aa.a....", "....aaaaaa....", "....acaaca...."], extras: [] },
+  ],
+  },
+  headphones: {
+  ms: 320,
+  critterStill: { x: 0, top: -3, rows: ["....aaaaaa....", "...a......a...", "..a........a.."], extras: [] },
+  critter: [
+    { x: 0, top: -3, rows: ["....aaaaaa....", "...a......a...", "..a........a.."], extras: [[-2, -1, "c"], [-1, -2, "c"]] },
+    { x: 0, top: -3, rows: ["....aaaaaa....", "...a......a...", "..a........a.."], extras: [[-2, -2, "c"], [-1, -3, "c"]] },
+    { x: 0, top: -3, rows: ["....aaaaaa....", "...a......a...", "..a........a.."], extras: [[-3, -3, "c"], [-2, -4, "c"], [-1, -1, "c"]] },
+    { x: 0, top: -3, rows: ["....aaaaaa....", "...a......a...", "..a........a.."], extras: [[-2, -2, "c"]] },
+  ],
+  onigiriStill: { x: 0, top: -3, rows: [".....aaaa.....", "....a....a....", "...a......a..."], extras: [] },
+  onigiri: [
+    { x: 0, top: -3, rows: [".....aaaa.....", "....a....a....", "...a......a..."], extras: [[-1, -1, "c"], [0, -2, "c"]] },
+    { x: 0, top: -3, rows: [".....aaaa.....", "....a....a....", "...a......a..."], extras: [[-1, -2, "c"], [0, -3, "c"]] },
+    { x: 0, top: -3, rows: [".....aaaa.....", "....a....a....", "...a......a..."], extras: [[-2, -3, "c"], [-1, -4, "c"], [0, -1, "c"]] },
+    { x: 0, top: -3, rows: [".....aaaa.....", "....a....a....", "...a......a..."], extras: [[-1, -2, "c"]] },
+  ],
+  },
+  propeller: {
+  ms: 120,
+  critterStill: { x: 0, top: -4, rows: ["..cccc.aaaa...", ".......d......", "....ababab....", "...aaaaaaaa..."], extras: [] },
+  critter: [
+    { x: 0, top: -4, rows: ["..cccc.aaaa...", ".......d......", "....ababab....", "...aaaaaaaa..."], extras: [] },
+    { x: 0, top: -4, rows: ["....cc.aa.....", ".......d......", "....ababab....", "...aaaaaaaa..."], extras: [] },
+    { x: 0, top: -4, rows: ["..aaaa.cccc...", ".......d......", "....ababab....", "...aaaaaaaa..."], extras: [] },
+    { x: 0, top: -4, rows: ["....aa.cc.....", ".......d......", "....ababab....", "...aaaaaaaa..."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -4, rows: ["...ccc..aaa...", "......dd......", ".....abab.....", "....aaaaaa...."], extras: [] },
+  onigiri: [
+    { x: 0, top: -4, rows: ["...ccc..aaa...", "......dd......", ".....abab.....", "....aaaaaa...."], extras: [] },
+    { x: 0, top: -4, rows: [".....cc.aa....", "......dd......", ".....abab.....", "....aaaaaa...."], extras: [] },
+    { x: 0, top: -4, rows: ["...aaa..ccc...", "......dd......", ".....abab.....", "....aaaaaa...."], extras: [] },
+    { x: 0, top: -4, rows: [".....aa.cc....", "......dd......", ".....abab.....", "....aaaaaa...."], extras: [] },
+  ],
+  },
+  "top hat": {
+  ms: 450,
+  critterStill: { x: 0, top: -5, rows: ["...aaaaaaaa...", "...aaaaaaaa...", "...aaaaaaaa...", "...bbbbbbbb...", ".aaaaaaaaaaaa."], extras: [] },
+  critter: [
+    { x: 0, top: -5, rows: ["...aaaaaaaa...", "...aaaaaaaa...", "...aaaaaaaa...", "...bbbbbbbb...", ".aaaaaaaaaaaa."], extras: [] },
+    { x: 0, top: -5, rows: ["...aaaaaaaa...", "...aaaaaaaa...", "...aaaaaaaa...", "...bbbbbbbb...", ".aaaaaaaaaaaa."], extras: [] },
+    { x: 0, top: -6, rows: ["...aaaaaaaa...", "...aaaaaaaa...", "...aaaaaaaa...", "...bbbbbbbb...", ".aaaaaaaaaaaa."], extras: [] },
+    { x: 0, top: -5, rows: ["...aaaaaaaa...", "...aaaaaaaa...", "...aaaaaaaa...", "...bbbbbbbb...", ".aaaaaaaaaaaa."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -4, rows: [".....aaaa.....", ".....aaaa.....", ".....bbbb.....", "...aaaaaaaa..."], extras: [] },
+  onigiri: [
+    { x: 0, top: -4, rows: [".....aaaa.....", ".....aaaa.....", ".....bbbb.....", "...aaaaaaaa..."], extras: [] },
+    { x: 0, top: -4, rows: [".....aaaa.....", ".....aaaa.....", ".....bbbb.....", "...aaaaaaaa..."], extras: [] },
+    { x: 0, top: -5, rows: [".....aaaa.....", ".....aaaa.....", ".....bbbb.....", "...aaaaaaaa..."], extras: [] },
+    { x: 0, top: -4, rows: [".....aaaa.....", ".....aaaa.....", ".....bbbb.....", "...aaaaaaaa..."], extras: [] },
+  ],
+  },
+  cowboy: {
+  ms: 350,
+  critterStill: { x: 0, top: -4, rows: [".....aaaa.....", "....aabbaa....", "b...aaaaaa...b", "bbbbbbbbbbbbbb"], extras: [] },
+  critter: [
+    { x: 0, top: -4, rows: [".....aaaa.....", "....aabbaa....", "b...aaaaaa...b", "bbbbbbbbbbbbbb"], extras: [] },
+    { x: 0, top: -4, rows: [".....aaaa.....", "b...aabbaa....", "b...aaaaaa....", ".bbbbbbbbbbbbb"], extras: [] },
+    { x: 0, top: -4, rows: [".....aaaa.....", "....aabbaa....", "b...aaaaaa...b", "bbbbbbbbbbbbbb"], extras: [] },
+    { x: 0, top: -4, rows: [".....aaaa.....", "....aabbaa...b", "....aaaaaa...b", "bbbbbbbbbbbbb."], extras: [] },
+  ],
+  onigiriStill: { x: 0, top: -4, rows: ["......aa......", ".....abba.....", ".b..aaaaaa..b.", ".bbbbbbbbbbbb."], extras: [] },
+  onigiri: [
+    { x: 0, top: -4, rows: ["......aa......", ".....abba.....", ".b..aaaaaa..b.", ".bbbbbbbbbbbb."], extras: [] },
+    { x: 0, top: -4, rows: ["......aa......", ".b...abba.....", ".b..aaaaaa....", "..bbbbbbbbbbb."], extras: [] },
+    { x: 0, top: -4, rows: ["......aa......", ".....abba.....", ".b..aaaaaa..b.", ".bbbbbbbbbbbb."], extras: [] },
+    { x: 0, top: -4, rows: ["......aa......", ".....abba...b.", "....aaaaaa..b.", ".bbbbbbbbbbb.."], extras: [] },
+  ],
+  },
+  bandana: {
+  ms: 200,
+  critterStill: { x: 0, top: -1, rows: ["..aaaaaaaaaa..", "..acacacacac.."], extras: [[1, -1, "b"], [0, -2, "b"], [0, 0, "b"], [-1, 0, "b"]] },
+  critter: [
+    { x: 0, top: -1, rows: ["..aaaaaaaaaa..", "..acacacacac.."], extras: [[1, -1, "b"], [0, -2, "b"], [0, 0, "b"], [-1, 0, "b"]] },
+    { x: 0, top: -1, rows: ["..aaaaaaaaaa..", "..acacacacac.."], extras: [[1, -1, "b"], [0, -1, "b"], [-1, -2, "b"], [0, 0, "b"], [-1, 1, "b"]] },
+    { x: 0, top: -1, rows: ["..aaaaaaaaaa..", "..acacacacac.."], extras: [[1, -1, "b"], [0, -2, "b"], [-1, -2, "b"], [0, 0, "b"], [-1, 0, "b"]] },
+  ],
+  onigiriStill: { x: 0, top: 0, rows: ["...aaaaaaaa...", "..acacacacac.."], extras: [[2, 0, "b"], [1, -1, "b"], [1, 1, "b"], [0, 1, "b"]] },
+  onigiri: [
+    { x: 0, top: 0, rows: ["...aaaaaaaa...", "..acacacacac.."], extras: [[2, 0, "b"], [1, -1, "b"], [1, 1, "b"], [0, 1, "b"]] },
+    { x: 0, top: 0, rows: ["...aaaaaaaa...", "..acacacacac.."], extras: [[2, 0, "b"], [1, 0, "b"], [0, -1, "b"], [1, 1, "b"], [0, 2, "b"]] },
+    { x: 0, top: 0, rows: ["...aaaaaaaa...", "..acacacacac.."], extras: [[2, 0, "b"], [1, -1, "b"], [0, -1, "b"], [1, 1, "b"], [0, 1, "b"]] },
+  ],
+  },
+};
+const HAT_COLORS = {
+  teal: ['#4FB3A6', '#2F7F75'], blue: ['#6F8FD8', '#4A63A3'], yellow: ['#E8B94A', '#B08429'], green: ['#6DBE6A', '#468A44'],
+  purple: ['#A68BD8', '#7660A6'], pink: ['#E58BB0', '#B05E80'], sky: ['#5EC4D6', '#3A8E9C'], ink: ['#E8E4DC', '#A8A39A'],
+};
+const HAT_SHAPES = Object.keys(HAT_ART);
+const HAT_COLOR_NAMES = Object.keys(HAT_COLORS);
+
+// One hat frame as pixel rects.
+function hatFrame(f, fill) {
+  let out = '';
+  f.rows.forEach((row, r) => [...row].forEach((ch, c) => {
+    if (fill[ch]) out += `<rect x="${f.x + c}" y="${f.top + r}" width="1" height="1" fill="${fill[ch]}"/>`;
+  }));
+  for (const [x, y, ch] of f.extras) out += `<rect x="${x}" y="${y}" width="1" height="1" fill="${fill[ch]}"/>`;
+  return out;
+}
+
+// The hat: still, or (while working) its frames stacked, each shown in its
+// time slot by a CSS frame class (app.css .hf-<frames>-<ms>-<slot>).
+function hatSVG(hat, oni, faded, animate = false) {
+  const art = HAT_ART[hat?.shape];
+  if (!art) return '';
+  const [main, shade] = HAT_COLORS[hat.color] || HAT_COLORS.ink;
+  const fill = { a: main, b: shade, c: '#F7F4EC', d: '#0A0A0A' };
+  const frames = oni ? art.onigiri : art.critter;
+  let out = animate
+    ? frames.map((f, i) => `<g class="hf-${frames.length}-${art.ms}-${i}${i ? ' hfo' : ''}">${hatFrame(f, fill)}</g>`).join('')
+    : hatFrame(oni ? art.onigiriStill : art.critterStill, fill);
+  if (hat.shape === 'headphones') {
+    out += oni ? `<rect x="2" y="-0.5" width="1" height="2" fill="${shade}"/><rect x="11" y="-0.5" width="1" height="2" fill="${shade}"/>`
+      : `<rect x="0" y="0" width="1" height="2" fill="${shade}"/><rect x="13" y="0" width="1" height="2" fill="${shade}"/>`;
+  }
+  return `<g class="hat"${faded ? ' opacity="0.45"' : ''}>${out}</g>`;
+}
+
+// Poses of a working agent: its hat animates; every other pose keeps it still.
+const WORKING_POSES = new Set(['run', 'think', 'read', 'write', 'bash', 'web', 'plan', 'delegate', 'compact']);
+
+function spriteSVG(pose, species = 'claude', hat = null, opts = {}) {
+  const bot = species === 'codex';
+  const working = WORKING_POSES.has(pose);
+  if (pose === 'write') pose = 'bash'; // writing looks like bash for now
+  legs = bot ? botFeet : critterLegs;
+  let body = bot ? `<path class="b" d="${BOT_BODY}"/>${pose === 'exit' ? '' : BOT_NORI}` : `<path class="b" d="${BODY}"/>`, eyes, feet = legs(LEGS_A), bubble = '', grp = '';
+  // Arms: 1×2 beside the body, at their top row (2 = hanging down).
+  const arm = (l, r, cls = '') => bot
+    ? `<rect class="b ${cls}" x="1" y="${l - 1}" width="1" height="2"/><rect class="b ${cls}" x="12" y="${r - 1}" width="1" height="2"/>`
+    : `<rect class="b ${cls}" x="0" y="${l}" width="1" height="2"/><rect class="b ${cls}" x="13" y="${r}" width="1" height="2"/>`;
+  let arms = arm(2, 2), held = '';
+  switch (pose) {
+    case 'think':
+      eyes = `<g class="glance">${eyesOpenAt(1, 1.5)}</g>`; arms = arm(2, 1);
+      bubble = '<rect class="b t1" x="14.3" y="-0.9" width="0.6" height="0.6"/><rect class="b t2" x="15.3" y="-2.1" width="0.9" height="0.9"/><rect class="b t3" x="16.5" y="-3.8" width="1.3" height="1.3"/>';
+      break;
+    case 'read':
+      eyes = `<g class="scan">${eyesOpen(2)}</g>`;
+      bubble = pixels(['.##..', '#..#.', '#..#.', '.##..', '....#'], 14.6, 0.75, '', 0.75);
+      break;
+    case 'bash':
+      eyes = eyesOpen(2); feet = legs(LEGS_A, 'la fast') + legs(LEGS_B, 'lb fast'); grp = 'bob fast';
+      bubble = pixels(['#..', '.#.', '#..'], 14.5, 0.7, '', 0.8, -3.7) + '<rect class="b cursor" x="16.5" y="-1.7" width="1.2" height="0.5"/>';
+      break;
+    case 'web':
+      eyes = '<rect class="c" x="4.4" y="1" width="1" height="2"/><rect class="c" x="9.4" y="1" width="1" height="2"/>';
+      bubble = pixels(['.###.', '#.#.#', '#####', '#.#.#', '.###.'], 14.4, 0.72, 'la slow', 0.72, -4.2) +
+        pixels(['.###.', '##.##', '#####', '##.##', '.###.'], 14.4, 0.72, 'lb slow', 0.72, -4.2);
+      break;
+    case 'plan':
+      eyes = eyesOpen(2);
+      bubble = [0, 1, 2].map((i) => { const y = -3.9 + i * 1.25;
+        return `<rect class="b" x="14.4" y="${y}" width="0.9" height="0.9"/><rect class="c tick${i}" x="14.6" y="${y + 0.2}" width="0.5" height="0.5"/><rect class="b" x="15.6" y="${y + 0.25}" width="2.2" height="0.45"/>`; }).join('');
+      break;
+    case 'delegate':
+      eyes = eyesOpen(2); feet = legs(LEGS_A, 'la') + legs(LEGS_B, 'lb'); grp = 'bob'; arms = arm(2, 1, 'la') + arm(1, 2, 'lb');
+      bubble = MINI(14.4, 3.2, 0.26);
+      break;
+    case 'hungry':
+      // Eyes up at a bobbing cookie; the mouth chomps open and shut.
+      eyes = '<rect class="c" x="4.6" y="1" width="1" height="2"/><rect class="c" x="9.6" y="1" width="1" height="2"/>' +
+        (bot ? '<rect class="c la slow" x="6.2" y="3.4" width="1.6" height="1.4"/><rect class="c lb slow" x="6.2" y="4" width="1.6" height="0.5"/>'
+          : '<rect class="c la slow" x="6.2" y="4.2" width="2.2" height="1.6"/><rect class="c lb slow" x="6.2" y="4.8" width="2.2" height="0.5"/>');
+      bubble = `<g class="bobc">${pixels(['.###.', '##.##', '#####', '#.###', '.###.'], 14.3, 0.75, '', 0.75, -4.2)}</g>`;
+      break;
+    case 'celebrate': {
+      eyes = [4.5, 9.5].map((x) => `<path class="cx" stroke-width="0.55" d="M${x - 1} 3.3 L${x} 2.2 L${x + 1} 3.3"/>`).join('');
+      grp = 'hop'; feet = `<g class="hop">${legs(LEGS_A)}</g>`; arms = arm(0, 0);
+      // The finish flag in the raised hand: a pole and a 3×2 checker that waves
+      // by swapping its squares.
+      const checker = (phase, cls) => `<g class="${cls}">` + [0, 1, 2].flatMap((cx) => [0, 1].map((cy) =>
+        `<rect class="${(cx + cy + phase) % 2 ? 'c' : 'fl'}" x="${15 + cx}" y="${-4 + cy}" width="1" height="1"/>`)).join('') + '</g>';
+      held = `<rect class="fl" x="14" y="-4" width="1" height="6"/>${checker(0, 'la')}${checker(1, 'lb')}`;
+      const plus = (x, y, i) => `<g class="spark s${i}"><rect class="b" x="${x - 0.5}" y="${y}" width="1.5" height="0.5"/><rect class="b" x="${x}" y="${y - 0.5}" width="0.5" height="1.5"/></g>`;
+      bubble = plus(16.4, -6.2, 0) + plus(18.2, -4.4, 1);
+      break;
+    }
+    case 'run':
+      eyes = eyesOpen(2); feet = legs(LEGS_A, 'la') + legs(LEGS_B, 'lb'); bubble = DOTS; grp = 'bob'; arms = arm(2, 1, 'la') + arm(1, 2, 'lb'); break;
+    case 'wait':
+      eyes = eyesOpen(1); bubble = pixels(['###', '..#', '.#.', '...', '.#.'], 14.5, 1.1, 'blink'); break;
+    case 'err':
+      eyes = [3.8, 8.8].map((x) => `<path class="cx" stroke-width="0.55" d="M${x - 0.4} 1.8 l1.8 2.2 M${x + 1.4} 1.8 l-1.8 2.2"/>`).join('');
+      arms = arm(0, 0); // both up in alarm
+      bubble = pixels(['#', '#', '#', '.', '#'], 15.6, 1.2, 'bang'); break;
+    case 'start':
+      eyes = eyesOpen(2); bubble = DOTS; break;
+    case 'compact': {
+      // Compacting the conversation: squeezed flat and springing back, eyes
+      // strained "> <", while a stack of pages presses into one.
+      eyes = '<path class="cx" stroke-width="0.55" d="M3.6 1.9 L4.8 2.7 L3.6 3.5 M10.4 1.9 L9.2 2.7 L10.4 3.5"/>';
+      grp = 'squash';
+      const bar = (y, cls) => `<rect class="b ${cls}" x="14.6" y="${y}" width="3.2" height="0.6"/>`;
+      bubble = bar(-3.8, 'press2') + bar(-2.7, 'press1') + bar(-1.6, '');
+      break;
+    }
+    case 'exit':
+      body += bot ? '<path class="c" d="M6 -1h2v1h1v1h1v2h1v2h1v1h-10v-1h1v-2h1v-2h1v-1h1z"/>' : '<path class="c" d="M2 1h10v4h-10z"/>';
+      arms = ''; if (!bot) feet = '';
+      eyes = '<rect class="b" x="4" y="3" width="1" height="1"/><rect class="b" x="9" y="3" width="1" height="1"/>'; break;
+    default: // idle: asleep
+      eyes = eyesShut;
+      bubble = '<text class="zt zz" x="14.8" y="-0.6" font-size="3.2">z</text><text class="zt zz" x="16.6" y="-2.4" font-size="2.3">z</text>';
+  }
+  // The block's face sits half a row higher than the onigiri's.
+  const face = bot ? eyes : `<g transform="translate(0 -0.5)">${eyes}</g>`;
+  const hatG = hat ? hatSVG(hat, bot, pose === 'exit', working) : '';
+  if (opts.bubble === false) bubble = '';
+  return `<svg viewBox="0 -4 18 13" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><g class="${grp}">${body}${arms}${face}${hatG}${held}</g>${feet}${bubble}</svg>`;
+}
+
+
+const hash=s=>{let h=2166136261;for(const c of s||'')h=Math.imul(h^c.charCodeAt(0),16777619);return h>>>0};
+window.deckSpriteMarkup=item=>{const provider=item.agent||item.provider;const species=provider==='codex'?'codex':'claude';const pose=({working:'bash',running:'bash',needs_input:'wait',error:'err',failed:'err',done:'celebrate',succeeded:'celebrate',interrupted:'exit'})[item.status]||'idle';const n=hash(item.repo||item.repository||item.name||'');return spriteSVG(pose,species,{shape:Object.keys(HAT_ART)[n%Object.keys(HAT_ART).length],color:HAT_COLOR_NAMES[n%HAT_COLOR_NAMES.length]});};
+})();
+function critter(target,item){if(!target)return;if(target.tagName==='CANVAS'){const span=document.createElement('span');for(const a of target.attributes)span.setAttribute(a.name,a.value);target.replaceWith(span);target=span;}target.classList.add('deck-sprite');target.innerHTML=window.deckSpriteMarkup(item);}
+// END_AGENTDECK_SPRITES
+
 function items(){return [...(state.agents||[]),...(state.jobs||[])]}function ordered(list){return list.sort((a,b)=>{const x=order.indexOf(a.id),y=order.indexOf(b.id);if(x>=0||y>=0)return(x<0?999:x)-(y<0?999:y);return(a.status!=='needs_input')-(b.status!=='needs_input')||b.observed_at-a.observed_at})}function filtered(list){const q=$('#search').value.toLowerCase(),f=$('#filter').value;return list.filter(x=>(!f||x.status===f)&&(!q||[x.name,x.repo,x.branch,x.agent,x.activity].join(' ').toLowerCase().includes(q)))}
 function stats(){const n=items();$('#stats').replaceChildren(...[['Attivi',n.filter(x=>x.status==='working').length],['Input richiesti',n.filter(x=>x.status==='needs_input').length],['Build / rilasci',(state.jobs||[]).length],['Repository',(state.repositories||[]).length]].map(([label,count])=>{const d=el('div',null,'stat');d.append(el('strong',count),el('span',label));return d}))}
 function tile(item){const b=el('button',null,'tile '+item.status);b.draggable=true;b.setAttribute('aria-label',item.name+': '+(statusNames[item.status]||item.status));const top=el('div',null,'tile-top');top.append(el('span',item.agent||item.kind,'eyebrow'),el('span',statusNames[item.status]||item.status,'tag'));const canvas=el('canvas');canvas.width=canvas.height=16;critter(canvas,item);b.append(top,canvas,el('div',item.name,'name'),el('div',item.activity,'activity'),el('div',[item.repo,item.branch].filter(Boolean).join(' / '),'repo muted'));const bar=el('div',null,'context'),fill=el('i');fill.style.width=(Number.isFinite(item.context_percent)?item.context_percent:0)+'%';bar.title=Number.isFinite(item.context_percent)?'Contesto '+item.context_percent+'%':'Contesto non disponibile';bar.append(fill);b.append(bar);b.onclick=()=>openDetail(item.id);b.ondragstart=()=>dragId=item.id;b.ondragover=e=>e.preventDefault();b.ondrop=e=>{e.preventDefault();if(!dragId||dragId===item.id)return;let ids=ordered(items()).map(x=>x.id),a=ids.indexOf(dragId),z=ids.indexOf(item.id);if(a>=0&&z>=0){[ids[a],ids[z]]=[ids[z],ids[a]];order=ids;try{localStorage.setItem('agent-deck-order',JSON.stringify(order))}catch{}render()}};return b}
@@ -23,7 +490,7 @@ else if(tab==='repos'){const list=(state.repositories||[]).filter(x=>(x.name+' '
 else if(tab==='usage'){content.append(el('h2','Quote effettivamente osservate'),el('p',state.session_allowance?.reason||'Nessun numero di sessioni residuo disponibile.','muted'));let found=false;const account=state.account_quota;if(account?.windows?.length){found=true;content.append(el('h2','Codex ? account CLI corrente'),el('p','Rilevato: '+date(account.observed_at),'muted'));for(const q of account.windows){const d=el('div',null,'quota');d.append(el('strong',q.remaining_percent+'% residuo ? '+q.name),el('p','Reset: '+date(q.resets_at)));content.append(d)}}if(state.quota_error)content.append(el('p',state.quota_error,'banner'));for(const agent of state.agents||[]){if(!(agent.quota||[]).length)continue;found=true;const d=el('div',null,'quota');d.append(el('h2',agent.agent+' · '+agent.name),el('p','Ultima rilevazione: '+date(agent.quota_observed_at),'muted'));for(const q of agent.quota)d.append(el('strong',q.remaining_percent+'% residuo · '+q.name),el('p','Reset: '+date(q.resets_at)));content.append(d)}if(!found)content.append(el('div','Quote non esposte nelle sessioni locali. Nessun valore stimato.','empty'))}
 else{content.append(el('h2','Processi di compilazione rilevati'),el('p','Nome e PID reali. Associazione al repository ed esito sono certi solo per i processi avviati con il monitor.','muted'),table(['Processo','PID','Parent PID'],(state.processes||[]).map(p=>[p.Name,p.ProcessId,p.ParentProcessId])),el('h2','Sorgenti e collegamenti'));for(const [name,value]of Object.entries(state.sources||{}))content.append(el('p',name+': '+value));content.append(el('p','Device: '+(state.delivery||'Non configurato')))}
 $('#sources').textContent='Dati locali · aggiornamento '+age(state.generated_at)+' · Codex e Claude restano nelle rispettive app. Questo monitor non approva richieste, non esegue comandi dal browser e non interrompe processi esterni.'}
-function openDetail(id){selected=id;const item=items().find(x=>x.id===id);if(!item)return;$('#detail-title').textContent=item.name;$('#detail-status').textContent=(statusNames[item.status]||item.status)+' · '+age(item.observed_at);critter($('#portrait'),item);const dl=$('#fields');dl.replaceChildren();for(const [label,value]of [['Agente',item.agent],['Attività',item.activity],['Repository',item.repo],['Percorso',item.cwd],['Branch',item.branch],['Commit',item.commit],['Modello',item.model],['Contesto',Number.isFinite(item.context_percent)?item.context_percent+'%':'Non disponibile'],['Token',item.tokens??'Non disponibili'],['Sorgente',item.source],['Codice uscita',item.exit_code??'Non disponibile'],['Sessione',item.session_id||item.id]])dl.append(el('dt',label),el('dd',value||'—'));const extra=$('#detail-extra');extra.replaceChildren();for(const q of item.quota||[])extra.append(el('h2',q.remaining_percent+'% residuo ? '+q.name),el('p','Reset: '+date(q.resets_at),'muted'));if(item.notes)extra.append(el('h2','Per continuare'),el('div',item.notes,'quote'));if(item.resume){extra.append(el('h2','Riprendi dal terminale'),el('div',item.resume,'quote'));const copy=el('button','Copia comando');copy.onclick=async()=>{try{await navigator.clipboard.writeText(item.resume);copy.textContent='Copiato'}catch{copy.textContent='Seleziona il comando sopra'}};extra.append(copy)}if(item.log_id)extra.append(el('p','Log locale: .agent-deck / '+item.log_id+'.log','muted'));if(item.status==='needs_input')extra.append(el('p','Apri la sessione originale per rispondere. Una richiesta osservata non autorizza un’approvazione automatica.','banner'));if(!$('#detail').open)$('#detail').showModal()}
+function openDetail(id){selected=id;const item=items().find(x=>x.id===id);if(!item)return;$('#detail-title').textContent=item.name;$('#detail-status').textContent=(statusNames[item.status]||item.status)+' · '+age(item.observed_at);critter($('#portrait'),item);const dl=$('#fields');dl.replaceChildren();for(const [label,value]of [['Agente',item.agent],['Attività',item.activity],['Repository',item.repo],['Percorso',item.cwd],['Branch',item.branch],['Commit',item.commit],['Modello',item.model],['Contesto',Number.isFinite(item.context_percent)?item.context_percent+'%':'Non disponibile'],['Token totali',item.tokens??'Non disponibili'],['Input (cache inclusa)',item.token_usage?.input_tokens??'Non disponibile'],['Output',item.token_usage?.output_tokens??'Non disponibile'],['Cache (parte input)',item.token_usage?.cached_input_tokens??'Non disponibile'],['Contesto usato / finestra',item.context_used!=null?item.context_used+' / '+item.context_window:'Non disponibile'],['Spesa sessione',Number.isFinite(item.cost_usd)?item.cost_usd+' USD ('+item.cost_kind+')':'Non disponibile dalla sorgente'],['Contatori aggiornati',date(item.usage_observed_at)],['Sorgente',item.source],['Codice uscita',item.exit_code??'Non disponibile'],['Sessione',item.session_id||item.id]])dl.append(el('dt',label),el('dd',value||'—'));const extra=$('#detail-extra');extra.replaceChildren();for(const q of item.quota||[])extra.append(el('h2',q.remaining_percent+'% residuo ? '+q.name),el('p','Reset: '+date(q.resets_at),'muted'));if(item.notes)extra.append(el('h2','Per continuare'),el('div',item.notes,'quote'));if(item.resume){extra.append(el('h2','Riprendi dal terminale'),el('div',item.resume,'quote'));const copy=el('button','Copia comando');copy.onclick=async()=>{try{await navigator.clipboard.writeText(item.resume);copy.textContent='Copiato'}catch{copy.textContent='Seleziona il comando sopra'}};extra.append(copy)}if(item.log_id)extra.append(el('p','Log locale: .agent-deck / '+item.log_id+'.log','muted'));if(item.status==='needs_input')extra.append(el('p','Apri la sessione originale per rispondere. Una richiesta osservata non autorizza un’approvazione automatica.','banner'));if(!$('#detail').open)$('#detail').showModal()}
 async function refresh(){if(document.hidden)return;try{const r=await fetch('/api/state',{headers:{'X-Deck-Key':key},signal:AbortSignal.timeout(5000)});if(!r.ok)throw Error('HTTP');state=await r.json();online=true;$('#connection').textContent='● MONITOR LOCALE';const stale=!state.generated_at||Date.now()/1000-state.generated_at>25;$('#warning').classList.toggle('hide',!stale&&!state.error);$('#warning').textContent=state.error||'Dati non aggiornati: non confermano attività in corso.';render();if($('#detail').open&&selected)openDetail(selected)}catch{online=false;$('#connection').textContent='○ NON COLLEGATO';$('#warning').classList.remove('hide');$('#warning').textContent='Monitor non raggiungibile. I dati visualizzati sono gli ultimi ricevuti.'}}
 for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>{tab=b.dataset.tab;page=0;for(const t of document.querySelectorAll('[data-tab]'))t.classList.toggle('on',t===b);render()};$('#search').oninput=()=>{page=0;render()};$('#filter').onchange=()=>{page=0;render()};$('#refresh').onclick=refresh;$('#pair-device').onclick=()=>$('#pair-dialog').showModal();$('#pair-cancel').onclick=()=>$('#pair-dialog').close();$('#pair-form').onsubmit=async e=>{e.preventDefault();$('#pair-result').textContent='Associazione?';try{const r=await fetch('/api/device/pair',{method:'POST',headers:{'X-Deck-Key':key,'Content-Type':'application/json'},body:JSON.stringify({url:$('#device-url').value,code:$('#device-code').value})});if(!r.ok)throw Error();$('#pair-result').textContent='Dispositivo associato';$('#device-code').value='';setTimeout(()=>$('#pair-dialog').close(),900)}catch{$('#pair-result').textContent='Verifica IP e codice visualizzato sul dispositivo.'}};$('#close-detail').onclick=()=>$('#detail').close();document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});document.addEventListener('keydown',e=>{if(e.target.matches('input,select')||$('#detail').open)return;if(e.key==='ArrowRight'){page++;render()}if(e.key==='ArrowLeft'){page=Math.max(0,page-1);render()}});refresh();setInterval(refresh,5000);
 </script></html>

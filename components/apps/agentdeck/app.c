@@ -10,6 +10,7 @@
 #include "freertos/semphr.h"
 #include "model.h"
 #include "critter.h"
+#include "panel.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -24,6 +25,7 @@ static char *canonical;
 static int64_t received;
 static bool active;
 static lv_obj_t *root, *header;
+static lv_obj_t *native_panel;
 static lv_timer_t *timer;
 static lv_obj_t *sprites[5];
 static int sprite_count;
@@ -41,6 +43,7 @@ static bool back(void);
 static void gesture(lv_event_t *event)
 {
     (void)event;
+    if(native_panel)return; /* Upstream renderer owns its touch gestures. */
     lv_indev_t *input=lv_indev_active();if(!input)return;
     lv_dir_t direction=lv_indev_get_gesture_dir(input);
     if(direction!=LV_DIR_LEFT&&direction!=LV_DIR_RIGHT)return;
@@ -208,8 +211,9 @@ static void caption(lv_timer_t *unused)
 {
     (void)unused;
     for(int i=0;i<sprite_count;i++)lv_obj_invalidate(sprites[i]);
-    if (!header) return;
     xSemaphoreTake(lock,portMAX_DELAY);int64_t at=received;xSemaphoreGive(lock);
+    if(native_panel)agentdeck_panel_seen(native_panel,at);
+    if (!header) return;
     int age=at?(int)((esp_timer_get_time()-at)/1000000):-1;
     char text[100];
     if(age<0) snprintf(text,sizeof(text),"In attesa del monitor PC");
@@ -254,16 +258,45 @@ static void timestamp_label(lv_obj_t *parent,const char *prefix,const cJSON *num
     char date[24],text[64];strftime(date,sizeof(date),"%d/%m %H:%M",&local);
     snprintf(text,sizeof(text),"%s %s",prefix,date);label(parent,text,0x959AAB);
 }
+static void panel_menu(lv_event_t *event)
+{
+    lv_indev_t *input=lv_indev_active();if(!input)return;
+    lv_point_t point;lv_indev_get_point(input,&point);
+    if(lv_event_get_code(event)==LV_EVENT_LONG_PRESSED||(point.y<50&&point.x<130)){controls=true;render();}
+    (void)event;
+}
 static void render(void)
 {
     if(!active||!root)return;
+    bool upstream=!dashboard&&!controls;
+    if(upstream){
+        cJSON *copy=snapshot();
+        if(!native_panel){
+            sprite_count=0;header=NULL;lv_obj_clean(root);
+            lv_obj_set_style_pad_all(root,0,0);lv_obj_set_style_pad_row(root,0,0);
+            lv_obj_remove_flag(root,LV_OBJ_FLAG_SCROLLABLE);
+            native_panel=agentdeck_panel_create(root,board_info()->width,board_info()->height,board_info()->round);
+            if(native_panel)lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_SHORT_CLICKED,NULL);
+            if(native_panel)lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_LONG_PRESSED,NULL);
+            else label(root,"Memoria PSRAM insufficiente per il deck",0xFF4D00);
+        }
+        xSemaphoreTake(lock,portMAX_DELAY);int64_t observed=received;xSemaphoreGive(lock);
+        if(native_panel)agentdeck_panel_update(native_panel,cJSON_GetObjectItemCaseSensitive(copy,"cards"),show_all,sort_recent,observed);
+        cJSON_Delete(copy);return;
+    }
+    native_panel=NULL;
     int scroll=selected>=0?lv_obj_get_scroll_y(root):0;
     sprite_count=0;lv_obj_clean(root);header=NULL;
+    lv_obj_add_flag(root,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(root,12,0);lv_obj_set_style_pad_row(root,8,0);
     ui_title(root,"Agent Deck");
     if(dashboard){appkit_dashboard_page(root,ui_color(0xFF4D00));ui_button(root,"Torna al deck",0x30333A,click,(void *)-1);return;}
     header=lv_label_create(root);lv_obj_set_style_text_font(header,UI_FONT_SMALL,0);caption(NULL);
     if(controls){
         ui_title(root,"Aetherion / comandi");
+        ui_button(root,show_all?"Filtro: tutte":"Filtro: attive",0x30333A,click,(void *)-5);
+        ui_button(root,sort_recent?"Ordine: recenti":"Ordine: priorita",0x30333A,click,(void *)-6);
+        ui_button(root,"Collegamento / dashboard",0x30333A,click,(void *)-4);
         xSemaphoreTake(lock,portMAX_DELAY);int64_t seen=control_seen;xSemaphoreGive(lock);
         label(root,seen&&esp_timer_get_time()-seen<20000000?"Surface collegato":"Apri Aetherion sul Surface",0xA8BBFA);
         if(confirmation){
@@ -369,7 +402,7 @@ static void create(lv_obj_t *screen,void *arg)
 {
     (void)arg;
     if(!lock)lock=xSemaphoreCreateMutexStatic(&lock_memory);
-    active=true;offset=0;selected=-1;selected_id[0]=0;dashboard=false;show_all=false;sort_recent=false;controls=false;confirmation=NULL;
+    active=true;native_panel=NULL;offset=0;selected=-1;selected_id[0]=0;dashboard=false;show_all=false;sort_recent=false;controls=false;confirmation=NULL;
     root=ui_page(screen,NULL);
     lv_obj_set_style_bg_color(root,ui_color(0x0A0A0A),0);lv_obj_set_style_bg_opa(root,LV_OPA_COVER,0);
     lv_obj_set_style_pad_top(root,board_info()->round?36:12,0);
@@ -383,13 +416,14 @@ static void create(lv_obj_t *screen,void *arg)
 }
 static void destroy(void)
 {
-    active=false;sprite_count=0;header=NULL;root=NULL;
+    active=false;sprite_count=0;header=NULL;native_panel=NULL;root=NULL;
     if(timer){lv_timer_delete(timer);timer=NULL;}
     appkit_web_stop_if(&config);
     xSemaphoreTake(lock,portMAX_DELAY);cJSON_Delete(document);document=NULL;free(canonical);canonical=NULL;received=0;control_seen=0;memset(&command,0,sizeof(command));xSemaphoreGive(lock);
 }
 static bool back(void)
 {
+    if(native_panel&&agentdeck_panel_back(native_panel))return true;
     if(confirmation){confirmation=NULL;render();return true;}
     if(selected>=0||dashboard||controls){selected=-1;selected_id[0]=0;dashboard=false;controls=false;render();return true;}
     return false;

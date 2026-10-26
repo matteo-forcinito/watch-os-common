@@ -50,7 +50,20 @@ Il contesto mostra l'ultimo utilizzo del turno rispetto alla finestra dichiarata
 
 Il monitor osserva e fornisce il passaggio al terminale. Non inietta risposte nelle sessioni Codex/Claude, non approva permessi, non ferma processi esterni e non esegue shell dal browser. Le richieste di input vanno risolte nella sessione originale; l'assenza di eventi recenti viene segnalata come stato da verificare, non come una build ancora attiva. I task interni a un agente non esposti dai suoi file richiedono un evento esplicito o il wrapper `run`.
 
-Questa implementazione originale riprende il concetto di deck a tessere, stati, personaggi pixel e schede di [brushknight/agents-deck](https://github.com/brushknight/agents-deck). Non ne incorpora codice, grafica o mascotte: al momento dell'analisi il repository non esponeva una licenza generale per questi contenuti. Non e il client ufficiale e non implementa il protocollo Deck Link dell'upstream. Il suo backend e oggi orientato a macOS; qui il monitor funziona su Windows. Le differenze sono esplicite anziche presentare una compatibilita identica non verificata.
+Questa integrazione riusa, su autorizzazione esplicita del proprietario, renderer
+C++, font, sprite SVG, cappelli e animazioni di
+[brushknight/agents-deck](https://github.com/brushknight/agents-deck).
+Origine, revisione e adattamenti sono descritti in
+`components/apps/agentdeck/UPSTREAM.md` e `upstream/PROVENANCE.json`.
+Il trasporto resta lo snapshot Watch OS autenticato: non e il client ufficiale
+Deck Link. Le azioni Answer/Focus/Interrupt/Dismiss upstream non sono abilitate
+per sessioni soltanto osservate.
+
+Sul nuovo renderer, tocca il titolo "agents" o tieni premuto per aprire filtri,
+ordinamento e comandi Aetherion. Back torna dal dettaglio. Il filtro iniziale
+mostra working/needs_input. Test e anteprime dei tre layout:
+`python tools/agent_deck/test_panel.py` (Windows/MSVC).
+
 
 Riferimento ufficiale Codex: https://learn.chatgpt.com/docs/app-server
 

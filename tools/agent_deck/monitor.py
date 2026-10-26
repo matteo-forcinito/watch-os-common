@@ -89,7 +89,8 @@ def pair_device(url, code, target):
 def codex_activity(path, now=None):
     now = now or time.time()
     result = {"status": "unknown", "activity": "Stato non disponibile", "context_percent": None,
-              "tokens": None, "quota": [], "quota_observed_at": None, "source": "codex_rollout", "observed_at": 0}
+              "tokens": None, "token_usage": {}, "context_used": None,"context_window":None,"usage_observed_at":None,
+              "cost_usd":None,"cost_kind":"unavailable","quota": [], "quota_observed_at": None, "source": "codex_rollout", "observed_at": 0}
     pending = set()
     for event in bounded_json_lines(path):
         payload = event.get("payload") or {}
@@ -97,6 +98,9 @@ def codex_activity(path, now=None):
         when = stamp(event.get("timestamp"))
         result["observed_at"] = max(result["observed_at"], when)
         kind = payload.get("type", "")
+        if event.get('type')=='turn_context':
+            if payload.get('model'):result['model']=clean(payload['model'],80)
+            if payload.get('effort'):result['effort']=clean(payload['effort'],24)
         if event.get("type") == "event_msg":
             if kind in ("task_started", "turn_started", "user_message"):
                 result.update(status="working", activity="In elaborazione")
@@ -109,12 +113,16 @@ def codex_activity(path, now=None):
             elif kind == "token_count":
                 info = payload.get("info") or {}
                 usage = info.get("total_token_usage") or {}
-                result["tokens"] = usage.get("total_tokens")
+                valid=lambda v:isinstance(v,int) and not isinstance(v,bool) and 0<=v<=9007199254740991
+                result['token_usage']={k:usage[k] for k in ('input_tokens','cached_input_tokens','output_tokens','reasoning_output_tokens','total_tokens') if valid(usage.get(k))}
+                result["tokens"] = result['token_usage'].get('total_tokens')
+                result['usage_observed_at']=when
                 last = info.get("last_token_usage") or {}
                 window = info.get("model_context_window")
-                context = last.get("total_tokens")
+                context = last.get("input_tokens",last.get("total_tokens"))
                 if isinstance(window, (int, float)) and window > 0 and isinstance(context, (int, float)):
                     result["context_percent"] = min(100, round(context/window*100, 1))
+                    result.update(context_used=context,context_window=window)
                 windows = quota_windows(payload.get("rate_limits"))
                 if windows:
                     result["quota"] = windows
@@ -167,7 +175,7 @@ def codex_sessions(home, now=None):
             item = codex_activity(path, now)
             item.update(id="codex:"+row["id"], session_id=row["id"], agent="codex", name=clean(row.get("title") or "Codex", 100),
                         repo=clean(Path(row.get("cwd") or ".").name, 80), cwd=clean(row.get("cwd"), 300),
-                        branch=clean(row.get("git_branch"), 100), commit=clean(row.get("git_sha"), 40), model=clean(row.get("model"), 80),
+                        branch=clean(row.get("git_branch"), 100), commit=clean(row.get("git_sha"), 40), model=clean(item.get('model') or row.get("model"), 80),
                         resume="codex resume "+row["id"], capabilities=["observe", "resume_in_terminal"])
             out.append(item)
         return out, None
@@ -331,7 +339,11 @@ class Monitor:
         # Device has a deliberately bounded RAM budget; full detail stays on PC.
         cards = []
         for item in sorted(full["agents"]+full["jobs"], key=lambda x: (x["status"] != "needs_input", x["status"] != "working", -x.get("observed_at", 0)))[:16]:
-            cards.append({k: item.get(k) for k in ("id", "agent", "name", "status", "activity", "repo", "branch", "commit", "model", "context_percent", "observed_at", "quota", "resume")})
+            card={k: item.get(k) for k in ("id", "agent", "name", "status", "activity", "repo", "branch", "commit", "model", "context_percent", "context_used","context_window","tokens","observed_at", "quota", "resume")}
+            usage=item.get('token_usage') or {}
+            for source,target in [('input_tokens','tokens_input'),('cached_input_tokens','tokens_cached'),('output_tokens','tokens_output')]:
+                if source in usage:card[target]=usage[source]
+            cards.append(card)
         quota=full.get('account_quota') or {}
         if quota.get('windows'):
             cards.insert(0,dict(id='codex-account-quota',agent='codex',name='Quota Codex',status='idle',activity='Account CLI corrente: ultima rilevazione',

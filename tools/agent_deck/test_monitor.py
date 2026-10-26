@@ -38,6 +38,17 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(result['tokens'],200000)
         self.assertEqual(result['quota'][0]['remaining_percent'],75)
         self.assertEqual(m.quota_windows({'primary':{'used_percent':120}}),[])
+    def test_cloud_metrics_preserve_exact_counters_without_inventing_spend(self):
+        path=self.transcript([dict(type='turn_context',payload=dict(model='actual-model')),
+            dict(type='event_msg',payload=dict(type='token_count',info=dict(model_context_window=1000,
+                last_token_usage=dict(input_tokens=200,total_tokens=260),
+                total_token_usage=dict(input_tokens=900,cached_input_tokens=600,output_tokens=70,reasoning_output_tokens=20,total_tokens=970))))])
+        result=m.codex_activity(path)
+        self.assertEqual(result['model'],'actual-model');self.assertEqual(result['context_percent'],20)
+        self.assertEqual(result['context_used'],200);self.assertEqual(result['context_window'],1000)
+        self.assertEqual(result['token_usage']['cached_input_tokens'],600)
+        self.assertEqual(result['tokens'],970);self.assertIsNone(result['cost_usd'])
+        self.assertEqual(result['cost_kind'],'unavailable')
     def test_readonly_database_and_path_boundary(self):
         path=self.transcript([dict(type='event_msg',payload=dict(type='task_complete'))])
         db=self.root/'state_5.sqlite'

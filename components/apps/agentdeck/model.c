@@ -80,6 +80,14 @@ cJSON *agentdeck_validate(const cJSON *input)
             cJSON_AddNumberToObject(item,"context_percent",context->valuedouble);
         }
         const cJSON *observed = cJSON_GetObjectItemCaseSensitive(card,"observed_at");
+        const char *numbers[]={"tokens","tokens_input","tokens_cached","tokens_output","context_used","context_window"};
+        for(unsigned j=0;j<sizeof(numbers)/sizeof(numbers[0]);j++){
+            const cJSON *n=cJSON_GetObjectItemCaseSensitive(card,numbers[j]);
+            if(n&&!cJSON_IsNull(n)){
+                if(!cJSON_IsNumber(n)||!isfinite(n->valuedouble)||n->valuedouble<0||n->valuedouble>9007199254740991.0||floor(n->valuedouble)!=n->valuedouble)goto fail;
+                cJSON_AddNumberToObject(item,numbers[j],n->valuedouble);
+            }
+        }
         if (cJSON_IsNumber(observed) && isfinite(observed->valuedouble) && observed->valuedouble >= 0 && observed->valuedouble <= 4102444800.0)
             cJSON_AddNumberToObject(item,"observed_at",observed->valuedouble);
         const cJSON *quota=cJSON_GetObjectItemCaseSensitive(card,"quota");
