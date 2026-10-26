@@ -191,7 +191,7 @@ static void display_create(lv_obj_t *screen, void *arg)
     snprintf(value, sizeof(value), "%u s", st->screen_timeout_s);
     ui_row(page, LV_SYMBOL_EYE_CLOSE, UI_COLOR_INDIGO, "Spegnimento", value, cycle_timeout, NULL);
     ui_switch_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_PURPLE, "Always on", st->always_on, set_aod, NULL);
-    ui_switch_row(page, LV_SYMBOL_LOOP, UI_COLOR_TEAL, "Progresso compatto", st->border_progress, set_border_progress, NULL);
+    ui_switch_row(page, LV_SYMBOL_LOOP, UI_COLOR_TEAL, "Ring loader sul bordo", st->border_progress, set_border_progress, NULL);
     ui_switch_row(page, LV_SYMBOL_UP, UI_COLOR_BLUE, "Tocca per accendere", st->tap_to_wake, set_tap, NULL);
     ui_switch_row(page, LV_SYMBOL_BELL, UI_COLOR_ORANGE, "Accendi con notifiche", st->wake_on_notification,
                   set_wake_notify, NULL);

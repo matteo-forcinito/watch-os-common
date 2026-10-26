@@ -25,17 +25,18 @@ for arg in sys.argv[3:]:
         continue
     if arg.startswith('wait:'):
         time.sleep(float(arg[5:]))
-    elif arg.startswith('shot:'):
-        images = devcon.decode_images(devcon.run(port, 'shot', timeout=90))
+    elif arg.startswith(('shot:', 'shot-idle:')):
+        command, target = arg.split(':', 1)
+        images = devcon.decode_images(devcon.run(port, command, timeout=90))
         if 'screen' not in images:
             print('shot failed')
             continue
         rows = devcon.to_rgb(images['screen'])
         if 'top' in images:
             rows = devcon.to_rgb(images['top'], background=rows)
-        with open(arg[5:], 'wb') as f:
+        with open(target, 'wb') as f:
             f.write(devcon.png_bytes(images['screen']['w'], images['screen']['h'], rows))
-        print('saved', arg[5:])
+        print('saved', target)
     else:
         for line in devcon.run(port, arg):
             print(line)

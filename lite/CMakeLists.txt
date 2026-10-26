@@ -12,6 +12,6 @@ set(EXTRA_COMPONENT_DIRS "${WATCH_OS_COMMON}/lite/main" "${LITE_BOARD_DIR}/compo
     "${WATCH_OS_COMMON}/components/extapp_sdk")
 # Explicit dependency closure: no core/UI/apps component, and no LVGL.
 set(COMPONENTS main)
-set(PROJECT_VER "1.0.0")
+set(PROJECT_VER "1.0.1")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(watch_lite)

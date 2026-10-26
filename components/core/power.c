@@ -3,6 +3,7 @@
 
 #include "core/lv_port.h"
 #include "core/settings.h"
+#include "hardware/board.h"
 #include "core/recovery.h"
 #include "core/state.h"
 #include "core/sys.h"
@@ -76,7 +77,8 @@ static uint8_t active_brightness(void)
 }
 static uint8_t aod_brightness(void)
 {
-    return settings_get()->energy_saver ? 8 : AOD_BRIGHTNESS;
+    uint8_t requested = settings_get()->energy_saver ? 8 : AOD_BRIGHTNESS;
+    return requested < board_info()->min_aod_brightness ? board_info()->min_aod_brightness : requested;
 }
 
 /* ------------------------------------------------------------ helpers */
@@ -179,7 +181,7 @@ static void go_aod(void)
     lv_port_refresh_now();
     if (panel_used()) touch_set_low_power(true);
 
-    ESP_LOGI(TAG, "Always-on display");
+    ESP_LOGI(TAG, "Always-on display (%u/255, touch wake %s)", aod_brightness(), settings_get()->tap_to_wake ? "on" : "off");
 }
 
 static void go_off(void)
@@ -479,7 +481,7 @@ static void power_task(void *arg)
                 break;
 
             case MSG_TOUCH_WAKE:
-                if (s_screen == POWER_SCREEN_AOD || (s_screen == POWER_SCREEN_OFF && settings_get()->tap_to_wake))
+                if ((s_screen == POWER_SCREEN_AOD || s_screen == POWER_SCREEN_OFF) && settings_get()->tap_to_wake)
                 {
                     go_on();
                 }

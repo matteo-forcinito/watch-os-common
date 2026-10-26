@@ -43,6 +43,7 @@ typedef struct
     uint16_t display_corner_radius; /* Visible rectangular panel corner, pixels; 0 = square. */
     bool draw_buffers_in_psram; /* CPU-copy displays only; DMA displays keep internal buffers. */
     bool has_camera;       /* Used by the Orbi family genome; false on other boards. */
+    uint8_t min_aod_brightness; /* Panel-specific readable floor, also respected by energy saving. */
 } board_info_t;
 
 /* Bring up the buses and the always-on chips. Call once, early in app_main(). */

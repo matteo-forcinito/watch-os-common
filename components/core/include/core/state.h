@@ -43,6 +43,7 @@ typedef enum
     STATE_MUSIC_VERSION,    /* phone music info (from the companion) */
     STATE_UPDATE,           /* fw_update_phase_t (services/fw_update.h) */
     STATE_UPDATE_PERCENT,   /* 0..100 while writing a firmware */
+    STATE_LIFE_VERSION,      /* on-demand collection / dog-care documents changed */
     STATE_COUNT
 } state_id_t;
 

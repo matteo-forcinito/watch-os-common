@@ -1,8 +1,8 @@
 # Watch Lite
 
 An optional external app for the six color-display watch OS targets. The full
-system remains in the other OTA slot. Hold BOOT or choose **Torna al sistema**
-to return. Do not flash a partition table or erase NVS to install this app.
+system remains in the other OTA slot. Exit through the confirmation screen
+described below. Do not flash a partition table or erase NVS to install this app.
 
 Lite links the board drivers, a small direct RGB565 renderer and the essential
 data services. It does **not** link or initialize LVGL, the companion, Bluetooth,
@@ -12,15 +12,43 @@ buffers; the app cannot remove hardware requirements.
 
 ## On the device
 
-Touch the clock to open settings. On knob devices, turn the knob to select and
-click to activate. Settings provide always-on, Wi-Fi, brightness and return to
-the full system. An alarm can be dismissed with a click/tap; tapping its left
-side snoozes for five minutes. Hold BOOT to return to the full system.
+Swipe up from the clock for settings; swipe down for the dedicated web access
+page; swipe left for native apps (alarms, agenda, collection and dog-care tasks).
+Swipe right to return to the clock; swipe vertically within an app to browse
+its entries. A tap on the clock leaves it alone. The first contact while the
+screen is idle only wakes it if the shared **tap to wake** preference is enabled;
+settings act on release, with movement and release
+debouncing, so dragging across a row cannot activate it. Wi-Fi access and its
+pairing code have their own page. Settings provide always-on, Wi-Fi, brightness,
+tap to wake, 12/24-hour format, volume and the shared screen timeout. The clock
+shows the full Italian weekday and date.
+
+**PWR** clicks turn the screen off or wake it; holding PWR opens settings.
+**BOOT** clicks go back; from the clock on touch devices they enter always-on
+immediately if enabled, otherwise turn the screen off. On knob devices,
+turn the knob to select a setting and click to activate it. Holding BOOT or
+choosing **Esci da Lite** only opens a confirmation screen. To return to the
+full system, start on the left third and swipe across to the right third on
+that screen; swipe down or click BOOT to cancel. Alternatively, release BOOT
+and hold it again to confirm. A tap, short drag or a single long key press
+never restarts the device. The five-second recovery key event is ignored in Lite.
+On knob devices, a double click returns to the clock.
+
+The native alarms page toggles existing alarms; agenda shows local and cached
+events; Raccolta browses the next 31 days for the preferred city; Zampe browses
+active tasks and records completion. Creation and full editing stay available
+through the web dashboards. Private life documents are loaded only for an
+explicit page view or action and released afterward.
+
+An alarm can be dismissed with BOOT or a tap; PWR or a left-side tap snoozes for
+five minutes. Swipe recognition samples at 16 ms only while a finger is down;
+the navigation state needs no allocations, extra tasks or LVGL.
 
 Always-on is optional and off initially. It shows time, date, battery and the
 next alarm. It redraws at minute changes, with small pixel shifts and brightness
-8/255. LCD panels still consume power while lit. The active screen times out
-after ten seconds. No measured battery-life claim is made.
+8/255 or the panel's configured readable floor (32/255 on AMOLED 1.8).
+LCD panels still consume power while lit. The active screen uses the shared
+timeout preference. No measured battery-life claim is made.
 
 ## Dashboard and services
 

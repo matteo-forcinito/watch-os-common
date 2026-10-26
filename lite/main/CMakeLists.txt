@@ -1,7 +1,7 @@
 set(COMMON "${WATCH_OS_COMMON}/components")
 set(GIORNATA "${WATCH_OS_COMMON}/giornata/main")
 idf_component_register(
-    SRCS "main.c" "runtime.c" "draw.c" "web.c" "calendar.c"
+    SRCS "main.c" "runtime.c" "draw.c" "web.c" "calendar.c" "navigation.c" "content.c"
         "${COMMON}/core/settings.c" "${COMMON}/core/clock.c"
         "${COMMON}/services/alarm/alarm.c" "${COMMON}/services/storage/storage.c"
         "${COMMON}/apps/life/life_model.c" "${COMMON}/apps/life/life_store.c"

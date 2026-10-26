@@ -4,14 +4,14 @@ const $ = s => document.querySelector(s);
 const E = (tag, cls, text) => { const e=document.createElement(tag); if(cls)e.className=cls;if(text!=null)e.textContent=text;return e; };
 const button = (text, fn, cls='') => {const b=E('button',cls,text);b.type='button';b.onclick=fn;return b;};
 const append = (p,...children) => {children.filter(Boolean).forEach(c=>p.append(c));return p;};
-let state, selected=0, busy=false;
+let state, selected=0, busy=false, calendarMonth=0, calendarDate='';
 const dayNames=['Lun','Mar','Mer','Gio','Ven','Sab','Dom'];
 const arr = k => state?.[k] || [];
 const profile = id => arr('pets').find(p=>p.id===id);
 const shortDate = d => d ? new Date(d+'T12:00:00').toLocaleDateString('it-IT',{day:'numeric',month:'short'}) : '—';
-function cityWeek(city){
-  const start=Date.parse(state.runtime.today+'T00:00:00Z')/86400000;
-  return Array.from({length:7},(_,i)=>{
+function cityWeek(city,startDate=state.runtime.today,count=7){
+  const start=Date.parse(startDate+'T00:00:00Z')/86400000;
+  return Array.from({length:count},(_,i)=>{
     const day=start+i,date=new Date(day*86400000).toISOString().slice(0,10),weekday=((day+3)%7+7)%7;
     const override=city.exceptions.find(e=>e.date===date);
     const bins=city.bins.filter(b=>{if(override)return override.bins.includes(b.id);
@@ -39,10 +39,10 @@ const schemas={
  log:[field('pet','Cane','pets'),field('date','Data','date'),field('label','Titolo'),field('kind','Categoria'),field('note','Osservazione privata','textarea')]
 };
 const titles={city:'Città',bin:'Raccolta',exception:'Eccezione',pet:'Profilo',task:'Attività',weight:'Peso',log:'Diario'};
-async function edit(entity,record){
+async function edit(entity,record,defaults={}){
   const d=$('#editor');if(d.open)return;d.replaceChildren();const f=E('form');f.method='dialog';
   const existing=!!record;
-  const data={name:'',date:state.runtime.today,due:state.runtime.today,pet:selected,minute:540,repeat_days:0,every:1,anchor:state.runtime.today,color:0x70d5b0,enabled:true,notify:false,days:0,bins:[],sex:'unknown',...record};
+  const data={name:'',date:state.runtime.today,due:state.runtime.today,pet:selected,minute:540,repeat_days:0,every:1,anchor:state.runtime.today,color:0x70d5b0,enabled:true,notify:false,days:0,bins:[],sex:'unknown',...defaults,...record};
   append(f,E('h2','',(existing?'Modifica ':'Nuovo ')+titles[entity].toLowerCase()));
   const readers=[];
   for(const s of schemas[entity]){
@@ -113,6 +113,26 @@ function renderWaste(main){
     d.bins.forEach(b=>{const line=E('div','material');const dot=E('span','dot');dot.style.background='#'+(b.color&0xffffff).toString(16).padStart(6,'0');append(line,dot,document.createTextNode(b.name));p.append(line);});week.append(p);
   });calendar.append(week);}
   main.append(calendar);const split=E('div','split');
+  const today=new Date(state.runtime.today+'T12:00:00Z');
+  const first=new Date(Date.UTC(today.getUTCFullYear(),today.getUTCMonth()+calendarMonth,1));
+  const firstISO=first.toISOString().slice(0,10),length=new Date(Date.UTC(first.getUTCFullYear(),first.getUTCMonth()+1,0)).getUTCDate();
+  const month=section(first.toLocaleDateString('it-IT',{month:'long',year:'numeric',timeZone:'UTC'}));
+  const navigation=E('div','calendar-controls');
+  append(navigation,button('← Mese precedente',()=>{calendarMonth--;calendarDate='';render();}),button('Oggi',()=>{calendarMonth=0;calendarDate=state.runtime.today;render();}),button('Mese successivo →',()=>{calendarMonth++;calendarDate='';render();}));
+  month.append(navigation);const grid=E('div','month-grid');dayNames.forEach(n=>grid.append(E('div','calendar-weekday',n)));
+  const offset=(first.getUTCDay()+6)%7;for(let i=0;i<offset;i++)grid.append(E('div','calendar-spacer'));
+  const monthDays=cityWeek(city,firstISO,length);
+  if(!monthDays.some(d=>d.date===calendarDate))calendarDate=monthDays.some(d=>d.date===state.runtime.today)?state.runtime.today:firstISO;
+  monthDays.forEach(d=>{
+    const cell=button('',()=>{calendarDate=d.date;render();},'calendar-cell'+(d.date===state.runtime.today?' is-today':'')+(d.date===calendarDate?' is-selected':''));
+    cell.setAttribute('aria-label',shortDate(d.date)+': '+(d.bins.map(b=>b.name).join(', ')||'Nessun ritiro'));
+    cell.append(E('strong','',Number(d.date.slice(8))));const dots=E('div','calendar-dots');
+    d.bins.forEach(b=>{const dot=E('span','dot');dot.style.background='#'+(b.color&0xffffff).toString(16).padStart(6,'0');dot.title=b.name;dots.append(dot);});cell.append(dots);grid.append(cell);
+  });month.append(grid);
+  const chosen=monthDays.find(d=>d.date===calendarDate);
+  month.append(entry(shortDate(chosen.date),chosen.bins.map(b=>b.name).join(' · ')||'Nessun ritiro previsto'));
+  month.append(E('p','small','Tocca una data: i punti colorati indicano i materiali. Le eccezioni sostituiscono i passaggi ordinari.'));
+  main.append(month);
   const bins=section('Materiali e passaggi',button('+ Raccolta',()=>edit('bin')));
   city.bins.forEach(b=>bins.append(entry(b.name,dayNames.filter((_,i)=>b.days&(1<<i)).join(' · ')+' · ogni '+b.every+' sett.',[button('Modifica',()=>edit('bin',b))])));
   if(!city.bins.length)bins.append(E('p','empty','Raggruppa liberamente i materiali raccolti insieme.'));
@@ -129,6 +149,14 @@ function renderDogs(main){
   $('#hero-title').textContent='La cura vive\nnei piccoli gesti.';$('#hero-sub').textContent=pet?pet.name+' · '+(pet.breed||'Il suo spazio, ogni giorno'):'Routine, salute e ricordi. Uno spazio privato per prenderti cura dei tuoi cani.';
   $('#stat').textContent=due.length;$('#stat-caption').textContent='attività da completare per il profilo selezionato';
   if(!pet){main.append(notice('Aggiungi il primo profilo. Le informazioni rimangono sul dispositivo; le notifiche sono facoltative.'));return;}
+  const agenda=section('Oggi, per '+pet.name,button('+ Attività',()=>edit('task')));
+  if(due.length)due.sort((a,b)=>a.due.localeCompare(b.due)||a.minute-b.minute).forEach(t=>agenda.append(entry(t.label,(t.due<state.runtime.today?'In arretrato · ':'Oggi · ')+String(Math.floor(t.minute/60)).padStart(2,'0')+':'+String(t.minute%60).padStart(2,'0'),[button('Fatto',()=>act({op:'task.done',id:t.id}),'primary'),button('Apri',()=>edit('task',t))])));
+  else agenda.append(E('p','empty',tasks.length?'Tutto in ordine per oggi. Qui compariranno le attività da completare.':'Il suo programma è ancora vuoto. Parti dalle azioni qui sotto: nulla viene attivato senza il tuo salvataggio.'));
+  const next=tasks.filter(t=>t.enabled&&t.due>state.runtime.today).sort((a,b)=>a.due.localeCompare(b.due)||a.minute-b.minute).slice(0,3);
+  next.forEach(t=>agenda.append(entry('Prossima · '+t.label,shortDate(t.due),[button('Apri',()=>edit('task',t))])));main.append(agenda);
+  const quick=section('Costruisci il suo programma');const choices=E('div','quick-care');
+  [['Pasto','food',1],['Passeggiata','walk',1],['Igiene e denti','groom',0],['Visita veterinaria','visit',0],['Vaccino','vaccine',0],['Antiparassitario','parasite',0],['Terapia prescritta','medicine',0]].forEach(([label,kind,repeat_days])=>choices.append(button('+ '+label,()=>edit('task',null,{label,kind,repeat_days}))));
+  quick.append(choices,E('p','small','Scegli data, ora, frequenza e notifiche. Per gli interventi sanitari registra le indicazioni del veterinario.'));main.append(quick);
   const overview=section(pet.name,button('Profilo e contatti',()=>edit('pet',pet)));
   append(overview,E('span','pill',pet.sex==='female'?'Femmina':pet.sex==='male'?'Maschio':'Sesso non specificato'),pet.birth?E('span','pill','Nascita · '+shortDate(pet.birth)):null,pet.relation?E('span','pill',pet.relation):null);
   [pet.food&&'Alimentazione: '+pet.food,pet.allergies&&'Sensibilità: '+pet.allergies,pet.vet&&'Veterinario: '+pet.vet+(pet.phone?' · '+pet.phone:''),pet.notes].filter(Boolean).forEach(t=>overview.append(E('p','small',t)));main.append(overview);

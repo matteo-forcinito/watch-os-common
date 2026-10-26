@@ -26,6 +26,7 @@
 #include "core/power.h"
 #include "core/recovery.h"
 #include "core/sys.h"
+#include "core/settings.h"
 
 #include "hardware/pmu.h"
 #include "hardware/microphone.h"
@@ -254,12 +255,14 @@ static void print_buf(const char *name, const lv_draw_buf_t *buf)
     }
 }
 
-static void cmd_shot(void)
+static void cmd_shot(bool wake)
 {
     shot_t shot = {0};
 
-    power_wake(POWER_WAKE_OTHER);
-    vTaskDelay(pdMS_TO_TICKS(300));   /* the first frame after waking */
+    if (wake) {
+        power_wake(POWER_WAKE_OTHER);
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
     run_in_ui(take_shot, &shot);
 
     if (shot.screen == NULL)
@@ -458,9 +461,9 @@ static void handle(char *line)
         }
         else printf("@RECOVERY active=%d\n", recovery_active());
     }
-    else if (strcmp(cmd, "shot") == 0)
+    else if (strcmp(cmd, "shot") == 0 || strcmp(cmd, "shot-idle") == 0)
     {
-        cmd_shot();
+        cmd_shot(strcmp(cmd, "shot") == 0);
         return;   /* @END already printed */
     }
     else if (strcmp(cmd, "apps") == 0)
@@ -511,7 +514,7 @@ static void handle(char *line)
     {
         swipe(atoi(a1), atoi(a2), atoi(a3), atoi(a4));
     }
-    else if (strcmp(cmd, "press") == 0 && a3 != NULL)
+    else if ((strcmp(cmd, "press") == 0 || strcmp(cmd, "press-idle") == 0) && a3 != NULL)
     {
         int ms = atoi(a3);
         if (ms < 50 || ms > 61000)
@@ -519,7 +522,7 @@ static void handle(char *line)
             printf("@ERR press duration 50..61000 ms\n");
             return;
         }
-        power_wake(POWER_WAKE_OTHER);
+        if (strcmp(cmd, "press") == 0) power_wake(POWER_WAKE_OTHER);
         lv_port_fake_touch(true, atoi(a1), atoi(a2));
         vTaskDelay(pdMS_TO_TICKS(ms));
         lv_port_fake_touch(false, atoi(a1), atoi(a2));
@@ -578,6 +581,10 @@ static void handle(char *line)
     else if (strcmp(cmd, "sleep") == 0)
     {
         power_sleep_now();
+    }
+    else if (strcmp(cmd, "power-state") == 0)
+    {
+        printf("@POWER screen=%d tap=%d aod=%d\n", power_screen(), settings_get()->tap_to_wake, settings_get()->always_on);
     }
     else if (strcmp(cmd, "gpio") == 0 && a1 != NULL)
     {

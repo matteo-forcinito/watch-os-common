@@ -38,6 +38,7 @@
 
 typedef struct
 {
+    lv_obj_t *root;
     lv_obj_t *time;
     lv_obj_t *date;
     lv_obj_t *battery_arc;
@@ -107,6 +108,9 @@ static void update_battery(lv_observer_t *observer, lv_subject_t *subject)
     int percent = state_get(STATE_BATTERY);
     bool charging = state_get(STATE_CHARGING) != 0;
     uint32_t color = charging ? UI_COLOR_GREEN : (percent >= 0 && percent < 20 ? UI_COLOR_RED : UI_COLOR_GREEN);
+
+    if (!board_info()->round && settings_get()->border_progress && !s_face.battery_border && s_face.root)
+        s_face.battery_border = ui_border_progress_create(s_face.root, color);
 
     if (s_face.battery_border != NULL)
     {
@@ -391,6 +395,7 @@ void watchface_create(lv_obj_t *parent)
     s_face = (face_t){0};
 
     lv_obj_t *root = lv_obj_create(parent);
+    s_face.root = root;
     lv_obj_remove_style_all(root);
     lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
     lv_obj_set_scrollable(root, false);
@@ -455,8 +460,6 @@ void watchface_create(lv_obj_t *parent)
     lv_obj_set_style_text_font(s_face.battery_label, UI_FONT_SMALL, 0);
 
     weather_and_alarm(row, COMPLICATION_SIZE);
-
-    s_face.battery_border = ui_border_progress_create(root, UI_COLOR_GREEN);
 
     /* phone music pill */
     music_pill(root, 300);
@@ -531,11 +534,11 @@ void watchface_aod_create(lv_obj_t *screen)
 
     s_aod.date = lv_label_create(s_aod.box);
     lv_obj_set_style_text_font(s_aod.date, UI_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(s_aod.date, lv_color_hex(0x7A7A80), 0);
+    lv_obj_set_style_text_color(s_aod.date, lv_color_hex(0xA0A0A8), 0);
 
     s_aod.time = lv_label_create(s_aod.box);
     lv_obj_set_style_text_font(s_aod.time, ui_font_clock, 0);
-    lv_obj_set_style_text_color(s_aod.time, lv_color_hex(0xB0B0B5), 0);
+    lv_obj_set_style_text_color(s_aod.time, lv_color_hex(0xE0E0E8), 0);
 
     lv_subject_add_observer_obj(state_subject(STATE_MINUTE), aod_update, s_aod.box, NULL);
 }

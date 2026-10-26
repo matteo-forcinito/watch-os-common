@@ -1,6 +1,7 @@
 /* Two on-demand internal apps. Form drafts and callbacks belong to the app UI;
  * file writes and scheduled reminders belong to life_store. */
 #include "core/app.h"
+#include "core/state.h"
 #include "life_store.h"
 #include "life_web.h"
 #include "ui/ui.h"
@@ -14,7 +15,8 @@ enum
     CITY,
     PET,
     FORM,
-    DASHBOARD
+    DASHBOARD,
+    QUICK_PLAN
 };
 enum
 {
@@ -35,7 +37,9 @@ enum
     DASH,
     RETRY,
     PRESET,
-    MORE_LOGS
+    MORE_LOGS, MORE_WEIGHTS, MORE_TASKS,
+    MONTH_PREV, MONTH_NEXT, MONTH_TODAY,
+    QUICK_TASK, OPEN_PLAN
 };
 typedef struct
 {
@@ -84,11 +88,14 @@ typedef struct
 {
     life_kind_t kind;
     lv_obj_t *page;
+    lv_obj_t *calendar_detail;
     bool active, opened;
-    int view, city, pet, entity, rendered_view, log_limit;
+    int view, city, pet, entity, rendered_view, log_limit, weight_limit, task_limit, month, selected_day;
+    lv_calendar_date_t highlights[31];
     cJSON *draft;
     const field_t *editing;
     unsigned generation, edit_generation;
+    uint32_t revision;
 } life_ui_t;
 typedef struct
 {
@@ -280,6 +287,29 @@ static void clicked(lv_event_t *e)
     life_ui_t *u = a.ui;
     if (!u->active)
         return;
+    if (a.action == OPEN_PLAN) { u->view = QUICK_PLAN; render(u); return; }
+    if (a.action == MONTH_PREV || a.action == MONTH_NEXT || a.action == MONTH_TODAY) {
+        char date[11];
+        int target = a.action == MONTH_TODAY ? life_today() : u->month + (a.action == MONTH_PREV ? -1 : 32);
+        life_date(target, date);
+        if (!date[0]) return;
+        date[8] = date[9] = '0'; date[9] = '1';
+        u->month = life_day(date);
+        u->selected_day = a.action == MONTH_TODAY ? life_today() : u->month;
+        render(u);
+        return;
+    }
+    if (a.action == QUICK_TASK) {
+        static const char *labels[] = {"Pasto", "Passeggiata", "Igiene e denti", "Visita veterinaria", "Vaccino", "Antiparassitario", "Terapia prescritta"};
+        static const char *kinds[] = {"food", "walk", "groom", "visit", "vaccine", "parasite", "medicine"};
+        if ((unsigned)a.id >= 7) return;
+        form(u, "task", 0);
+        str(u->draft, "label", labels[a.id]);
+        str(u->draft, "kind", kinds[a.id]);
+        num(u->draft, "repeat_days", a.id < 2 ? 1 : 0);
+        render(u);
+        return;
+    }
     if (a.action == OPEN_CITY)
     {
         u->city = a.id;
@@ -290,6 +320,7 @@ static void clicked(lv_event_t *e)
     if (a.action == OPEN_PET)
     {
         u->pet = a.id;
+        u->log_limit = 20; u->weight_limit = 10; u->task_limit = 12;
         u->view = PET;
         render(u);
         return;
@@ -390,6 +421,10 @@ static void clicked(lv_event_t *e)
         render(u);
         return;
     }
+    if (a.action == MORE_WEIGHTS || a.action == MORE_TASKS) {
+        if (a.action == MORE_WEIGHTS) u->weight_limit += 10; else u->task_limit += 12;
+        render(u); return;
+    }
     cJSON *c = cJSON_CreateObject();
     if (a.action == PREFERRED)
     {
@@ -485,12 +520,83 @@ static void collection_text(const cJSON *bins, char *out, size_t size)
     if (!out[0])
         snprintf(out, size, "Nessun ritiro");
 }
+static void calendar_pressed(lv_event_t *e)
+{
+    life_ui_t *u = lv_event_get_user_data(e);
+    lv_calendar_date_t d;
+    if (!u->active || lv_calendar_get_pressed_date(lv_event_get_current_target(e), &d) != LV_RESULT_OK) return;
+    char date[16];
+    if (d.year < 1900 || d.year > 2199 || d.month < 1 || d.month > 12 || d.day < 1 || d.day > 31) return;
+    snprintf(date, sizeof(date), "%04u-%02u-%02u", (unsigned)d.year, (unsigned)d.month, (unsigned)d.day);
+    u->selected_day = life_day(date);
+    render(u);
+    if (u->calendar_detail) lv_obj_scroll_to_view(u->calendar_detail, LV_ANIM_OFF);
+}
+static void calendar_button(lv_obj_t *parent, life_ui_t *u, const char *label, int action)
+{
+    action_t *a = malloc(sizeof(*a));
+    if (!a) return;
+    *a = (action_t){u, action, 0, NULL, NULL};
+    lv_obj_t *b = ui_button(parent, label, accent(u), clicked, a);
+    lv_obj_set_width(b, LV_PCT(30));
+    lv_obj_add_event_cb(b, dispose, LV_EVENT_DELETE, a);
+}
+static void collection_calendar(life_ui_t *u, const cJSON *city)
+{
+    char date[11], text[200];
+    life_date(u->month, date);
+    unsigned year = (unsigned)atoi(date), month = (unsigned)atoi(date + 5);
+    static const char *months[] = {"Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"};
+    snprintf(text, sizeof(text), "%s %u", months[month - 1], year);
+    ui_section(u->page, text);
+    lv_obj_t *controls = lv_obj_create(u->page);
+    lv_obj_remove_style_all(controls);
+    lv_obj_set_width(controls, LV_PCT(100)); lv_obj_set_height(controls, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    calendar_button(controls, u, LV_SYMBOL_LEFT, MONTH_PREV);
+    calendar_button(controls, u, "Oggi", MONTH_TODAY);
+    calendar_button(controls, u, LV_SYMBOL_RIGHT, MONTH_NEXT);
+    lv_obj_t *calendar = lv_calendar_create(u->page);
+    lv_obj_set_size(calendar, LV_PCT(100), 235);
+    lv_obj_set_style_bg_color(calendar, ui_color(UI_COLOR_CARD), 0);
+    lv_obj_set_style_border_width(calendar, 0, 0);
+    lv_obj_set_style_radius(calendar, 16, 0);
+    lv_calendar_set_month_shown(calendar, year, month);
+#if LV_CALENDAR_WEEK_STARTS_MONDAY
+    static const char *day_names[] = {"Lu","Ma","Me","Gi","Ve","Sa","Do"};
+#else
+    static const char *day_names[] = {"Do","Lu","Ma","Me","Gi","Ve","Sa"};
+#endif
+    lv_calendar_set_day_names(calendar, day_names);
+    char today[11]; life_date(life_today(), today);
+    lv_calendar_set_today_date(calendar, atoi(today), atoi(today + 5), atoi(today + 8));
+    int count = 0;
+    for (int i = 0; i < 31; i++) {
+        life_date(u->month + i, date);
+        if ((unsigned)atoi(date + 5) != month) break;
+        cJSON *bins = life_collections(city, u->month + i);
+        if (cJSON_GetArraySize(bins)) u->highlights[count++] = (lv_calendar_date_t){year, month, (unsigned)i + 1};
+        cJSON_Delete(bins);
+    }
+    lv_calendar_set_highlighted_dates(calendar, u->highlights, count);
+    lv_obj_add_event_cb(calendar, calendar_pressed, LV_EVENT_VALUE_CHANGED, u);
+    life_date(u->selected_day, date);
+    snprintf(text, sizeof(text), "%s %s", days[life_weekday(u->selected_day)], date);
+    u->calendar_detail = ui_section(u->page, text);
+    cJSON *bins = life_collections(city, u->selected_day);
+    collection_text(bins, text, sizeof(text));
+    ui_text(u->page, text, false);
+    cJSON_Delete(bins);
+    ui_text(u->page, "Giorni evidenziati: ritiro previsto. Tocca una data per vedere i materiali.", true);
+}
 static void render(life_ui_t *u)
 {
     if (!u->active)
         return;
     int old_y = u->rendered_view == u->view ? lv_obj_get_scroll_y(u->page) : 0;
     u->rendered_view = u->view;
+    u->calendar_detail = NULL;
     lv_obj_clean(u->page);
     ui_title(u->page, name(u));
     if (u->view == DASHBOARD)
@@ -524,6 +630,11 @@ static void render(life_ui_t *u)
     {
         if (u->kind == LIFE_RACCOLTA)
         {
+            const cJSON *preferred = life_find(get(s, "cities"), life_number(s, "preferred", 0));
+            if (preferred) {
+                ui_section(u->page, life_string(preferred, "name"));
+                collection_calendar(u, preferred);
+            }
             const cJSON *week = get(get(s, "runtime"), "week");
             char b[200];
             for (int i = 0; i < 2; i++)
@@ -549,12 +660,39 @@ static void render(life_ui_t *u)
             char n[64];
             snprintf(n, sizeof(n), "%d attivita da completare", due);
             ui_text(u->page, n, false);
+            ui_section(u->page, "I tuoi cani");
             const cJSON *p;
             cJSON_ArrayForEach(p, get(s, "pets"))
-                row(u, life_string(p, "name"), life_string(p, "breed"), OPEN_PET, life_number(p, "id", 0), NULL, NULL);
+                row(u, life_string(p, "name"), "Apri programma, peso e diario", OPEN_PET, life_number(p, "id", 0), NULL, NULL);
             if (!cJSON_GetArraySize(get(s, "pets")))
-                ui_text(u->page, "Crea un profilo per organizzare cure, routine e ricordi.", true);
+                ui_text(u->page, "Aggiungi un cane, poi crea routine e scadenze dal suo profilo.", true);
             row(u, "Aggiungi cane", NULL, NEW, 0, "pet", NULL);
+            ui_section(u->page, "Oggi e in arretrato");
+            int shown = 0;
+            const cJSON *task;
+            cJSON_ArrayForEach(task, get(s, "tasks")) {
+                if (!cJSON_IsTrue(get(task, "enabled")) || life_day(life_string(task, "due")) > life_today()) continue;
+                const cJSON *pet = life_find(get(s, "pets"), life_number(task, "pet", 0));
+                int minute = life_number(task, "minute", 0);
+                char detail[120];
+                snprintf(detail, sizeof(detail), "%s - %02d:%02d%s", life_string(pet, "name"), minute / 60, minute % 60,
+                    life_day(life_string(task, "due")) < life_today() ? " - In arretrato" : "");
+                row(u, life_string(task, "label"), detail, EDIT, life_number(task, "id", 0), "task", NULL);
+                if (++shown >= 5) break;
+            }
+            if (!shown) ui_text(u->page, "Nessuna attivita in scadenza. Apri un profilo per creare il suo programma.", true);
+            ui_section(u->page, "Prossime scadenze");
+            shown = 0;
+            for (int day = 1; day <= 30 && shown < 4; day++) {
+                cJSON_ArrayForEach(task, get(s, "tasks")) {
+                    if (!cJSON_IsTrue(get(task, "enabled")) || life_day(life_string(task, "due")) != life_today() + day) continue;
+                    const cJSON *pet = life_find(get(s, "pets"), life_number(task, "pet", 0));
+                    char detail[120]; snprintf(detail, sizeof(detail), "%s - %s", life_string(pet, "name"), life_string(task, "due"));
+                    row(u, life_string(task, "label"), detail, EDIT, life_number(task, "id", 0), "task", NULL);
+                    if (++shown >= 4) break;
+                }
+            }
+            if (!shown) ui_text(u->page, "Le visite e le altre scadenze future compariranno qui.", true);
         }
         row(u, "Dashboard", LV_SYMBOL_WIFI, DASH, 0, NULL, NULL);
     }
@@ -564,6 +702,7 @@ static void render(life_ui_t *u)
         ui_section(u->page, life_string(c, "name"));
         ui_text(u->page, life_string(c, "zone"), true);
         row(u, "Modifica citta", NULL, EDIT, u->city, "city", NULL);
+        collection_calendar(u, c);
         row(u, "Usa come preferita", NULL, PREFERRED, 0, NULL, NULL);
         const cJSON *b;
         cJSON_ArrayForEach(b, get(c, "bins"))
@@ -578,11 +717,25 @@ static void render(life_ui_t *u)
     {
         const cJSON *p = life_find(get(s, "pets"), u->pet);
         ui_section(u->page, life_string(p, "name"));
+        if (life_string(p, "birth")[0]) {
+            char age[100]; int born = life_day(life_string(p, "birth"));
+            char today[11]; life_date(life_today(),today); const char *birth=life_string(p,"birth");
+            int months=(atoi(today)-atoi(birth))*12+atoi(today+5)-atoi(birth+5)-(atoi(today+8)<atoi(birth+8));
+            if (months < 1) snprintf(age,sizeof(age),"Nascita %s - %d giorni",birth,life_today()-born);
+            else if (months < 24) snprintf(age,sizeof(age),"Nascita %s - %d mesi",birth,months);
+            else snprintf(age,sizeof(age),"Nascita %s - %d anni e %d mesi",birth,months/12,months%12);
+            ui_text(u->page, age, true);
+        }
+        if (life_string(p, "food")[0]) { ui_section(u->page, "Alimentazione"); ui_text(u->page, life_string(p, "food"), false); }
+        if (life_string(p, "allergies")[0]) { ui_section(u->page, "Allergie e sensibilita"); ui_text(u->page, life_string(p, "allergies"), false); }
+        if (life_string(p, "vet")[0]) { ui_section(u->page, "Veterinario"); ui_text(u->page, life_string(p, "vet"), false); ui_text(u->page, life_string(p, "phone"), true); }
         row(u, "Profilo e contatti", NULL, EDIT, u->pet, "pet", NULL);
         const cJSON *t;
         ui_section(u->page, "Routine e scadenze");
+        int task_count = 0;
         cJSON_ArrayForEach(t, get(s, "tasks")) if (life_number(t, "pet", 0) == u->pet)
         {
+            if (++task_count > u->task_limit) continue;
             int id = life_number(t, "id", 0);
             row(u, life_string(t, "label"), life_string(t, "due"), EDIT, id, "task", NULL);
             if (cJSON_IsTrue(get(t, "enabled")))
@@ -591,14 +744,21 @@ static void render(life_ui_t *u)
                 row(u, "Rimanda di un giorno", NULL, POSTPONE, id, NULL, NULL);
             }
         }
-        row(u, "Aggiungi attivita", NULL, NEW, 0, "task", NULL);
+        if (task_count > u->task_limit) row(u,"Mostra altre attivita",NULL,MORE_TASKS,0,NULL,NULL);
+        row(u, "Crea routine o scadenza", "Pasti, passeggiate, igiene, salute", OPEN_PLAN, 0, NULL, NULL);
         ui_section(u->page, "Peso");
-        cJSON_ArrayForEach(t, get(s, "weights")) if (life_number(t, "pet", 0) == u->pet)
+        int weight_count = 0;
+        const cJSON *weights = get(s,"weights");
+        for (int index=cJSON_GetArraySize(weights)-1;index>=0;index--)
         {
+            t=cJSON_GetArrayItem(weights,index);
+            if(life_number(t,"pet",0)!=u->pet) continue;
+            if(++weight_count>u->weight_limit) continue;
             char v[40];
             snprintf(v, sizeof(v), "%d g", life_number(t, "grams", 0));
             row(u, life_string(t, "date"), v, EDIT, life_number(t, "id", 0), "weight", NULL);
         }
+        if(weight_count>u->weight_limit) row(u,"Mostra altre misure",NULL,MORE_WEIGHTS,0,NULL,NULL);
         row(u, "Registra peso", NULL, NEW, 0, "weight", NULL);
         ui_section(u->page, "Diario");
         int shown = 0;
@@ -617,9 +777,33 @@ static void render(life_ui_t *u)
         row(u, "Aggiungi nota", NULL, NEW, 0, "log", NULL);
         ui_text(u->page, "Il piano sanitario va concordato con il veterinario.", true);
     }
+    else if (u->view == QUICK_PLAN) {
+        ui_text(u->page, "Scegli una voce, poi imposta data, frequenza e notifiche prima di salvare.", true);
+        row(u, "Pasti", "Routine quotidiana modificabile", QUICK_TASK, 0, NULL, NULL);
+        row(u, "Passeggiate", "Routine quotidiana modificabile", QUICK_TASK, 1, NULL, NULL);
+        row(u, "Igiene e denti", "Scegli frequenza e indicazioni", QUICK_TASK, 2, NULL, NULL);
+        row(u, "Visita veterinaria", "Appuntamento e note", QUICK_TASK, 3, NULL, NULL);
+        row(u, "Vaccino", "Data concordata con il veterinario", QUICK_TASK, 4, NULL, NULL);
+        row(u, "Antiparassitario", "Data e indicazioni prescritte", QUICK_TASK, 5, NULL, NULL);
+        row(u, "Terapia prescritta", "Promemoria del tuo piano", QUICK_TASK, 6, NULL, NULL);
+        row(u, "Altra attivita", NULL, NEW, 0, "task", NULL);
+    }
+    u->revision = (uint32_t)life_number(s, "revision", 0);
     cJSON_Delete(s);
     lv_obj_update_layout(u->page);
     lv_obj_scroll_to_y(u->page, old_y, LV_ANIM_OFF);
+}
+static void changed(lv_observer_t *observer, lv_subject_t *subject)
+{
+    (void)subject;
+    life_ui_t *u = lv_observer_get_user_data(observer);
+    if (u->active && u->view != FORM && u->view != DASHBOARD &&
+        lv_screen_active() == lv_obj_get_screen(u->page) && u->revision != life_revision(u->kind)) render(u);
+}
+static void resume_kind(life_kind_t kind)
+{
+    life_ui_t *u = &screens[kind];
+    if (u->active && u->view != FORM) render(u);
 }
 static void create_kind(life_kind_t kind, lv_obj_t *screen)
 {
@@ -629,12 +813,17 @@ static void create_kind(life_kind_t kind, lv_obj_t *screen)
     u->view = HOME;
     u->rendered_view = -1;
     u->log_limit = 20;
+    u->weight_limit = 10; u->task_limit = 12;
     u->city = u->pet = 0;
+    u->selected_day = life_today();
+    char first[11]; life_date(u->selected_day, first); first[8] = '0'; first[9] = '1';
+    u->month = life_day(first);
     u->generation++;
     u->opened = life_open(kind) == ESP_OK;
     appkit_web_start(life_web_config(kind));
     u->page = ui_page(screen, NULL);
     render(u);
+    lv_subject_add_observer_obj(state_subject(STATE_LIFE_VERSION), changed, u->page, u);
 }
 static void close_kind(life_kind_t kind)
 {
@@ -656,7 +845,7 @@ static bool back_kind(life_kind_t kind)
     if (u->view == HOME)
         return false;
     u->generation++;
-    u->view = u->view == FORM && u->entity != 0 && u->entity != 3 ? (kind == LIFE_RACCOLTA ? CITY : PET) : HOME;
+    u->view = u->view == QUICK_PLAN ? PET : u->view == FORM && u->entity != 0 && u->entity != 3 ? (kind == LIFE_RACCOLTA ? CITY : PET) : HOME;
     render(u);
     return true;
 }
@@ -686,6 +875,8 @@ static bool dogs_back(void)
 {
     return back_kind(LIFE_ZAMPE);
 }
+static void waste_resume(void) { resume_kind(LIFE_RACCOLTA); }
+static void dogs_resume(void) { resume_kind(LIFE_ZAMPE); }
 const app_t raccolta_app = {
     .id = "raccolta",
     .name = "Raccolta",
@@ -693,6 +884,7 @@ const app_t raccolta_app = {
     .color = 0x70D5B0,
     .create = waste_create,
     .destroy = waste_close,
+    .resume = waste_resume,
     .back = waste_back,
     .about = "Calendari della raccolta per piu citta, materiali configurabili, eccezioni e promemoria nel menu."};
 const app_t zampe_app = {
@@ -702,5 +894,6 @@ const app_t zampe_app = {
     .color = 0xEDAD82,
     .create = dogs_create,
     .destroy = dogs_close,
+    .resume = dogs_resume,
     .back = dogs_back,
     .about = "Profili privati dei cani, routine, scadenze, peso e diario. Dashboard locale e notifiche facoltative."};

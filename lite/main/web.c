@@ -127,6 +127,9 @@ static esp_err_t state(httpd_req_t *r)
     cJSON_AddBoolToObject(out, "ringing",lite_ringing());
     cJSON_AddNumberToObject(out,"ui_frames",lite_draw_frames());
     cJSON_AddBoolToObject(out, "ble", false);
+    int ui_page; bool ui_idle; lite_ui_snapshot(&ui_page, &ui_idle);
+    cJSON_AddNumberToObject(out, "ui_page", ui_page);
+    cJSON_AddBoolToObject(out, "ui_idle", ui_idle);
     cJSON *alarms = cJSON_AddArrayToObject(out, "alarms");
     alarm_t list[ALARM_MAX];
     int count = alarm_list(list, ALARM_MAX);
@@ -277,6 +280,18 @@ static esp_err_t post(httpd_req_t *r)
     else if (!strcmp(r->uri, "/api/action"))
     {
         const char *op = life_string(j, "op");
+#ifdef LITE_QA
+        if (!strcmp(op, "qa.touch")) {
+            int x=life_number(j,"x",-1), y=life_number(j,"y",-1);
+            if (x>=0 && x<board_info()->width && y>=0 && y<board_info()->height) {
+                lite_post(LITE_QA_TOUCH,x,(y<<1)|cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j,"pressed")));ok=true;
+            }
+        }
+        if (!strcmp(op, "qa.key")) {
+            int key=life_number(j,"key",-1), event=life_number(j,"event",-1);
+            if (key>=0 && key<=1 && event>=0 && event<=1) {lite_post(LITE_BUTTON,key,event);ok=true;}
+        }
+#endif
         if (!strcmp(op, "settings"))
         {
             int b = life_number(j, "brightness", lite_settings.brightness),

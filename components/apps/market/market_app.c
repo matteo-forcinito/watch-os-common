@@ -9,6 +9,7 @@
 #include "hardware/board.h"
 #include "hardware/sdcard.h"
 #include "ui/ui.h"
+#include "core/settings.h"
 #include "link/link_internal.h"
 #include "orbi/orbi_genome.h"
 #include "cJSON.h"
@@ -778,7 +779,7 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_set_user_data(screen, ui);
     lv_obj_add_event_cb(screen, deleted, LV_EVENT_DELETE, ui);
     ui->content = lv_obj_create(screen);
-    ui->border = ui_border_progress_create(screen, 0x8C7EFF);
+    ui->border = settings_get()->border_progress ? ui_border_progress_create(screen, 0x8C7EFF) : NULL;
     if (ui->border != NULL) lv_obj_set_hidden(ui->border, true);
     ui->poll = lv_timer_create(poll, 300, ui);
     ui->animation = lv_timer_create(animate, 60, ui);

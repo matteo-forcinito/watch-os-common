@@ -107,8 +107,8 @@ lv_obj_t *ui_icon_bubble(lv_obj_t *parent, const char *icon, uint32_t color, int
 /* Give any object the card look + press feedback. */
 void ui_make_card(lv_obj_t *obj);
 
-/* Passive compact transfer progress (legacy function name). No timer or
- * full-screen perimeter invalidation. LVGL task only; NULL is safe. */
+/* Optional passive perimeter progress, quantized to 1 percent. No timer or
+ * animation task; unchanged progress does not redraw. NULL is safe. */
 lv_obj_t *ui_border_progress_create(lv_obj_t *screen, uint32_t color);
 void ui_border_progress_set(lv_obj_t *border, int32_t value, int32_t maximum);
 void ui_border_progress_color(lv_obj_t *border, uint32_t color);

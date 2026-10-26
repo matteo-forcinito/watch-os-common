@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "services/alarm.h"
+#include "navigation.h"
 #include <stdbool.h>
 #include <stdint.h>
 typedef struct
@@ -24,7 +25,8 @@ enum
     LITE_KNOB,
     LITE_DIRTY,
     LITE_WEB,
-    LITE_EXIT
+    LITE_EXIT,
+    LITE_QA_TOUCH = 100
 };
 extern QueueHandle_t lite_events;
 extern lite_settings_t lite_settings;
@@ -37,11 +39,12 @@ bool lite_ringing(void);
 void lite_alert_text(char *out, unsigned size);
 bool lite_draw_init(void);
 uint32_t lite_draw_frames(void);
-void lite_draw(bool menu, int selected, bool idle, const char *address, const char *code);
+void lite_draw(const lite_navigation_t *nav, bool idle, const char *address, const char *code);
 bool lite_web_running(void);
 void lite_web_set(bool enabled);
 void lite_web_address(char *out, unsigned size);
 const char *lite_web_code(void);
 void lite_web_tick(void);
 void lite_return(void);
+void lite_ui_snapshot(int *page, bool *idle);
 #endif

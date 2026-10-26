@@ -1,6 +1,7 @@
 #include "life_store.h"
 #include "core/clock.h"
 #include "core/sys.h"
+#include "core/state.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -312,6 +313,7 @@ static void save_task(void *arg)
             b->saving = false;
             snprintf(b->error, sizeof(b->error), "Salvataggio non riuscito: dati mantenuti in RAM, riprova");
             atomic_fetch_add(&b->revision, 1);
+            state_bump(STATE_LIFE_VERSION);
             unlock(b);
             free(raw);
             vTaskDelete(NULL);
@@ -345,6 +347,7 @@ static void save_task(void *arg)
             b->saving = false;
             snprintf(b->error,sizeof(b->error),"Salvataggio incompleto: dati mantenuti, riprova");
             atomic_fetch_add(&b->revision,1);
+            state_bump(STATE_LIFE_VERSION);
             unlock(b);
             free(raw);
             vTaskDelete(NULL);
@@ -355,6 +358,7 @@ static void save_task(void *arg)
         snprintf(b->error, sizeof(b->error), "%s",
                  ok ? "" : "Salvataggio non riuscito: controlla memoria file e riprova");
         atomic_fetch_add(&b->revision, 1);
+        state_bump(STATE_LIFE_VERSION);
         unlock(b);
     }
     vTaskDelete(NULL);
@@ -411,6 +415,7 @@ bool life_command(life_kind_t kind, const cJSON *command, char *error, size_t si
         cJSON_Delete(b->doc);
         b->doc = candidate;
         atomic_fetch_add(&b->revision, 1);
+        state_bump(STATE_LIFE_VERSION);
     }
     else
         cJSON_Delete(candidate);
@@ -487,6 +492,7 @@ static void due_job(void *arg)
     {
         queue_save(b, LIFE_ZAMPE, b->doc);
         atomic_fetch_add(&b->revision, 1);
+        state_bump(STATE_LIFE_VERSION);
     }
     else
         plan(next_due(b->doc));

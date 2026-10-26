@@ -16,10 +16,28 @@
 #include "internal.h"
 #include "life_store.h"
 #include "lite.h"
+#include "content.h"
 #include "nvs_flash.h"
 #include "services/storage.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+static atomic_int ui_page, ui_idle;
+void lite_ui_snapshot(int *page, bool *idle)
+{
+    *page = atomic_load(&ui_page); *idle = atomic_load(&ui_idle) != 0;
+}
+#ifdef LITE_QA
+static bool simulated_touch, simulated_down;
+static uint16_t simulated_x, simulated_y;
+#endif
+static bool read_touch(uint16_t *x, uint16_t *y)
+{
+#ifdef LITE_QA
+    if (simulated_touch) { *x = simulated_x; *y = simulated_y; return simulated_down; }
+#endif
+    return touch_read(x, y);
+}
 
 static void *json_alloc(size_t size)
 {
@@ -69,24 +87,38 @@ void lite_return(void)
     clock_checkpoint();
     extapp_return_to_launcher();
 }
-static void setting(int selected)
+static void action(lite_action_t selected, const lite_navigation_t *nav)
 {
+    if (selected >= LITE_NAV_TAP_WAKE && selected <= LITE_NAV_TIMEOUT) {
+        settings_t *s = heap_caps_malloc(sizeof(*s), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!s) return;
+        *s = *settings_get();
+        if (selected == LITE_NAV_TAP_WAKE) s->tap_to_wake = !s->tap_to_wake;
+        if (selected == LITE_NAV_TIME_FORMAT) s->time_24h = !s->time_24h;
+        if (selected == LITE_NAV_VOLUME) s->volume = s->volume >= 100 ? 0 : s->volume + 20;
+        if (selected == LITE_NAV_TIMEOUT) s->screen_timeout_s = s->screen_timeout_s < 15 ? 15 : s->screen_timeout_s < 30 ? 30 : s->screen_timeout_s < 60 ? 60 : 10;
+        settings_save(s); free(s);
+    }
     switch (selected)
     {
-    case 0:
+    case LITE_NAV_AOD:
         lite_settings.aod = !lite_settings.aod;
         lite_save();
         break;
-    case 1:
+    case LITE_NAV_WIFI:
         lite_web_set(!lite_web_running());
         break;
-    case 2:
+    case LITE_NAV_BRIGHTNESS:
         lite_settings.brightness = lite_settings.brightness >= 100 ? 20 : lite_settings.brightness + 20;
         lite_save();
         break;
-    case 3:
+    case LITE_NAV_EXIT:
         lite_return();
         break;
+    case LITE_NAV_STOP: lite_alert_stop(false); break;
+    case LITE_NAV_SNOOZE: lite_alert_stop(true); break;
+    case LITE_NAV_PRIMARY: lite_content_activate(nav->page); break;
+    default: break;
     }
 }
 void app_main(void)
@@ -119,9 +151,10 @@ void app_main(void)
     esp_pm_lock_handle_t usb = NULL;
     esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "lite_usb", &usb);
     bool usb_held = false;
-    bool menu = false, idle = false, asleep = false, dirty = true, was_alert = false, touch_down = false,
-         touch_low = false;
-    int selected = 0;
+    bool idle = false, asleep = false, dirty = true, was_alert = false, touch_low = false,
+         manual_sleep = false;
+    lite_navigation_t navigation;
+    lite_navigation_init(&navigation, board_info()->width, board_info()->height);
     int64_t active = esp_timer_get_time(), battery_at = 0, usb_retry_at = 0;
     int old_battery = -999;
     ESP_LOGI("lite", "Ready without LVGL; internal free %u B",
@@ -133,7 +166,9 @@ void app_main(void)
     for (;;)
     {
         lite_event_t e = {0};
-        bool event = xQueueReceive(lite_events, &e, pdMS_TO_TICKS(250)) == pdTRUE;
+        /* Fast sampling only for the duration of a finger contact. Idle keeps
+         * its slow blocking wait; gestures allocate no buffers or tasks. */
+        bool event = xQueueReceive(lite_events, &e, pdMS_TO_TICKS(navigation.down ? 16 : 250)) == pdTRUE;
         int64_t now = esp_timer_get_time();
         button_poll_pmu();
         bool power = pmu_usb_present();
@@ -151,6 +186,13 @@ void app_main(void)
         }
         if (event)
         {
+#ifdef LITE_QA
+            if (e.kind == LITE_QA_TOUCH) {
+                simulated_touch = true; simulated_down = (e.second & 1) != 0;
+                simulated_x = e.value; simulated_y = e.second >> 1;
+                e.kind = LITE_TOUCH;
+            }
+#endif
             if (e.kind == LITE_EXIT)
                 lite_return();
             if (e.kind == LITE_WEB)
@@ -159,58 +201,48 @@ void app_main(void)
             {
                 active = now;
                 idle = false;
+                manual_sleep = false;
                 dirty = true;
             }
             if (e.kind == LITE_BUTTON)
             {
+                lite_action_t a = lite_navigation_key(&navigation, e.value == BUTTON_PWR,
+                    e.second, now, idle, lite_ringing(), board_info()->has_knob);
+                action(a, &navigation);
                 active = now;
-                idle = false;
+                idle = a == LITE_NAV_SLEEP || a == LITE_NAV_IDLE;
+                manual_sleep = a == LITE_NAV_SLEEP;
+                if (idle) navigation.down = false;
                 dirty = true;
-                if (e.second == BUTTON_LONG_PRESS || e.second == BUTTON_RECOVERY)
-                    lite_return();
-                if (e.second == BUTTON_CLICK)
-                {
-                    if (lite_ringing())
-                        lite_alert_stop(false);
-                    else if (menu)
-                        setting(selected);
-                    else
-                        menu = true;
-                }
             }
             if (e.kind == LITE_KNOB)
             {
                 active = now;
                 idle = false;
-                menu = true;
-                selected = (selected + e.value % 4 + 4) % 4;
+                manual_sleep = false;
+                lite_navigation_knob(&navigation, e.value);
                 dirty = true;
             }
             if (e.kind == LITE_TOUCH)
             {
-                uint16_t x, y;
-                bool pressed = touch_read(&x, &y);
+                uint16_t x = 0, y = 0;
+                bool pressed = read_touch(&x, &y);
+                if (idle && !settings_get()->tap_to_wake) {
+#ifdef LITE_QA
+                    simulated_touch = false;
+#endif
+                    touch_irq_arm();
+                    continue;
+                }
                 if (!pressed)
                     touch_irq_arm();
-                if (pressed && !touch_down)
-                {
-                    touch_down = true;
-                    if (lite_ringing())
-                        lite_alert_stop(x < board_info()->width / 3);
-                    else if (menu && !idle)
-                    {
-                        int i = ((int)y - ((int)board_info()->height / 2 - 85)) / 42;
-                        if (i >= 0 && i < 4)
-                        {
-                            selected = i;
-                            setting(i);
-                        }
-                    }
-                    else
-                        menu = true;
+                lite_action_t a = lite_navigation_touch(&navigation, pressed, x, y, now, idle, lite_ringing());
+                action(a, &navigation);
+                if (pressed || a != LITE_NAV_NONE) {
                     active = now;
                     idle = false;
-                    dirty = true;
+                    manual_sleep = false;
+                    dirty |= a != LITE_NAV_NONE;
                 }
             }
             if (e.kind == LITE_DIRTY)
@@ -224,22 +256,34 @@ void app_main(void)
         }
         if (alert)
             active = now;
-        if (touch_down)
+        if (navigation.down)
         {
-            uint16_t x, y;
-            if (!touch_read(&x, &y))
+            uint16_t x = 0, y = 0;
+            bool pressed = read_touch(&x, &y);
+            lite_action_t a = lite_navigation_touch(&navigation, pressed, x, y, now, idle, alert);
+            action(a, &navigation);
+            if (pressed || a != LITE_NAV_NONE)
             {
-                touch_down = false;
+                active = now;
+                idle = false;
+                manual_sleep = false;
+                dirty |= a != LITE_NAV_NONE;
+            }
+            if (!navigation.down)
+            {
+#ifdef LITE_QA
+                simulated_touch = false;
+#endif
                 touch_irq_arm();
             }
         }
-        if (!idle && now - active > 10000000)
+        if (!idle && now - active > (int64_t)settings_get()->screen_timeout_s * 1000000)
         {
             idle = true;
-            menu = false;
+            navigation.page = LITE_CLOCK;
             dirty = true;
         }
-        bool sleep = idle && !lite_settings.aod;
+        bool sleep = manual_sleep || (idle && !lite_settings.aod);
         if (display_ok && sleep != asleep)
         {
             display_set_brightness(0);
@@ -264,13 +308,16 @@ void app_main(void)
             }
             battery_at = now;
         }
+        atomic_store(&ui_page, navigation.page);
+        atomic_store(&ui_idle, idle);
         lite_web_tick();
         if (display_ok && dirty && !asleep)
         {
             char address[64];
             lite_web_address(address, sizeof(address));
-            lite_draw(menu, selected, idle, address, lite_web_code());
-            display_set_brightness(idle ? 8 : lite_settings.brightness);
+            lite_draw(&navigation, idle, address, lite_web_code());
+            uint8_t dim = board_info()->min_aod_brightness > 8 ? board_info()->min_aod_brightness : 8;
+            display_set_brightness(idle ? dim : lite_settings.brightness);
             dirty = false;
         }
     }
