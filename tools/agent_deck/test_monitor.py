@@ -103,7 +103,7 @@ class MonitorTests(unittest.TestCase):
         full=dict(generated_at=time.time(),agents=[dict(id=str(i),agent='codex',name='Agent',status='working',activity='x'*240,observed_at=1,repo='repo',branch='main') for i in range(60)],jobs=[])
         raw=monitor.compact(full);result=json.loads(raw)
         self.assertLessEqual(len(result['cards']),16);self.assertLessEqual(len(raw),24000)
-        self.assertEqual(result['total'],60)
+        self.assertEqual(result['total'],1);self.assertEqual(result['total_sessions'],60)
     def test_sessions_are_grouped_as_one_agent_without_summing_usage(self):
         sessions=[dict(id='s1',agent='codex',session_id='one',status='done',observed_at=20,tokens=100,activity='old'),dict(id='s2',agent='codex',session_id='two',status='working',observed_at=10,tokens=3,activity='Current task')]
         groups=m.agent_groups(sessions)
@@ -111,6 +111,15 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(groups[0]['active_sessions'],1);self.assertEqual(groups[0]['tokens'],3)
         self.assertIn('Current task',groups[0]['activity'])
         self.assertEqual(len(sessions),2)
+
+    def test_owner_terminal_state_overrides_unfinished_rollout_only_for_exact_session(self):
+        db=sqlite3.connect(self.root/'control.sqlite')
+        db.execute('CREATE TABLE entities(kind TEXT,body TEXT)')
+        db.execute('INSERT INTO entities VALUES(?,?)',('chat_threads',json.dumps(dict(id='local',remote_thread_id='known',status='failed'))));db.commit();db.close()
+        agents=[dict(session_id='known',status='working',task_description='Progress'),dict(session_id='other',status='working')]
+        m.apply_owned_terminal_states(agents,self.root)
+        self.assertEqual(agents[0]['status'],'error');self.assertEqual(agents[1]['status'],'working')
+        self.assertEqual(agents[0]['owner_thread_id'],'local')
 
     def test_redaction(self):
         self.assertNotIn('example-private-value',m.clean('token=example-private-value'))

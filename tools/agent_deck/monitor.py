@@ -329,6 +329,27 @@ def process_alive(pid):
     except PermissionError: return True
     except ProcessLookupError: return False
 
+def apply_owned_terminal_states(agents, directory):
+    """Optional read-only owner state corrects rollouts killed before a final event."""
+    if not directory:return
+    path=Path(directory).resolve()/'control.sqlite'
+    try:
+        with contextlib.closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,timeout=.2)) as db:
+            owned={}
+            for row in db.execute("SELECT body FROM entities WHERE kind='chat_threads'"):
+                item=json.loads(row[0]);remote=item.get('remote_thread_id')
+                if remote:owned[remote]=item
+        for agent in agents:
+            item=owned.get(agent.get('session_id'))
+            if not item:continue
+            state={'succeeded':'done','failed':'error','interrupted':'interrupted'}.get(item.get('status'))
+            if not state:continue
+            agent.update(status=state,owner_thread_id=item['id'],owner_status=item['status'])
+            agent['step']={'done':'Turno concluso','error':'Turno fallito: apri la conversazione','interrupted':'Turno interrotto'}[state]
+            agent['activity']=clean(agent.get('task_description'),120)+' | '+agent['step']
+    except (OSError,sqlite3.Error,ValueError,TypeError):return
+
+
 def agent_groups(sessions):
     """One provider agent, with separate sessions retained for history/metrics."""
     groups={}
@@ -365,6 +386,7 @@ class Monitor:
         agents, error = codex_sessions(Path(os.environ.get("CODEX_HOME", Path.home()/".codex")), now)
         claude, cerr = claude_sessions(Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home()/".claude")), now)
         agents.extend(claude)
+        apply_owned_terminal_states(agents,getattr(self.args,"aetherion_data",None))
         quota_file=self.store.directory/'account_quota.json'
         if getattr(self.args,'live_quota',False) and now-self.quota_at>120:
             self.quota_at=now
@@ -410,7 +432,7 @@ class Monitor:
             cards.insert(0,dict(id='codex-account-quota',agent='codex',name='Quota Codex',status='idle',activity='Account CLI corrente: ultima rilevazione',
                                 repo='Account CLI locale',observed_at=quota.get('observed_at',0),quota=quota['windows'],context_percent=None))
             cards=cards[:16]
-        result = dict(schema=1, generated_at=full["generated_at"], cards=cards, total=len(full["agents"])+len(full["jobs"])+(1 if quota.get('windows') else 0))
+        result = dict(schema=1, generated_at=full["generated_at"], cards=cards, total=len(agent_groups(full["agents"]))+sum(j.get("id")!="aetherion-codex-architect" for j in full["jobs"])+(1 if quota.get('windows') else 0), total_sessions=len(full["agents"]))
         raw = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()
         while len(raw) > 24000 and result["cards"]:
             result["cards"].pop()
@@ -516,6 +538,7 @@ def main():
     parser.add_argument("--data", default=str(Path.home()/".agent-deck"))
     sub = parser.add_subparsers(dest="op", required=True)
     p = sub.add_parser("serve");p.add_argument("--workspace", default=str(Path.cwd()));p.add_argument("--port", type=int, default=9784)
+    p.add_argument('--aetherion-data',help='Optional local Aetherion owner-state directory, read-only')
     p.add_argument("--interval", type=float, default=5);p.add_argument("--device-config")
     p.add_argument("--live-quota",action='store_true',help='Legge le quote Codex via App Server ogni due minuti')
     p = sub.add_parser("run");p.add_argument("--title", required=True);p.add_argument("--agent", choices=["codex", "claude", "manual"], default="codex")

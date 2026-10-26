@@ -104,3 +104,9 @@ Le conversazioni di uno stesso provider sono raggruppate sotto un solo agente
 Codex/Claude nel Deck e sul device. Il numero di sessioni resta visibile; la
 dashboard Aetherion permette di aprire la singola conversazione. Metriche e token
 appartengono alla sessione selezionata: non vengono sommati come uso corrente.
+
+Con `serve --aetherion-data <cartella-dati>` il monitor legge in sola lettura
+anche lo stato terminale delle conversazioni gestite da Aetherion. La corrispondenza
+usa l'ID remoto esatto: un processo arrestato senza evento finale nel rollout non
+rimane erroneamente attivo. Il servizio Aetherion configura questa opzione;
+non vengono lette credenziali e non vengono avviati lavori dal monitor.
