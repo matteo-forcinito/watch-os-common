@@ -99,3 +99,8 @@ fanno sparire la richiesta iniziale. Il contesto JSON Aetherion viene escluso da
 descrizione. Le tessere device ricevono lo stesso obiettivo nel campo activity,
 compatibile con il firmware esistente. Una richiesta descrive il lavoro, non ne prova
 il completamento; senza eventi disponibili non viene inventata una descrizione.
+
+Le conversazioni di uno stesso provider sono raggruppate sotto un solo agente
+Codex/Claude nel Deck e sul device. Il numero di sessioni resta visibile; la
+dashboard Aetherion permette di aprire la singola conversazione. Metriche e token
+appartengono alla sessione selezionata: non vengono sommati come uso corrente.

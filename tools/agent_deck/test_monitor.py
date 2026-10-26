@@ -104,6 +104,14 @@ class MonitorTests(unittest.TestCase):
         raw=monitor.compact(full);result=json.loads(raw)
         self.assertLessEqual(len(result['cards']),16);self.assertLessEqual(len(raw),24000)
         self.assertEqual(result['total'],60)
+    def test_sessions_are_grouped_as_one_agent_without_summing_usage(self):
+        sessions=[dict(id='s1',agent='codex',session_id='one',status='done',observed_at=20,tokens=100,activity='old'),dict(id='s2',agent='codex',session_id='two',status='working',observed_at=10,tokens=3,activity='Current task')]
+        groups=m.agent_groups(sessions)
+        self.assertEqual(len(groups),1);self.assertEqual(groups[0]['session_count'],2)
+        self.assertEqual(groups[0]['active_sessions'],1);self.assertEqual(groups[0]['tokens'],3)
+        self.assertIn('Current task',groups[0]['activity'])
+        self.assertEqual(len(sessions),2)
+
     def test_redaction(self):
         self.assertNotIn('example-private-value',m.clean('token=example-private-value'))
         self.assertEqual(m.clean('a\x00b'),'ab')

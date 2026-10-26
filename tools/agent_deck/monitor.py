@@ -329,6 +329,21 @@ def process_alive(pid):
     except PermissionError: return True
     except ProcessLookupError: return False
 
+def agent_groups(sessions):
+    """One provider agent, with separate sessions retained for history/metrics."""
+    groups={}
+    for item in sessions:groups.setdefault(item.get('agent') or item.get('id'),[]).append(item)
+    result=[];rank={'needs_input':0,'working':1,'error':2,'unknown':3}
+    for provider,items in groups.items():
+        ordered=sorted(items,key=lambda x:(rank.get(x.get('status'),4),-x.get('observed_at',0)))
+        selected=ordered[0];active=sum(x.get('status') in ('working','needs_input') for x in items)
+        group=dict(selected,id='agent:'+str(provider),name={'codex':'Codex','claude':'Claude'}.get(provider,provider),
+                   session_count=len(items),active_sessions=active,representative_session_id=selected.get('session_id'))
+        group['activity']=clean(str(len(items))+' sessioni, '+str(active)+' attive | '+(selected.get('activity') or ''),220)
+        result.append(group)
+    return result
+
+
 class Monitor:
     def __init__(self, args):
         self.args = args
@@ -378,14 +393,14 @@ class Monitor:
         result = dict(schema=1, generated_at=now, agents=agents[:24], jobs=jobs[:32], repositories=self.repos,
                       processes=self.processes[:32], sources={"codex": error or "Archivio locale in sola lettura", "claude": cerr or "Trascrizioni locali in sola lettura"},
                       delivery=self.delivery, session_allowance={"remaining_sessions": None, "reason": "I provider non espongono un numero fisso di sessioni residue. Vengono mostrati solo quote e reset osservati."})
-        result.update(account_quota=account_quota,quota_error=self.quota_error)
+        result.update(account_quota=account_quota,quota_error=self.quota_error,agent_groups=agent_groups(agents[:24]))
         with self.lock: self.snapshot = result
         return result
     def compact(self, full):
         # Device has a deliberately bounded RAM budget; full detail stays on PC.
         cards = []
-        for item in sorted(full["agents"]+full["jobs"], key=lambda x: (x["status"] != "needs_input", x["status"] != "working", -x.get("observed_at", 0)))[:16]:
-            card={k: item.get(k) for k in ("id", "agent", "name", "status", "activity", "task_description", "last_update", "step", "repo", "branch", "commit", "model", "context_percent", "context_used","context_window","tokens","observed_at", "quota", "resume")}
+        for item in sorted(agent_groups(full["agents"])+[j for j in full["jobs"] if j.get("id")!="aetherion-codex-architect"], key=lambda x: (x["status"] != "needs_input", x["status"] != "working", -x.get("observed_at", 0)))[:16]:
+            card={k: item.get(k) for k in ("id", "agent", "name", "status", "activity", "task_description", "last_update", "step", "session_count", "active_sessions", "representative_session_id", "repo", "branch", "commit", "model", "context_percent", "context_used","context_window","tokens","observed_at", "quota", "resume")}
             usage=item.get('token_usage') or {}
             for source,target in [('input_tokens','tokens_input'),('cached_input_tokens','tokens_cached'),('output_tokens','tokens_output')]:
                 if source in usage:card[target]=usage[source]
