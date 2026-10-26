@@ -5,6 +5,7 @@
 #include "lvgl.h"
 
 /* ---- apps (each in its own file) */
+extern const app_t agentdeck_app;
 extern const app_t raccolta_app;
 extern const app_t zampe_app;
 extern const app_t alarms_app;

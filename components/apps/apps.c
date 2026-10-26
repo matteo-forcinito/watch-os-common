@@ -54,6 +54,7 @@ static const app_t *const s_apps[] = {
     &market_app,
 #if CONFIG_APPKIT_HOSTED
     &news_app,
+    &agentdeck_app,
     &giornata_app,
     &pieno_app,
     &casa_app,
@@ -326,6 +327,7 @@ void apps_init(void)
     appkit_hosted_register("Sentinel", "sentinel");
     appkit_hosted_register("Raccolta", "raccolta");
     appkit_hosted_register("Zampe", "zampe");
+    appkit_hosted_register("AgentDeck", "agentdeck");
 #endif
     for (size_t i = 0; i < sizeof(s_apps) / sizeof(s_apps[0]); i++)
     {

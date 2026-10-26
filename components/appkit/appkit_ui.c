@@ -167,6 +167,9 @@ void appkit_dashboard_page(lv_obj_t *parent, lv_color_t accent)
     }
 
     p->timer = lv_timer_create(refresh, 1000, p);
-    lv_obj_add_event_cb(parent, on_delete, LV_EVENT_DELETE, p);
+    /* A caller may rebuild its page with lv_obj_clean(parent). The parent
+     * survives, but all our widgets are gone: stop their timer at that point,
+     * not only when the parent screen is eventually deleted. */
+    lv_obj_add_event_cb(p->state, on_delete, LV_EVENT_DELETE, p);
     refresh(p->timer);
 }
