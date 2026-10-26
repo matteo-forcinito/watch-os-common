@@ -20,7 +20,7 @@ import time
 import zipfile
 
 PRODUCTS = {'amoled175': 'amoled175_watch', 'amoled175c': 'amoled175c_watch',
-            'amoled': 'amoled_watch', 'knob': 'knob_os', 'watcher': 'watcher_os', 'guition4848': 'guition4848_panel'}
+            'amoled': 'amoled_watch', 'knob': 'knob_os', 'watcher': 'watcher_os', 'guition4848': 'guition4848_panel', 'lcd13': 'lcd13_panel'}
 
 def qa_compile_commands(commands):
     return any(any(flag in c['command'] for flag in
@@ -99,6 +99,8 @@ def main():
         if artwork:
             shutil.copyfile(artwork[0], packages/'CREDITS.json')
         shutil.copyfile(build/(PRODUCTS[a.product]+'.bin'), packages/'firmware.bin')
+        for source,name in [('AETHERION_RELEASE.md','README.md'),('AETHERION_RELEASE.json','build-evidence.json')]:
+            if (build/source).is_file():shutil.copyfile(build/source,packages/name)
         flash=json.loads((build/'flasher_args.json').read_text())
         archive_path=packages/(a.product+'-'+a.version+'-usb-flash.zip')
         prefix=a.product+'-'+a.version
@@ -168,6 +170,8 @@ def main():
                 if not any(n.endswith('/'+PRODUCTS[a.product]+'.bin') for n in names): raise RuntimeError('Wrong USB package identity')
                 if any(Path(n).name.lower() in ['nvs.bin','nvsfactory.bin','merged.bin'] for n in names): raise RuntimeError('Unsafe USB recovery package')
     assets=[firmware,*zips]
+    for name in ('README.md','build-evidence.json'):
+        if (packages/name).is_file():assets.append(packages/name)
     if (packages/'CREDITS.json').is_file():
         assets.append(packages/'CREDITS.json')
     provenance={'source_repository':a.repo,'source_commit':source_sha,'product':a.product,'version':a.version,

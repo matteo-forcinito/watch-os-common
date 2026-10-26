@@ -1,6 +1,40 @@
 #include "model.h"
 #include <math.h>
 #include <string.h>
+static int priority(const cJSON *card)
+{
+    const cJSON *s=cJSON_GetObjectItemCaseSensitive(card,"status");
+    const char *v=cJSON_IsString(s)?s->valuestring:"";
+    return !strcmp(v,"needs_input")?0:!strcmp(v,"working")?1:!strcmp(v,"error")?2:
+           !strcmp(v,"interrupted")?3:!strcmp(v,"unknown")?4:!strcmp(v,"idle")?5:6;
+}
+static double observed(const cJSON *card)
+{
+    const cJSON *v=cJSON_GetObjectItemCaseSensitive(card,"observed_at");
+    return cJSON_IsNumber(v)?v->valuedouble:0;
+}
+int agentdeck_indices(const cJSON *cards,bool all,bool recent,int *out,int capacity)
+{
+    int count=0;
+    for(int i=0;i<cJSON_GetArraySize(cards)&&count<capacity;i++){
+        const cJSON *card=cJSON_GetArrayItem(cards,i);
+        if(!all&&priority(card)>1)continue;
+        int at=count;
+        while(at>0){
+            const cJSON *previous=cJSON_GetArrayItem(cards,out[at-1]);
+            bool before=recent?observed(card)>observed(previous):
+                priority(card)<priority(previous)||(priority(card)==priority(previous)&&observed(card)>observed(previous));
+            if(!before)break;
+            out[at]=out[at-1];at--;
+        }
+        out[at]=i;count++;
+    }
+    return count;
+}
+bool agentdeck_action_allowed(const char *action)
+{
+    return action&&(!strcmp(action,"verify-projects")||!strcmp(action,"build-amoled"));
+}
 static bool text(cJSON *to, const cJSON *from, const char *key, unsigned max, bool required)
 {
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(from, key);

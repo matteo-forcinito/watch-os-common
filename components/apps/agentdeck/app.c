@@ -5,9 +5,11 @@
 #include "ui/ui.h"
 #include "hardware/board.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "model.h"
+#include "critter.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -23,9 +25,17 @@ static int64_t received;
 static bool active;
 static lv_obj_t *root, *header;
 static lv_timer_t *timer;
+static lv_obj_t *sprites[5];
+static int sprite_count;
 static int offset, selected = -1;
 static char selected_id[101];
 static bool dashboard;
+static bool show_all, sort_recent, controls;
+static const char *confirmation;
+static struct {
+    char id[33],action[32],status[24],result_id[80],message[181];
+} command;
+static int64_t control_seen;
 static void render(void);
 static bool back(void);
 static void gesture(lv_event_t *event)
@@ -35,7 +45,7 @@ static void gesture(lv_event_t *event)
     lv_dir_t direction=lv_indev_get_gesture_dir(input);
     if(direction!=LV_DIR_LEFT&&direction!=LV_DIR_RIGHT)return;
     lv_indev_wait_release(input);
-    if(selected>=0||dashboard){back();return;}
+    if(selected>=0||dashboard||controls){back();return;}
     if(direction==LV_DIR_LEFT){offset+=4;render();}
     else if(offset){offset-=4;render();}
     else app_back_user();
@@ -47,6 +57,12 @@ static const char *value(const cJSON *o, const char *key)
 }
 static const char *status_name(const char *s)
 {
+    if (!strcmp(s,"pending")) return "Invio al Surface";
+    if (!strcmp(s,"queued")) return "In coda sul Surface";
+    if (!strcmp(s,"running")) return "In esecuzione";
+    if (!strcmp(s,"succeeded")) return "Riuscito";
+    if (!strcmp(s,"failed")) return "Non riuscito";
+    if (!strcmp(s,"needs_review")) return "Controlla il report sul PC";
     if (!strcmp(s,"working")) return "In corso";
     if (!strcmp(s,"needs_input")) return "Serve il tuo input";
     if (!strcmp(s,"done")) return "Completato";
@@ -57,7 +73,7 @@ static const char *status_name(const char *s)
 }
 static uint32_t accent(const char *s)
 {
-    return !strcmp(s,"needs_input") || !strcmp(s,"working") ? 0xFF9559 :
+    return !strcmp(s,"needs_input") || !strcmp(s,"working") ? 0xFF4D00 :
            !strcmp(s,"done") ? 0xA8D5A0 : !strcmp(s,"error") ? 0xED9191 : 0x959AAB;
 }
 static cJSON *snapshot(void)
@@ -71,6 +87,71 @@ static esp_err_t get_state(httpd_req_t *request)
 {
     if (!appkit_authorized(request)) return appkit_unauthorized(request);
     return appkit_json(request,snapshot());
+}
+static cJSON *control_snapshot(void)
+{
+    cJSON *out=cJSON_CreateObject(),*item=cJSON_AddObjectToObject(out,"request");
+    cJSON_AddNumberToObject(out,"protocol",1);
+    xSemaphoreTake(lock,portMAX_DELAY);
+    cJSON_AddStringToObject(item,"id",command.id);cJSON_AddStringToObject(item,"action",command.action);
+    cJSON_AddStringToObject(item,"status",command.status);cJSON_AddStringToObject(item,"result_id",command.result_id);
+    cJSON_AddStringToObject(item,"message",command.message);
+    xSemaphoreGive(lock);
+    return out;
+}
+static bool enqueue(const char *action)
+{
+    if(!agentdeck_action_allowed(action))return false;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    bool busy=!strcmp(command.status,"pending")||!strcmp(command.status,"queued")||!strcmp(command.status,"running");
+    if(!busy){
+        memset(&command,0,sizeof(command));
+        snprintf(command.id,sizeof(command.id),"%08lx%08lx%08lx%08lx",(unsigned long)esp_random(),(unsigned long)esp_random(),(unsigned long)esp_random(),(unsigned long)esp_random());
+        snprintf(command.action,sizeof(command.action),"%s",action);
+        snprintf(command.status,sizeof(command.status),"pending");
+        snprintf(command.message,sizeof(command.message),"In attesa di Aetherion sul Surface");
+    }
+    xSemaphoreGive(lock);
+    if(!busy)state_bump(STATE_AGENTDECK_VERSION);
+    return !busy;
+}
+static esp_err_t get_control(httpd_req_t *request)
+{
+    if(!appkit_authorized(request))return appkit_unauthorized(request);
+    xSemaphoreTake(lock,portMAX_DELAY);bool reconnected=!control_seen||esp_timer_get_time()-control_seen>20000000;control_seen=esp_timer_get_time();xSemaphoreGive(lock);
+    if(reconnected)state_bump(STATE_AGENTDECK_VERSION);
+    return appkit_json(request,control_snapshot());
+}
+static esp_err_t request_control(httpd_req_t *request)
+{
+    if(!appkit_authorized(request))return appkit_unauthorized(request);
+    char *raw=appkit_body(request,512);cJSON *input=raw?cJSON_Parse(raw):NULL;free(raw);
+    bool allowed=cJSON_IsObject(input)&&cJSON_GetArraySize(input)==1&&agentdeck_action_allowed(value(input,"action"));
+    bool accepted=allowed&&enqueue(value(input,"action"));cJSON_Delete(input);
+    if(!allowed)return appkit_error(request,"400 Bad Request","Azione non consentita");
+    if(!accepted)return appkit_error(request,"409 Conflict","Richiesta gia in corso");
+    return appkit_json(request,control_snapshot());
+}
+static esp_err_t acknowledge_control(httpd_req_t *request)
+{
+    if(!appkit_authorized(request))return appkit_unauthorized(request);
+    char *raw=appkit_body(request,1024);cJSON *input=raw?cJSON_Parse(raw):NULL;free(raw);
+    const char *status=value(input,"status"),*id=value(input,"id");
+    bool valid=cJSON_IsObject(input)&&strlen(value(input,"message"))<=180&&strlen(value(input,"result_id"))<=79&&
+        (!strcmp(status,"queued")||!strcmp(status,"running")||!strcmp(status,"succeeded")||!strcmp(status,"failed")||!strcmp(status,"cancelled")||!strcmp(status,"interrupted")||!strcmp(status,"needs_review"));
+    if(!valid){cJSON_Delete(input);return appkit_error(request,"400 Bad Request","Esito non valido");}
+    xSemaphoreTake(lock,portMAX_DELAY);
+    bool match=command.id[0]&&!strcmp(command.id,id);
+    bool changed=match&&(strcmp(command.status,status)||strcmp(command.message,value(input,"message"))||strcmp(command.result_id,value(input,"result_id")));
+    if(match){
+        snprintf(command.status,sizeof(command.status),"%s",status);
+        snprintf(command.message,sizeof(command.message),"%s",value(input,"message"));
+        snprintf(command.result_id,sizeof(command.result_id),"%s",value(input,"result_id"));
+    }
+    xSemaphoreGive(lock);cJSON_Delete(input);
+    if(!match)return appkit_error(request,"409 Conflict","Richiesta non piu attuale");
+    if(changed)state_bump(STATE_AGENTDECK_VERSION);
+    return appkit_json(request,control_snapshot());
 }
 static esp_err_t push(httpd_req_t *request)
 {
@@ -95,17 +176,26 @@ static esp_err_t push(httpd_req_t *request)
 }
 static const httpd_uri_t routes[] = {
     {.uri="/api/state",.method=HTTP_GET,.handler=get_state},
-    {.uri="/api/snapshot",.method=HTTP_POST,.handler=push}
+    {.uri="/api/snapshot",.method=HTTP_POST,.handler=push},
+    {.uri="/api/control",.method=HTTP_GET,.handler=get_control},
+    {.uri="/api/control",.method=HTTP_POST,.handler=acknowledge_control},
+    {.uri="/api/control/request",.method=HTTP_POST,.handler=request_control}
 };
 static const appkit_web_config_t config = {.name="AgentDeck",.page_start=deck_start,.page_end=deck_end,
     .routes=routes,.route_count=sizeof(routes)/sizeof(routes[0]),.hotspot=true};
 static void click(lv_event_t *event)
 {
     intptr_t key=(intptr_t)lv_event_get_user_data(event);
-    if(key==-1){selected=-1;selected_id[0]=0;dashboard=false;}
+    if(key==-1){selected=-1;selected_id[0]=0;dashboard=false;controls=false;confirmation=NULL;}
     else if(key==-2){offset=offset>=4?offset-4:0;}
     else if(key==-3){offset+=4;}
     else if(key==-4){dashboard=true;selected=-1;}
+    else if(key==-5){show_all=!show_all;offset=0;}
+    else if(key==-6){sort_recent=!sort_recent;offset=0;}
+    else if(key==-7){controls=true;selected=-1;confirmation=NULL;}
+    else if(key==-8){confirmation="verify-projects";}
+    else if(key==-9){confirmation="build-amoled";}
+    else if(key==-10){if(confirmation)enqueue(confirmation);confirmation=NULL;}
     else {
         selected=(int)key;
         cJSON *copy=snapshot();
@@ -117,6 +207,7 @@ static void click(lv_event_t *event)
 static void caption(lv_timer_t *unused)
 {
     (void)unused;
+    for(int i=0;i<sprite_count;i++)lv_obj_invalidate(sprites[i]);
     if (!header) return;
     xSemaphoreTake(lock,portMAX_DELAY);int64_t at=received;xSemaphoreGive(lock);
     int age=at?(int)((esp_timer_get_time()-at)/1000000):-1;
@@ -125,23 +216,28 @@ static void caption(lv_timer_t *unused)
     else if(age>20) snprintf(text,sizeof(text),"Offline - ultimi dati %d s fa",age);
     else snprintf(text,sizeof(text),"Monitor collegato - %d s fa",age);
     lv_label_set_text(header,text);
-    lv_obj_set_style_text_color(header,ui_color(age>=0&&age<=20?0xA8D5A0:0xFF9559),0);
+    lv_obj_set_style_text_color(header,ui_color(age>=0&&age<=20?0xA8D5A0:0xFF4D00),0);
 }
-static void robot(lv_obj_t *parent, const cJSON *card, int size)
+static void draw_robot(lv_event_t *event)
 {
-    unsigned hash=0;for(const unsigned char *p=(const unsigned char *)value(card,"repo");*p;p++)hash=hash*31+*p;
-    static const uint32_t colors[]={0xA8BBFA,0xE7AA89,0xB6CCA4,0xCCB0E0,0xE2CA85};
-    lv_obj_t *body=lv_obj_create(parent);lv_obj_remove_style_all(body);lv_obj_set_size(body,size,size);
-    lv_obj_remove_flag(body,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
-    static const uint8_t blocks[][4]={{4,5,8,6},{3,7,1,3},{12,7,1,3},{5,11,2,2},{9,11,2,2},{5,3,6,2},{5,7,2,2},{9,7,2,2},{7,10,2,1},{4,3,8,2},{6,1,4,2}};
-    for(unsigned i=0;i<sizeof(blocks)/sizeof(blocks[0]);i++){
-        lv_obj_t *pixel=lv_obj_create(body);lv_obj_remove_style_all(pixel);
-        lv_obj_set_pos(pixel,blocks[i][0]*size/16,blocks[i][1]*size/16);
-        lv_obj_set_size(pixel,blocks[i][2]*size/16,blocks[i][3]*size/16);
-        lv_obj_set_style_bg_opa(pixel,LV_OPA_COVER,0);
-        lv_obj_set_style_bg_color(pixel,ui_color(i>=6&&i<=8?0x20232A:i>=9?(!strcmp(value(card,"agent"),"claude")?0xF19462:0xA8BBFA):colors[hash%5]),0);
-        lv_obj_remove_flag(pixel,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
-    }
+    critter_t *critter=lv_event_get_user_data(event);
+    if(lv_event_get_code(event)==LV_EVENT_DELETE){free(critter);return;}
+    lv_obj_t *object=lv_event_get_target(event);lv_area_t area;lv_obj_get_coords(object,&area);
+    critter_draw(lv_event_get_layer(event),critter,area.x1,area.y1,lv_obj_get_width(object)/18.0f,(uint32_t)(esp_timer_get_time()/1000));
+}
+static void robot(lv_obj_t *parent,const cJSON *card,int size)
+{
+    critter_t *critter=calloc(1,sizeof(*critter));if(!critter)return;
+    const char *status=value(card,"status");
+    critter->onigiri=!strcmp(value(card,"agent"),"codex");
+    critter->body=critter->onigiri?0x4FB3A6:!strcmp(value(card,"agent"),"claude")?0xC98B6B:0xA8BBFA;
+    critter->cut=0x141412;
+    critter->pose=!strcmp(status,"working")?POSE_WRITE:!strcmp(status,"needs_input")?POSE_WAIT:
+        !strcmp(status,"error")||!strcmp(status,"interrupted")?POSE_ERR:!strcmp(status,"done")?POSE_CELEBRATE:POSE_IDLE;
+    lv_obj_t *object=lv_obj_create(parent);lv_obj_remove_style_all(object);lv_obj_set_size(object,size,size*13/18);
+    lv_obj_remove_flag(object,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(object,draw_robot,LV_EVENT_DRAW_MAIN,critter);lv_obj_add_event_cb(object,draw_robot,LV_EVENT_DELETE,critter);
+    if(sprite_count<5)sprites[sprite_count++]=object;
 }
 static void label(lv_obj_t *parent,const char *text, uint32_t color)
 {
@@ -162,11 +258,36 @@ static void render(void)
 {
     if(!active||!root)return;
     int scroll=selected>=0?lv_obj_get_scroll_y(root):0;
-    lv_obj_clean(root);header=NULL;
+    sprite_count=0;lv_obj_clean(root);header=NULL;
     ui_title(root,"Agent Deck");
-    if(dashboard){appkit_dashboard_page(root,ui_color(0xFF9559));ui_button(root,"Torna al deck",0x30333A,click,(void *)-1);return;}
+    if(dashboard){appkit_dashboard_page(root,ui_color(0xFF4D00));ui_button(root,"Torna al deck",0x30333A,click,(void *)-1);return;}
     header=lv_label_create(root);lv_obj_set_style_text_font(header,UI_FONT_SMALL,0);caption(NULL);
+    if(controls){
+        ui_title(root,"Aetherion / comandi");
+        xSemaphoreTake(lock,portMAX_DELAY);int64_t seen=control_seen;xSemaphoreGive(lock);
+        label(root,seen&&esp_timer_get_time()-seen<20000000?"Surface collegato":"Apri Aetherion sul Surface",0xA8BBFA);
+        if(confirmation){
+            label(root,!strcmp(confirmation,"build-amoled")?"Compilare il firmware AMOLED sul Surface? Nessun flash automatico.":"Avviare le verifiche dei progetti configurati sul Surface?",0xE8E4DC);
+            ui_button(root,"Conferma avvio",0xFF4D00,click,(void *)-10);
+        }else{
+            cJSON *state=control_snapshot(),*item=cJSON_GetObjectItemCaseSensitive(state,"request");
+            if(value(item,"id")[0]){
+                ui_section(root,!strcmp(value(item,"action"),"build-amoled")?"Build AMOLED":"Verifica progetti");
+                label(root,status_name(value(item,"status")),0xFF4D00);label(root,value(item,"message"),0xE8E4DC);
+                if(value(item,"result_id")[0])label(root,value(item,"result_id"),0xA8BBFA);
+            }
+            bool busy=!strcmp(value(item,"status"),"pending")||!strcmp(value(item,"status"),"queued")||!strcmp(value(item,"status"),"running");
+            if(!busy){
+                ui_button(root,"Verifica progetti",0x30333A,click,(void *)-8);
+                ui_button(root,"Compila AMOLED 1.8",0x30333A,click,(void *)-9);
+            }
+            cJSON_Delete(state);
+        }
+        label(root,"Richiesta conservata fino alla chiusura dell'app. Lavori gia presi in carico restano sul PC.",0x959AAB);
+        ui_button(root,"Torna al deck",0x30333A,click,(void *)-1);return;
+    }
     cJSON *copy=snapshot(),*cards=cJSON_GetObjectItemCaseSensitive(copy,"cards");int count=cJSON_GetArraySize(cards);
+    int indices[16],visible=agentdeck_indices(cards,show_all,sort_recent,indices,16);
     if(selected>=0){
         cJSON *card=NULL;
         for(int i=0;i<count;i++)if(!strcmp(value(cJSON_GetArrayItem(cards,i),"id"),selected_id)){card=cJSON_GetArrayItem(cards,i);selected=i;break;}
@@ -174,7 +295,7 @@ static void render(void)
         else {
             robot(root,card,80);ui_title(root,value(card,"name"));
             label(root,status_name(value(card,"status")),accent(value(card,"status")));
-            label(root,value(card,"activity"),0xEEEAE2);
+            label(root,value(card,"activity"),0xE8E4DC);
             timestamp_label(root,"Rilevato:",cJSON_GetObjectItemCaseSensitive(card,"observed_at"));
             ui_section(root,"Progetto");label(root,value(card,"repo"),0xA8BBFA);label(root,value(card,"branch"),0x959AAB);
             if(value(card,"commit")[0])label(root,value(card,"commit"),0x959AAB);
@@ -190,42 +311,51 @@ static void render(void)
                 timestamp_label(root,"Reset:",cJSON_GetObjectItemCaseSensitive(q,"resets_at"));
             }
             if(value(card,"resume")[0]){ui_section(root,"Riprendi dal PC");label(root,value(card,"resume"),0xA8BBFA);}
-            if(!strcmp(value(card,"status"),"needs_input"))label(root,"Rispondi nella sessione originale sul PC",0xFF9559);
+            if(!strcmp(value(card,"status"),"needs_input"))label(root,"Rispondi nella sessione originale sul PC",0xFF4D00);
         }
         ui_button(root,"Tutte le sessioni",0x30333A,click,(void *)-1);
-    }else if(!count){
+    }else if(!visible){
+        if(count)label(root,"Nessuna sessione attiva. Premi Filtro: tutte per la cronologia.",0x959AAB);
+        else {
         label(root,"Apri il monitor sul PC e associa questo dispositivo dalla dashboard.",0x959AAB);
         label(root,"Codex e Claude Code compaiono dai loro dati locali. Build e rilasci vengono tracciati dal monitor.",0x959AAB);
+        }
     }else{
-        if(offset>=count)offset=0;
+        if(offset>=visible)offset=0;
         lv_obj_t *grid=lv_obj_create(root);lv_obj_remove_style_all(grid);lv_obj_set_width(grid,LV_PCT(100));lv_obj_set_height(grid,LV_SIZE_CONTENT);
         lv_obj_set_flex_flow(grid,LV_FLEX_FLOW_ROW_WRAP);lv_obj_set_style_pad_column(grid,8,0);lv_obj_set_style_pad_row(grid,8,0);
         int width=board_info()->width;int tile_height=board_info()->height/2-85;
         if(tile_height<126)tile_height=126;
-        for(int i=offset;i<count&&i<offset+4;i++){
+        for(int position=offset;position<visible&&position<offset+4;position++){
+            int i=indices[position];
             cJSON *card=cJSON_GetArrayItem(cards,i);const char *status=value(card,"status");
             lv_obj_t *tile=lv_obj_create(grid);lv_obj_set_width(tile,LV_PCT(48));lv_obj_set_height(tile,tile_height);
             lv_obj_set_style_bg_color(tile,ui_color(!strcmp(status,"needs_input")?0x583820:!strcmp(status,"working")?0x211B18:0x15171B),0);
             lv_obj_set_style_border_color(tile,ui_color(accent(status)),0);lv_obj_set_style_border_width(tile,1,0);
-            lv_obj_set_style_radius(tile,12,0);lv_obj_set_style_pad_all(tile,8,0);lv_obj_set_style_pad_row(tile,3,0);
+            lv_obj_set_style_radius(tile,4,0);lv_obj_set_style_pad_all(tile,8,0);lv_obj_set_style_pad_row(tile,3,0);
             lv_obj_set_flex_flow(tile,LV_FLEX_FLOW_COLUMN);lv_obj_set_flex_align(tile,LV_FLEX_ALIGN_START,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
             lv_obj_remove_flag(tile,LV_OBJ_FLAG_SCROLLABLE);lv_obj_add_event_cb(tile,click,LV_EVENT_CLICKED,(void *)(intptr_t)i);
             robot(tile,card,width>=360?48:32);
-            label(tile,value(card,"name"),0xEEEAE2);
+            label(tile,value(card,"name"),0xE8E4DC);
             /* Limit tile labels to one line; detail contains the full text. */
             lv_obj_t *name=lv_obj_get_child(tile,-1);lv_label_set_long_mode(name,LV_LABEL_LONG_DOT);
             label(tile,!strcmp(status,"needs_input")?"Input richiesto":status_name(status),accent(status));
             label(tile,value(card,"repo"),0x959AAB);lv_label_set_long_mode(lv_obj_get_child(tile,-1),LV_LABEL_LONG_DOT);
             const cJSON *context=cJSON_GetObjectItemCaseSensitive(card,"context_percent");
-            if(cJSON_IsNumber(context)){lv_obj_t *bar=lv_bar_create(tile);lv_obj_set_size(bar,LV_PCT(100),3);lv_bar_set_value(bar,(int)context->valuedouble,LV_ANIM_OFF);lv_obj_set_style_bg_color(bar,ui_color(0xFF9559),LV_PART_INDICATOR);}
+            if(cJSON_IsNumber(context)){lv_obj_t *bar=lv_bar_create(tile);lv_obj_set_size(bar,LV_PCT(100),3);lv_bar_set_value(bar,(int)context->valuedouble,LV_ANIM_OFF);lv_obj_set_style_bg_color(bar,ui_color(0xFF4D00),LV_PART_INDICATOR);}
         }
-        char position[48];snprintf(position,sizeof(position),"Pagina %d / %d",offset/4+1,(count+3)/4);label(root,position,0x959AAB);
+        char position[48];snprintf(position,sizeof(position),"Pagina %d / %d",offset/4+1,(visible+3)/4);label(root,position,0x959AAB);
         if(offset)ui_button(root,"Precedenti",0x30333A,click,(void *)-2);
-        if(offset+4<count)ui_button(root,"Successive",0x30333A,click,(void *)-3);
+        if(offset+4<visible)ui_button(root,"Successive",0x30333A,click,(void *)-3);
         const cJSON *total=cJSON_GetObjectItemCaseSensitive(copy,"total");
         if(cJSON_IsNumber(total)&&total->valueint>count)label(root,"Altre sessioni disponibili sul PC",0x959AAB);
     }
     cJSON_Delete(copy);
+    if(selected<0){
+        ui_button(root,show_all?"Filtro: tutte":"Filtro: attive",0x30333A,click,(void *)-5);
+        ui_button(root,sort_recent?"Ordine: recenti":"Ordine: priorita",0x30333A,click,(void *)-6);
+        ui_button(root,"Comandi Aetherion",0xFF4D00,click,(void *)-7);
+    }
     ui_button(root,"Collegamento / dashboard",0x30333A,click,(void *)-4);
     if(scroll)lv_obj_scroll_to_y(root,scroll,LV_ANIM_OFF);
 }
@@ -239,29 +369,31 @@ static void create(lv_obj_t *screen,void *arg)
 {
     (void)arg;
     if(!lock)lock=xSemaphoreCreateMutexStatic(&lock_memory);
-    active=true;offset=0;selected=-1;selected_id[0]=0;dashboard=false;
+    active=true;offset=0;selected=-1;selected_id[0]=0;dashboard=false;show_all=false;sort_recent=false;controls=false;confirmation=NULL;
     root=ui_page(screen,NULL);
+    lv_obj_set_style_bg_color(root,ui_color(0x0A0A0A),0);lv_obj_set_style_bg_opa(root,LV_OPA_COVER,0);
     lv_obj_set_style_pad_top(root,board_info()->round?36:12,0);
     lv_obj_set_style_pad_bottom(root,board_info()->round?30:20,0);
     render();
     lv_obj_add_event_cb(screen,gesture,LV_EVENT_GESTURE,NULL);
     lv_subject_add_observer_obj(state_subject(STATE_AGENTDECK_VERSION),changed,root,NULL);
-    timer=lv_timer_create(caption,1000,NULL);
+    timer=lv_timer_create(caption,250,NULL);
     appkit_web_start(&config);
     appkit_web_activate(); /* This app's requested function is a live PC link. */
 }
 static void destroy(void)
 {
-    active=false;header=NULL;root=NULL;
+    active=false;sprite_count=0;header=NULL;root=NULL;
     if(timer){lv_timer_delete(timer);timer=NULL;}
     appkit_web_stop_if(&config);
-    xSemaphoreTake(lock,portMAX_DELAY);cJSON_Delete(document);document=NULL;free(canonical);canonical=NULL;received=0;xSemaphoreGive(lock);
+    xSemaphoreTake(lock,portMAX_DELAY);cJSON_Delete(document);document=NULL;free(canonical);canonical=NULL;received=0;control_seen=0;memset(&command,0,sizeof(command));xSemaphoreGive(lock);
 }
 static bool back(void)
 {
-    if(selected>=0||dashboard){selected=-1;selected_id[0]=0;dashboard=false;render();return true;}
+    if(confirmation){confirmation=NULL;render();return true;}
+    if(selected>=0||dashboard||controls){selected=-1;selected_id[0]=0;dashboard=false;controls=false;render();return true;}
     return false;
 }
-const app_t agentdeck_app={.id="agentdeck",.name="Agent Deck",.icon=LV_SYMBOL_LIST,.color=0xFF9559,.flags=APP_FLAG_NO_BACK_GESTURE|APP_FLAG_STAY_ON_WAKE,
+const app_t agentdeck_app={.id="agentdeck",.name="Agent Deck",.icon=LV_SYMBOL_LIST,.color=0xFF4D00,.flags=APP_FLAG_NO_BACK_GESTURE|APP_FLAG_STAY_ON_WAKE,
     .create=create,.destroy=destroy,.back=back,
     .about="Stato locale di Codex, Claude Code, build e rilasci. Monitor PC richiesto, nessun processo in background ad app chiusa."};

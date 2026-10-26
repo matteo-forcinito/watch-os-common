@@ -25,6 +25,14 @@ int main(void){
  o=cJSON_Parse(valid);card=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(o,"cards"),0);cJSON *q=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(card,"quota"),0);cJSON_SetNumberValue(cJSON_GetObjectItemCaseSensitive(q,"remaining_percent"),-1);assert(!agentdeck_validate(o));cJSON_Delete(o);
  o=cJSON_Parse(valid);card=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(o,"cards"),0);char name[102];memset(name,'a',101);name[101]=0;cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(card,"name"),name);assert(!agentdeck_validate(o));cJSON_Delete(o);
  o=cJSON_Parse(valid);cards=cJSON_GetObjectItemCaseSensitive(o,"cards");for(int i=0;i<16;i++)cJSON_AddItemToArray(cards,cJSON_CreateObject());assert(!agentdeck_validate(o));cJSON_Delete(o);
+
+ assert(agentdeck_action_allowed("verify-projects"));assert(agentdeck_action_allowed("build-amoled"));
+ assert(!agentdeck_action_allowed("flash"));assert(!agentdeck_action_allowed("shell"));assert(!agentdeck_action_allowed(NULL));
+ cards=cJSON_Parse("[{\"status\":\"done\",\"observed_at\":99},{\"status\":\"working\",\"observed_at\":2},{\"status\":\"needs_input\",\"observed_at\":1},{\"status\":\"working\",\"observed_at\":3}]");
+ int ix[16];assert(agentdeck_indices(cards,0,0,ix,16)==3);assert(ix[0]==2&&ix[1]==3&&ix[2]==1);
+ assert(agentdeck_indices(cards,1,1,ix,16)==4);assert(ix[0]==0&&ix[1]==3);
+ assert(agentdeck_indices(cards,1,0,ix,1)==1);assert(ix[0]==0);cJSON_Delete(cards);
+ assert(agentdeck_indices(NULL,0,0,ix,16)==0);
  puts("DEVICE MODEL PASS: bounds, canonical fields, duplicate IDs, context and quota limits");
 }
 ''',encoding='utf-8')
