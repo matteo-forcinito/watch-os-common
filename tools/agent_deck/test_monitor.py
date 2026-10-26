@@ -31,6 +31,33 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(m.codex_activity(path,time.time()+240)['status'],'unknown')
         path = self.transcript([dict(type='event_msg',payload=dict(type='task_complete'))])
         self.assertEqual(m.codex_activity(path)['status'],'done')
+    def test_task_survives_tool_events_and_context_is_excluded(self):
+        envelope='Rules\nAETHERION_CONTEXT_JSON\n'+json.dumps({'sections':{'private':'do not show'}})+'\n\nAdd mission progress'
+        path=self.transcript([
+            dict(type='event_msg',payload=dict(type='user_message',message=envelope)),
+            dict(type='event_msg',payload=dict(type='agent_message',phase='commentary',message='Inspecting mission tracking')),
+            dict(type='response_item',payload=dict(type='function_call',name='exec_command',call_id='tool'))])
+        result=m.codex_activity(path)
+        self.assertEqual(result['task_description'],'Add mission progress')
+        self.assertEqual(result['last_update'],'Inspecting mission tracking')
+        self.assertIn('exec_command',result['step']);self.assertIn('Add mission progress',result['activity'])
+        self.assertNotIn('private',result['activity'])
+        monitor=m.Monitor(SimpleNamespace(data=self.root,workspace=self.root,device_config=None))
+        compact=json.loads(monitor.compact(dict(agents=[dict(result,id='codex:one',agent='codex',name='Codex')],jobs=[],generated_at=time.time())))
+        self.assertIn('Add mission progress',compact['cards'][0]['activity'])
+        self.assertEqual(m.task_description('AETHERION_CONTEXT_JSON\ninvalid'), '')
+
+    def test_large_rollout_keeps_goal_and_latest_step(self):
+        path=self.transcript([
+            dict(type='response_item',payload=dict(type='message',role='user',content=[dict(type='input_text',text='Add progress indicators')])),
+            dict(type='response_item',payload=dict(type='custom_tool_call_output',output='x'*300000)),
+            dict(type='response_item',payload=dict(type='message',role='assistant',phase='commentary',content=[dict(type='output_text',text='Checking parser')])),
+            dict(type='response_item',payload=dict(type='function_call',name='exec_command',call_id='current'))])
+        item=m.codex_activity(path)
+        self.assertEqual(item['task_description'],'Add progress indicators')
+        self.assertEqual(item['last_update'],'Checking parser')
+        self.assertIn('exec_command',item['step'])
+
     def test_context_is_not_cumulative_tokens(self):
         path=self.transcript([dict(type='event_msg',payload=dict(type='token_count',info=dict(model_context_window=1000,last_token_usage=dict(total_tokens=100),total_token_usage=dict(total_tokens=200000)),rate_limits=dict(primary=dict(used_percent=25,resets_at=2000000000))))])
         result=m.codex_activity(path)

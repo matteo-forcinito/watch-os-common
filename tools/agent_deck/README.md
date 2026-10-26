@@ -90,3 +90,12 @@ Il Surface continua a interrogare solo l'AMOLED gia associata. Non apre porte
 PC sulla LAN e non assegna al dispositivo permessi shell, flash o pubblicazione.
 Il supporto richiede il nuovo firmware; l'assenza del flag assistant.supported
 conserva la compatibilita con la precedente console a due comandi.
+
+## Descrizione del lavoro osservato
+
+Le sessioni Codex espongono obiettivo, passo osservato e ultimo aggiornamento testuale.
+Il monitor legge una porzione iniziale e la coda del rollout: output molto grandi non
+fanno sparire la richiesta iniziale. Il contesto JSON Aetherion viene escluso dalla
+descrizione. Le tessere device ricevono lo stesso obiettivo nel campo activity,
+compatibile con il firmware esistente. Una richiesta descrive il lavoro, non ne prova
+il completamento; senza eventi disponibili non viene inventata una descrizione.

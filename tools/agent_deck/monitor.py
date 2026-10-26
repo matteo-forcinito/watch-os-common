@@ -86,13 +86,42 @@ def pair_device(url, code, target):
     target=Path(target);target.parent.mkdir(parents=True,exist_ok=True)
     temporary=target.with_suffix('.tmp');temporary.write_text(json.dumps({'url':url,'token':token}),encoding='utf-8');temporary.replace(target)
 
+def session_events(path):
+    # Keep the initial goal visible even after large tool output leaves the tail.
+    try:
+        if Path(path).stat().st_size>262144:
+            with Path(path).open('rb') as stream:
+                head=stream.read(131072)
+            for line in head.splitlines()[:-1]:
+                try:
+                    item=json.loads(line)
+                    if isinstance(item,dict):yield item
+                except (ValueError,UnicodeError):pass
+    except OSError:pass
+    yield from bounded_json_lines(path)
+
+
+def task_description(message):
+    """Only a bounded user goal, excluding the Aetherion context envelope."""
+    if not isinstance(message,str): return ''
+    marker='AETHERION_CONTEXT_JSON\n'
+    if marker in message:
+        try:
+            tail=message.split(marker,1)[1]
+            _,end=json.JSONDecoder().raw_decode(tail)
+            message=tail[end:].strip()
+        except (ValueError,TypeError): return ''
+    if not message or message.startswith(('<environment_context>','<permissions')):return ''
+    return clean(message.split('\n\nLavora nel workspace isolato.',1)[0].strip(),240)
+
+
 def codex_activity(path, now=None):
     now = now or time.time()
     result = {"status": "unknown", "activity": "Stato non disponibile", "context_percent": None,
               "tokens": None, "token_usage": {}, "context_used": None,"context_window":None,"usage_observed_at":None,
-              "cost_usd":None,"cost_kind":"unavailable","quota": [], "quota_observed_at": None, "source": "codex_rollout", "observed_at": 0}
+              "task_description":"", "last_update":"", "step":"", "cost_usd":None,"cost_kind":"unavailable","quota": [], "quota_observed_at": None, "source": "codex_rollout", "observed_at": 0}
     pending = set()
-    for event in bounded_json_lines(path):
+    for event in session_events(path):
         payload = event.get("payload") or {}
         if not isinstance(payload, dict): continue
         when = stamp(event.get("timestamp"))
@@ -104,6 +133,11 @@ def codex_activity(path, now=None):
         if event.get("type") == "event_msg":
             if kind in ("task_started", "turn_started", "user_message"):
                 result.update(status="working", activity="In elaborazione")
+                if kind=='user_message':
+                    description=task_description(payload.get('message',''))
+                    if description:result['task_description']=description
+            elif kind=='agent_message' and payload.get('phase')!='final_answer':
+                result['last_update']=clean(payload.get('message',''),220)
             elif kind in ("task_complete", "turn_complete", "task_completed"):
                 result.update(status="done", activity="Turno completato")
                 pending.clear()
@@ -127,6 +161,14 @@ def codex_activity(path, now=None):
                 if windows:
                     result["quota"] = windows
                     result["quota_observed_at"] = when
+        if event.get('type')=='response_item' and kind=='message':
+            content=payload.get('content') or []
+            text='\n\n'.join(x.get('text','') for x in content if isinstance(x,dict) and isinstance(x.get('text'),str))
+            if payload.get('role')=='user':
+                description=task_description(text)
+                if description:result['task_description']=description
+            elif payload.get('role')=='assistant' and payload.get('phase')=='commentary':
+                result['last_update']=clean(text,220)
         if event.get("type") == "response_item":
             if kind in ("function_call", "custom_tool_call"):
                 name = str(payload.get("name", ""))
@@ -153,6 +195,9 @@ def codex_activity(path, now=None):
     age = now-result["observed_at"]
     if age > 180 and result["status"] == "working":
         result.update(status="unknown", activity="Nessun evento recente: esecuzione non confermata")
+    result['step']=result['activity']
+    if result['task_description']:
+        result['activity']=clean(result['task_description'],120)+' | '+clean(result['step'],100)
     return result
 
 def codex_sessions(home, now=None):
@@ -174,7 +219,7 @@ def codex_sessions(home, now=None):
             path = Path(row["rollout_path"]).resolve()
             if not path.is_relative_to(root) or path.suffix != ".jsonl": continue
             item = codex_activity(path, now)
-            item.update(id="codex:"+row["id"], session_id=row["id"], agent="codex", name=clean(row.get("title") or "Codex", 100),
+            item.update(id="codex:"+row["id"], session_id=row["id"], agent="codex", name=clean(item.get("task_description") or row.get("title") or "Codex", 100),
                         repo=clean(Path(row.get("cwd") or ".").name, 80), cwd=clean(row.get("cwd"), 300),
                         branch=clean(row.get("git_branch"), 100), commit=clean(row.get("git_sha"), 40), model=clean(item.get('model') or row.get("model"), 80),
                         resume="codex resume "+row["id"], capabilities=["observe", "resume_in_terminal"])
@@ -340,7 +385,7 @@ class Monitor:
         # Device has a deliberately bounded RAM budget; full detail stays on PC.
         cards = []
         for item in sorted(full["agents"]+full["jobs"], key=lambda x: (x["status"] != "needs_input", x["status"] != "working", -x.get("observed_at", 0)))[:16]:
-            card={k: item.get(k) for k in ("id", "agent", "name", "status", "activity", "repo", "branch", "commit", "model", "context_percent", "context_used","context_window","tokens","observed_at", "quota", "resume")}
+            card={k: item.get(k) for k in ("id", "agent", "name", "status", "activity", "task_description", "last_update", "step", "repo", "branch", "commit", "model", "context_percent", "context_used","context_window","tokens","observed_at", "quota", "resume")}
             usage=item.get('token_usage') or {}
             for source,target in [('input_tokens','tokens_input'),('cached_input_tokens','tokens_cached'),('output_tokens','tokens_output')]:
                 if source in usage:card[target]=usage[source]
