@@ -33,7 +33,7 @@ int agentdeck_indices(const cJSON *cards,bool all,bool recent,int *out,int capac
 }
 bool agentdeck_action_allowed(const char *action)
 {
-    return action&&(!strcmp(action,"verify-projects")||!strcmp(action,"build-amoled"));
+    return action&&(!strcmp(action,"verify-projects")||!strcmp(action,"build-amoled")||!strcmp(action,"assistant-message"));
 }
 static bool text(cJSON *to, const cJSON *from, const char *key, unsigned max, bool required)
 {

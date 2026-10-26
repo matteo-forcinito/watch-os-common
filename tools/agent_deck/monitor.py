@@ -131,12 +131,13 @@ def codex_activity(path, now=None):
             if kind in ("function_call", "custom_tool_call"):
                 name = str(payload.get("name", ""))
                 pending.add(payload.get("call_id", ""))
-                if "request_user_input" in name:
+                if "request_user_input" in name or name.endswith('aetherion_ask'):
                     result.update(status="needs_input", activity="Input richiesto: apri Codex per rispondere")
                     try:
                         args=payload.get("arguments",payload.get("input",{}))
                         if isinstance(args,str): args=json.loads(args[:16384])
                         questions=args.get("questions",[]) if isinstance(args,dict) else []
+                        if isinstance(args,dict) and args.get('question'):result['activity']='Input: '+clean(args['question'],220)
                         if questions and isinstance(questions[0],dict):
                             question=questions[0].get("question",questions[0].get("title",""))
                             if question:result["activity"]="Input: "+clean(question,220)

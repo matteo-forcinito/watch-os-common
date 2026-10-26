@@ -38,6 +38,9 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(result['tokens'],200000)
         self.assertEqual(result['quota'][0]['remaining_percent'],75)
         self.assertEqual(m.quota_windows({'primary':{'used_percent':120}}),[])
+    def test_assistant_question_is_visible_as_waiting_input(self):
+        path=self.transcript([dict(type='response_item',payload=dict(type='function_call',name='aetherion_ask',call_id='q',arguments=json.dumps({'question':'Which device?'})))])
+        result=m.codex_activity(path);self.assertEqual(result['status'],'needs_input');self.assertIn('Which device?',result['activity'])
     def test_cloud_metrics_preserve_exact_counters_without_inventing_spend(self):
         path=self.transcript([dict(type='turn_context',payload=dict(model='actual-model')),
             dict(type='event_msg',payload=dict(type='token_count',info=dict(model_context_window=1000,

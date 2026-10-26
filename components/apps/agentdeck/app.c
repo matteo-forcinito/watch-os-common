@@ -33,9 +33,13 @@ static int offset, selected = -1;
 static char selected_id[101];
 static bool dashboard;
 static bool show_all, sort_recent, controls;
+static bool assistant_view;
+static char assistant_draft[1001],displayed_question[37];
+static struct {char thread_id[37],question_id[37],question[241],message[601];} assistant;
 static const char *confirmation;
 static struct {
     char id[33],action[32],status[24],result_id[80],message[181];
+    char text[1001],question_id[37];
 } command;
 static int64_t control_seen;
 static void render(void);
@@ -99,6 +103,8 @@ static cJSON *control_snapshot(void)
     cJSON_AddStringToObject(item,"id",command.id);cJSON_AddStringToObject(item,"action",command.action);
     cJSON_AddStringToObject(item,"status",command.status);cJSON_AddStringToObject(item,"result_id",command.result_id);
     cJSON_AddStringToObject(item,"message",command.message);
+    cJSON_AddStringToObject(item,"text",command.text);cJSON_AddStringToObject(item,"question_id",command.question_id);
+    cJSON *a=cJSON_AddObjectToObject(out,"assistant");cJSON_AddBoolToObject(a,"supported",true);
     xSemaphoreGive(lock);
     return out;
 }
@@ -125,15 +131,39 @@ static esp_err_t get_control(httpd_req_t *request)
     if(reconnected)state_bump(STATE_AGENTDECK_VERSION);
     return appkit_json(request,control_snapshot());
 }
+static bool assistant_enqueue(const char *text,const char *question_id);
 static esp_err_t request_control(httpd_req_t *request)
 {
     if(!appkit_authorized(request))return appkit_unauthorized(request);
-    char *raw=appkit_body(request,512);cJSON *input=raw?cJSON_Parse(raw):NULL;free(raw);
-    bool allowed=cJSON_IsObject(input)&&cJSON_GetArraySize(input)==1&&agentdeck_action_allowed(value(input,"action"));
-    bool accepted=allowed&&enqueue(value(input,"action"));cJSON_Delete(input);
+    char *raw=appkit_body(request,4096);cJSON *input=raw?cJSON_Parse(raw):NULL;free(raw);
+    bool ai=!strcmp(value(input,"action"),"assistant-message");
+    const cJSON *q=cJSON_GetObjectItemCaseSensitive(input,"question_id"),*t=cJSON_GetObjectItemCaseSensitive(input,"text");
+    bool allowed=cJSON_IsObject(input)&&agentdeck_action_allowed(value(input,"action"))&&
+        (ai?(cJSON_IsString(t)&&t->valuestring[0]&&strlen(t->valuestring)<=1000&&(!q||cJSON_IsString(q))&&strlen(value(input,"question_id"))<=36&&cJSON_GetArraySize(input)==(q?3:2)):cJSON_GetArraySize(input)==1);
+    bool accepted=allowed&&(ai?assistant_enqueue(value(input,"text"),value(input,"question_id")):enqueue(value(input,"action")));cJSON_Delete(input);
     if(!allowed)return appkit_error(request,"400 Bad Request","Azione non consentita");
     if(!accepted)return appkit_error(request,"409 Conflict","Richiesta gia in corso");
     return appkit_json(request,control_snapshot());
+}
+static bool assistant_enqueue(const char *text,const char *question_id)
+{
+    if(!text||!text[0]||strlen(text)>1000||strlen(question_id)>36)return false;
+    if(!enqueue("assistant-message"))return false;
+    xSemaphoreTake(lock,portMAX_DELAY);
+    snprintf(command.text,sizeof(command.text),"%s",text);snprintf(command.question_id,sizeof(command.question_id),"%s",question_id);
+    xSemaphoreGive(lock);return true;
+}
+static esp_err_t assistant_update(httpd_req_t *request)
+{
+    if(!appkit_authorized(request))return appkit_unauthorized(request);
+    char *raw=appkit_body(request,4096);cJSON *input=raw?cJSON_Parse(raw):NULL;free(raw);
+    if(!cJSON_IsObject(input)||strlen(value(input,"thread_id"))>36||strlen(value(input,"question_id"))>36||strlen(value(input,"question"))>240||strlen(value(input,"message"))>600){cJSON_Delete(input);return appkit_error(request,"400 Bad Request","Messaggio assistente non valido");}
+    xSemaphoreTake(lock,portMAX_DELAY);
+    bool changed=strcmp(assistant.question_id,value(input,"question_id"))||strcmp(assistant.message,value(input,"message"));
+    snprintf(assistant.thread_id,sizeof(assistant.thread_id),"%s",value(input,"thread_id"));snprintf(assistant.question_id,sizeof(assistant.question_id),"%s",value(input,"question_id"));
+    snprintf(assistant.question,sizeof(assistant.question),"%s",value(input,"question"));snprintf(assistant.message,sizeof(assistant.message),"%s",value(input,"message"));
+    xSemaphoreGive(lock);cJSON_Delete(input);if(changed)state_bump(STATE_AGENTDECK_VERSION);
+    return appkit_json(request,cJSON_CreateObject());
 }
 static esp_err_t acknowledge_control(httpd_req_t *request)
 {
@@ -182,14 +212,15 @@ static const httpd_uri_t routes[] = {
     {.uri="/api/snapshot",.method=HTTP_POST,.handler=push},
     {.uri="/api/control",.method=HTTP_GET,.handler=get_control},
     {.uri="/api/control",.method=HTTP_POST,.handler=acknowledge_control},
-    {.uri="/api/control/request",.method=HTTP_POST,.handler=request_control}
+    {.uri="/api/control/request",.method=HTTP_POST,.handler=request_control},
+    {.uri="/api/assistant",.method=HTTP_POST,.handler=assistant_update}
 };
 static const appkit_web_config_t config = {.name="AgentDeck",.page_start=deck_start,.page_end=deck_end,
     .routes=routes,.route_count=sizeof(routes)/sizeof(routes[0]),.hotspot=true};
 static void click(lv_event_t *event)
 {
     intptr_t key=(intptr_t)lv_event_get_user_data(event);
-    if(key==-1){selected=-1;selected_id[0]=0;dashboard=false;controls=false;confirmation=NULL;}
+    if(key==-1){selected=-1;selected_id[0]=0;dashboard=false;controls=false;assistant_view=false;confirmation=NULL;}
     else if(key==-2){offset=offset>=4?offset-4:0;}
     else if(key==-3){offset+=4;}
     else if(key==-4){dashboard=true;selected=-1;}
@@ -199,6 +230,8 @@ static void click(lv_event_t *event)
     else if(key==-8){confirmation="verify-projects";}
     else if(key==-9){confirmation="build-amoled";}
     else if(key==-10){if(confirmation)enqueue(confirmation);confirmation=NULL;}
+    else if(key==-11){assistant_view=true;controls=true;}
+    else if(key==-12){if(assistant_enqueue(assistant_draft,displayed_question))assistant_draft[0]=0;}
     else {
         selected=(int)key;
         cJSON *copy=snapshot();
@@ -265,6 +298,12 @@ static void panel_menu(lv_event_t *event)
     if(lv_event_get_code(event)==LV_EVENT_LONG_PRESSED||(point.y<50&&point.x<130)){controls=true;render();}
     (void)event;
 }
+static void draft_changed(lv_event_t *event)
+{
+    const char *text=lv_textarea_get_text(lv_event_get_target(event));size_t n=strlen(text);
+    if(n>=sizeof(assistant_draft)){n=sizeof(assistant_draft)-1;while(n&&((unsigned char)text[n]&0xC0)==0x80)n--;}
+    memcpy(assistant_draft,text,n);assistant_draft[n]=0;
+}
 static void render(void)
 {
     if(!active||!root)return;
@@ -293,7 +332,18 @@ static void render(void)
     if(dashboard){appkit_dashboard_page(root,ui_color(0xFF4D00));ui_button(root,"Torna al deck",0x30333A,click,(void *)-1);return;}
     header=lv_label_create(root);lv_obj_set_style_text_font(header,UI_FONT_SMALL,0);caption(NULL);
     if(controls){
+        if(assistant_view){
+            /* The provider never receives an answer to a question the user did not see. */
+            char question[241],message[601];
+            xSemaphoreTake(lock,portMAX_DELAY);snprintf(question,sizeof(question),"%s",assistant.question);snprintf(message,sizeof(message),"%s",assistant.message);snprintf(displayed_question,sizeof(displayed_question),"%s",assistant.question_id);xSemaphoreGive(lock);
+            ui_title(root,"Assistente Aetherion");label(root,question[0]?question:message,0xE8E4DC);
+            lv_obj_t *input=lv_textarea_create(root);lv_obj_set_width(input,LV_PCT(100));lv_obj_set_height(input,65);lv_textarea_set_max_length(input,500);lv_textarea_set_placeholder_text(input,"Richiesta o risposta...");lv_textarea_set_text(input,assistant_draft);lv_obj_add_event_cb(input,draft_changed,LV_EVENT_VALUE_CHANGED,NULL);
+            ui_button(root,"Invia input",0xFF4D00,click,(void *)-12);
+            lv_obj_t *keyboard=lv_keyboard_create(root);lv_obj_set_size(keyboard,LV_PCT(100),145);lv_keyboard_set_textarea(keyboard,input);
+            ui_button(root,"Torna al deck",0x30333A,click,(void *)-1);return;
+        }
         ui_title(root,"Aetherion / comandi");
+        ui_button(root,"Assistente / input",0xFF4D00,click,(void *)-11);
         ui_button(root,show_all?"Filtro: tutte":"Filtro: attive",0x30333A,click,(void *)-5);
         ui_button(root,sort_recent?"Ordine: recenti":"Ordine: priorita",0x30333A,click,(void *)-6);
         ui_button(root,"Collegamento / dashboard",0x30333A,click,(void *)-4);
@@ -396,13 +446,13 @@ static void changed(lv_observer_t *observer,lv_subject_t *subject)
 {
     (void)observer;(void)subject;
     /* Incoming PC activity must not rebuild the pairing QR under the user. */
-    if(!dashboard)render();
+    if(!dashboard&&(!assistant_view||!assistant_draft[0]))render();
 }
 static void create(lv_obj_t *screen,void *arg)
 {
     (void)arg;
     if(!lock)lock=xSemaphoreCreateMutexStatic(&lock_memory);
-    active=true;native_panel=NULL;offset=0;selected=-1;selected_id[0]=0;dashboard=false;show_all=false;sort_recent=false;controls=false;confirmation=NULL;
+    active=true;native_panel=NULL;offset=0;selected=-1;selected_id[0]=0;dashboard=false;show_all=false;sort_recent=false;controls=false;assistant_view=false;confirmation=NULL;
     root=ui_page(screen,NULL);
     lv_obj_set_style_bg_color(root,ui_color(0x0A0A0A),0);lv_obj_set_style_bg_opa(root,LV_OPA_COVER,0);
     lv_obj_set_style_pad_top(root,board_info()->round?36:12,0);
@@ -419,11 +469,12 @@ static void destroy(void)
     active=false;sprite_count=0;header=NULL;native_panel=NULL;root=NULL;
     if(timer){lv_timer_delete(timer);timer=NULL;}
     appkit_web_stop_if(&config);
-    xSemaphoreTake(lock,portMAX_DELAY);cJSON_Delete(document);document=NULL;free(canonical);canonical=NULL;received=0;control_seen=0;memset(&command,0,sizeof(command));xSemaphoreGive(lock);
+    xSemaphoreTake(lock,portMAX_DELAY);cJSON_Delete(document);document=NULL;free(canonical);canonical=NULL;received=0;control_seen=0;memset(&command,0,sizeof(command));memset(&assistant,0,sizeof(assistant));assistant_draft[0]=0;displayed_question[0]=0;xSemaphoreGive(lock);
 }
 static bool back(void)
 {
     if(native_panel&&agentdeck_panel_back(native_panel))return true;
+    if(assistant_view){assistant_view=false;render();return true;}
     if(confirmation){confirmation=NULL;render();return true;}
     if(selected>=0||dashboard||controls){selected=-1;selected_id[0]=0;dashboard=false;controls=false;render();return true;}
     return false;

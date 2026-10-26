@@ -75,3 +75,18 @@ python tools/agent_deck/generate.py
 ```
 
 Il generatore mantiene la UI della dashboard device allineata a quella del PC. Il firmware valida schema, numero di tessere, dimensioni delle stringhe, stati, contesto, quote e ID duplicati prima di sostituire lo snapshot precedente.
+
+## Assistente operativo Aetherion
+
+Il nuovo firmware espone anche una coda autenticata di input assistente.
+Dalla dashboard Aetherion seleziona una conversazione e premi Usa sul dispositivo.
+Sul device: menu Agent Deck, Assistente / input. Puoi inviare una richiesta
+o rispondere alla domanda mostrata con la tastiera touch. La risposta conserva
+l'ID della domanda visualizzata: una domanda scaduta o appartenente a un'altra
+conversazione non viene accettata. L'ACK significa input acquisito, non lavoro
+completato. Il testo/risultato resta limitato; nessuna trascrizione intera al device.
+
+Il Surface continua a interrogare solo l'AMOLED gia associata. Non apre porte
+PC sulla LAN e non assegna al dispositivo permessi shell, flash o pubblicazione.
+Il supporto richiede il nuovo firmware; l'assenza del flag assistant.supported
+conserva la compatibilita con la precedente console a due comandi.
