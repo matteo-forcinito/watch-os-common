@@ -334,9 +334,12 @@ static void render(void)
     if(controls){
         if(assistant_view){
             /* The provider never receives an answer to a question the user did not see. */
-            char question[241],message[601];
-            xSemaphoreTake(lock,portMAX_DELAY);snprintf(question,sizeof(question),"%s",assistant.question);snprintf(message,sizeof(message),"%s",assistant.message);snprintf(displayed_question,sizeof(displayed_question),"%s",assistant.question_id);xSemaphoreGive(lock);
+            char question[241],message[601],delivery[230]={0};
+            xSemaphoreTake(lock,portMAX_DELAY);snprintf(question,sizeof(question),"%s",assistant.question);snprintf(message,sizeof(message),"%s",assistant.message);snprintf(displayed_question,sizeof(displayed_question),"%s",assistant.question_id);
+            if(!strcmp(command.action,"assistant-message"))snprintf(delivery,sizeof(delivery),"%s: %s",status_name(command.status),command.message);
+            xSemaphoreGive(lock);
             ui_title(root,"Assistente Aetherion");label(root,question[0]?question:message,0xE8E4DC);
+            if(delivery[0])label(root,delivery,0xFF4D00);
             lv_obj_t *input=lv_textarea_create(root);lv_obj_set_width(input,LV_PCT(100));lv_obj_set_height(input,65);lv_textarea_set_max_length(input,500);lv_textarea_set_placeholder_text(input,"Richiesta o risposta...");lv_textarea_set_text(input,assistant_draft);lv_obj_add_event_cb(input,draft_changed,LV_EVENT_VALUE_CHANGED,NULL);
             ui_button(root,"Invia input",0xFF4D00,click,(void *)-12);
             lv_obj_t *keyboard=lv_keyboard_create(root);lv_obj_set_size(keyboard,LV_PCT(100),145);lv_keyboard_set_textarea(keyboard,input);
