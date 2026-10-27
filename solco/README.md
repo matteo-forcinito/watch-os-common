@@ -1,8 +1,22 @@
 # Solco — prototipo DJ standalone
 
-Build di sviluppo `0.1.0-dev.9`, per AMOLED 1.8, Knob 1.8, SenseCAP Watcher,
-AMOLED 1.75, AMOLED 1.75C e Guition 4848 (pacchetti distinti).
+AMOLED 1.8: build di sviluppo `0.1.0-dev.10`, installata e verificata in
+orizzontale. Gli altri target restano alla precedente `0.1.0-dev.9`; questa
+sessione non li ha installati o ripubblicati. Verbale: [TEST-REPORT-dev10.md](TEST-REPORT-dev10.md).
 Non costituisce ancora una release professionale: EQ, overview dell'intera traccia, MIDI e controllo Orbit non sono implementati.
+
+## Orizzontale su AMOLED 1.8 (dev.10)
+
+Solco si apre a 448 x 368: ruotare fisicamente il dispositivo per usarlo.
+La scelta vale solo per Solco e non cambia l'orientamento del launcher.
+I deck A/B sono affiancati, con PLAY/CUE/FILE separati e forme d'onda piu alte.
+Il tasto STUDIO > apre le altre funzioni; Drumpad e Strumenti hanno otto pad
+su due righe da quattro. Il vinile resta circolare e intero, con < MIX, MENU,
+PLAY/PAUSA e CUE sempre accessibili negli angoli.
+Volume iniziale zero: alzarlo gradualmente con + o con lo slider.
+Per riaprire: launcher -> App esterne -> Solco. Il binario e registrato in
+/apps/Solco sulla microSD e come app dello slot. Nessun nuovo firmware del
+launcher viene installato da questa procedura.
 
 ## Uso
 
@@ -63,9 +77,9 @@ python watch-os-common/solco/tools/select_slot_usb.py COM3 --slot 1
 
 ## Vista scratch immersiva e ghiera
 
-Il disco occupa tutta la larghezza: 360 pixel sul Knob, 368 su AMOLED.
-Sul Knob coincide con lo schermo circolare; AMOLED resta verticale con
-margine sopra/sotto. Il centro apre il menu rapido: MIX, VINILE, PLAY,
+Sul Knob il disco occupa la larghezza del display circolare. Nella nuova
+vista AMOLED orizzontale il diametro segue il lato corto, con comandi rapidi
+negli angoli; la precedente dev.9 usava la vista verticale. Il centro apre il menu rapido: MIX, VINILE, PLAY,
 CUE, FILE, volume e loop. Toccare VINILE per tornare subito al disco.
 I solchi vengono rasterizzati una volta nella PSRAM; durante la rotazione
 si invalidano solo i rettangoli del vecchio e del nuovo indicatore.

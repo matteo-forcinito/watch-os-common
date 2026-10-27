@@ -1,6 +1,10 @@
 """Create board-specific external-app wrappers, without changing the base OS."""
 from pathlib import Path
 import subprocess
+import argparse
+parser=argparse.ArgumentParser()
+parser.add_argument("--board",choices=("amoled","knob","watcher","amoled175","amoled175c","guition"))
+args=parser.parse_args()
 
 root = Path(__file__).resolve().parents[3]
 boards = {
@@ -12,6 +16,7 @@ boards = {
     "ESP32-4848S040C-I": "guition",
 }
 for folder, board in boards.items():
+    if args.board and board!=args.board:continue
     base = root / folder
     app = base / "external_apps" / "solco"
     (app / "main").mkdir(parents=True, exist_ok=True)
@@ -39,7 +44,7 @@ if(DEFINED ENV{SOLCO_LOCAL_COMPONENTS})
 endif()
 set(EXCLUDE_COMPONENTS "apps" "services" "companion" "webradio" "hid_link" "appkit" "watcher_camera")
 set(COMPONENTS main cmake_utilities)
-set(PROJECT_VER "0.1.0-dev.9")
+set(PROJECT_VER "0.1.0-dev.10")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(solco_''' + board + ''')
 ''', encoding="utf-8")
@@ -77,5 +82,5 @@ target_compile_definitions(${SOLCO_HARDWARE_LIB} PRIVATE WATCH_AUDIO_TX_DMA_FRAM
                      and not line.startswith("CONFIG_WATCH_DEV_CONSOLE="))
     (app / "sdkconfig.defaults").write_text(text + '\nCONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y\nCONFIG_WATCH_DEV_CONSOLE=y\n', encoding="utf-8")
     (app / "partitions.csv").write_bytes((base / "partitions.csv").read_bytes())
-    (app / "manifest.json").write_text('{"name":"Solco","bin":"Solco.bin","version":"0.1.0-dev.9"}\n', encoding="utf-8")
+    (app / "manifest.json").write_text('{"name":"Solco","bin":"Solco.bin","version":"0.1.0-dev.10"}\n', encoding="utf-8")
     print(app)

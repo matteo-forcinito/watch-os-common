@@ -27,6 +27,8 @@
 
 /* Start display, touch, LVGL and the lvgl task. */
 esp_err_t lv_port_init(void);
+/* Standalone app orientation, without changing the saved launcher settings. */
+esp_err_t lv_port_init_orientation(uint8_t quarter_turns);
 esp_err_t lv_port_init_headless(void);
 bool lv_port_headless(void);
 

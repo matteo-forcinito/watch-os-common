@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import re
 import subprocess
 import sys
 
@@ -17,6 +18,7 @@ parser.add_argument("image", type=Path)
 parser.add_argument("metadata_backup", type=Path)
 parser.add_argument("slot_backup", type=Path)
 parser.add_argument("--board", choices=("amoled", "knob", "watcher"), required=True)
+parser.add_argument("--expected-mac", help="Pin the physical board MAC before reading/writing")
 parser.add_argument("--update", action="store_true", help="Replace an already installed Solco in the secondary slot")
 args = parser.parse_args()
 image = args.image.read_bytes()
@@ -57,10 +59,19 @@ print(json.dumps(receipt, indent=2), flush=True)
 # Keep download mode throughout installation: a launcher must not replace ota_1
 # between identity checks, image write and boot selection.
 # Confirm identity again from the live device before any mutation.
+if args.expected_mac:
+    require(re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}",args.expected_mac),"Invalid expected MAC")
+    probe=subprocess.run([sys.executable,"-m","esptool","--port",args.port,"--after","no-reset","read-mac"],check=True,capture_output=True,text=True)
+    found=re.findall(r"MAC:\s*([0-9a-fA-F:]{17})",probe.stdout)
+    require(found and all(x.lower()==args.expected_mac.lower() for x in found),"Wrong physical device; no write")
 live_header = args.slot_backup.with_name(args.slot_backup.stem + "-live-header.bin")
 subprocess.run([sys.executable, "-m", "esptool", "--port", args.port, "--after", "no-reset",
                 "read-flash", hex(base_offset), "0x1000", str(live_header)], check=True)
 require(name(live_header.read_bytes(), 80) == expected_base, "Live board identity mismatch")
+live_table=live_header.with_name(live_header.stem+"-partitions.bin")
+subprocess.run([sys.executable,"-m","esptool","--port",args.port,"--after","no-reset",
+                "read-flash","0x8000","0x1000",str(live_table)],check=True)
+require(live_table.read_bytes()==metadata[0x8000:0x9000],"Live partition table changed; no write")
 live_slot = live_header.with_name(live_header.stem + "-slot1.bin")
 subprocess.run([sys.executable, "-m", "esptool", "--port", args.port, "--after", "no-reset",
                 "read-flash", hex(app_offset), "0x1000", str(live_slot)], check=True)

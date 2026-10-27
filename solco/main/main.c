@@ -13,6 +13,7 @@
 #include "hardware/board.h"
 #include "hardware/imu.h"
 #include "install.h"
+#include "layout.h"
 #include "ui/ui.h"
 #include <math.h>
 #include <stdio.h>
@@ -26,8 +27,10 @@ static bool s_wave_active[2];
 static solco_status_t s_previous;
 static bool s_first = true;
 static int s_width, s_height;
+static bool s_landscape;
+static solco_layout_t s_layout;
 static lv_obj_t *s_mixer, *s_detail, *s_detail_title, *s_detail_time, *s_detail_play, *s_disc;
-static lv_obj_t *s_mute;
+static lv_obj_t *s_mute,*s_quick_play;
 static int s_deck;
 static int s_restore_volume = 10;
 static float s_disc_angle, s_touch_angle;
@@ -61,7 +64,7 @@ static lv_obj_t *label(lv_obj_t *parent, const char *text, int left, int top, in
     lv_label_set_text(obj, text);
     lv_obj_set_pos(obj, x(left), y(top));
     lv_obj_set_width(obj, x(width));
-    lv_obj_set_style_text_font(obj, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(obj, s_landscape ? &lv_font_montserrat_16 : &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
     lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT);
     return obj;
@@ -99,7 +102,7 @@ static lv_obj_t *button(lv_obj_t *parent, const char *text, int left, int top, i
     lv_obj_add_event_cb(obj, action, LV_EVENT_CLICKED, (void *)(intptr_t)code);
     lv_obj_t *text_obj = lv_label_create(obj);
     lv_label_set_text(text_obj, text);
-    lv_obj_set_style_text_font(text_obj, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(text_obj, s_landscape ? &lv_font_montserrat_16 : &lv_font_montserrat_14, 0);
     lv_obj_center(text_obj);
     return text_obj;
 }
@@ -637,14 +640,12 @@ static void create_studio(lv_obj_t *home)
                       round ? 128 : 216, studio_action, 13);
     for (int i = 0; i < 8; i++)
     {
-        int row = i / 2, col = i % 2;
-        s_pad[i] = control(s_studio_page, "PAD", (round ? 36 : 8) + col * (round ? 148 : 176),
-                           (round ? 76 : 54) + row * (round ? 54 : 64), round ? 140 : 168,
-                           studio_action, 100 + i);
-        lv_obj_t *pad = lv_obj_get_parent(s_pad[i]);
-        lv_obj_set_height(pad, y(round ? 50 : 60));
+        solco_rect_t box=s_layout.pad[i];
+        s_pad[i]=control(s_studio_page,"PAD",box.x,box.y,box.w,studio_action,100+i);
+        lv_obj_t *pad=lv_obj_get_parent(s_pad[i]);
+        lv_obj_set_height(pad,y(box.h));
         lv_obj_set_style_radius(pad, 12, 0);
-        lv_obj_set_style_bg_color(pad, lv_color_hex(col ? 0x603C32 : 0x1D4E4D), 0);
+        lv_obj_set_style_bg_color(pad, lv_color_hex((i%2) ? 0x603C32 : 0x1D4E4D), 0);
         lv_obj_remove_event_cb(pad, studio_action);
         lv_obj_add_event_cb(pad, studio_action, LV_EVENT_PRESSED, (void *)(intptr_t)(100 + i));
         lv_obj_set_style_bg_color(pad, lv_color_hex(0xA5F5DD), LV_STATE_PRESSED);
@@ -724,7 +725,7 @@ static void open_library(int deck)
         lv_obj_set_height(item, y(48));
         lv_obj_set_style_bg_color(item, lv_color_hex(0x14202D), 0);
         lv_obj_set_style_text_color(item, lv_color_hex(0xE5F8F4), 0);
-        lv_obj_set_style_text_font(item, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(item, s_landscape ? &lv_font_montserrat_16 : &lv_font_montserrat_14, 0);
         lv_obj_set_height(text, y(20));
         lv_label_set_long_mode(text, LV_LABEL_LONG_DOT);
         lv_obj_add_event_cb(item, choose_track, LV_EVENT_CLICKED, (void *)(intptr_t)i);
@@ -777,6 +778,7 @@ static void refresh(lv_timer_t *timer)
     studio_refresh();
     solco_status_t status;
     solco_status(&status);
+    if(s_quick_play) lv_label_set_text(s_quick_play,status.playing[s_deck]?LV_SYMBOL_PAUSE:LV_SYMBOL_PLAY);
     for (int i = 0; i < 2; ++i)
     {
         if (s_first || strcmp(status.title[i], s_previous.title[i]))
@@ -932,6 +934,12 @@ bool devcon_app_command(char *line)
 {
 #if CONFIG_WATCH_DEV_CONSOLE
     int type, value, velocity;
+    if(!strcmp(line,"solco-layout")) {
+        lv_port_lock();
+        printf("@LAYOUT width=%d height=%d landscape=%d studio=%d deck=%d detail=%d library=%d\n",
+               s_width,s_height,s_landscape,s_studio_view,s_deck,!lv_obj_is_hidden(s_detail),!lv_obj_is_hidden(s_library));
+        lv_port_unlock();printf("@OK solco-layout\n");return true;
+    }
     if (sscanf(line, "studio-motion %d", &value) == 1)
     {
         solco_motion_mode(value);
@@ -1124,8 +1132,10 @@ static bool home_back(void)
 
 static void create_ui(void)
 {
-    s_width = board_info()->width;
-    s_height = board_info()->height;
+    s_width = lv_display_get_horizontal_resolution(lv_port_display());
+    s_height = lv_display_get_vertical_resolution(lv_port_display());
+    s_layout=solco_layout_for(s_width,s_height,board_info()->round);
+    s_landscape=s_layout.landscape;
     bool round = board_info()->round;
     lv_obj_t *home = lv_obj_create(NULL);
     lv_obj_remove_style_all(home);
@@ -1138,7 +1148,7 @@ static void create_ui(void)
     s_brand = name;
     lv_obj_set_clickable(name, true);
     lv_obj_add_event_cb(name, studio_launch, LV_EVENT_CLICKED, NULL);
-    lv_label_set_text(name, "SOLCO +");
+    lv_label_set_text(name,s_landscape ? "STUDIO >" : "SOLCO +");
     lv_obj_set_y(name, y(round ? 16 : 4));
     lv_obj_set_height(name, y(34));
     lv_obj_set_style_bg_color(name, lv_color_hex(0x243747), 0);
@@ -1150,39 +1160,39 @@ static void create_ui(void)
     s_mixer = container(home);
     /* Let header touches reach SOLCO + behind the transparent mixer panel. */
     lv_obj_set_clickable(s_mixer, false);
-    int width = round ? 296 : 344;
-    int left = (360 - width) / 2;
+
     for (int i = 0; i < 2; ++i)
     {
-        int top = round ? 54 + i * 88 : 44 + i * 94;
+        solco_rect_t box=s_layout.deck[i];
+        int width=box.w;
         uint32_t color = i == 0 ? 0x69E4CE : 0xFFBA78;
         lv_obj_t *card = lv_obj_create(s_mixer);
         lv_obj_remove_style_all(card);
-        lv_obj_set_pos(card, x(left), y(top));
-        lv_obj_set_size(card, x(width), y(round ? 84 : 90));
+        lv_obj_set_pos(card,x(box.x),y(box.y));
+        lv_obj_set_size(card,x(box.w),y(box.h));
         lv_obj_set_scrollable(card, false);
         lv_obj_set_style_bg_color(card, lv_color_hex(0x14202D), 0);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(card, 14, 0);
         lv_obj_set_style_border_width(card, 1, 0);
         lv_obj_set_style_border_color(card, lv_color_hex(0x25384A), 0);
-        s_title[i] = label(card, "Caricamento...", 12, 8, width - 92, color);
+        s_title[i] = label(card, "Caricamento...", 12, 8, s_landscape ? width-24 : width - 92, color);
         lv_obj_set_height(s_title[i], y(18));
-        lv_obj_t *open = control(card, i == 0 ? "A  >" : "B  >", width - 72, 4, 66, show_deck, i);
+        lv_obj_t *open = control(card, i == 0 ? "A  >" : "B  >", s_landscape ? 10 : width - 72, s_landscape ? 33 : 4, 66, show_deck, i);
         lv_obj_set_height(lv_obj_get_parent(open), y(32));
         s_wave_obj[i] = lv_obj_create(card);
         lv_obj_remove_style_all(s_wave_obj[i]);
-        lv_obj_set_pos(s_wave_obj[i], x(12), y(round ? 25 : 29));
-        lv_obj_set_size(s_wave_obj[i], x(width - 24), y(round ? 11 : 14));
+        lv_obj_set_pos(s_wave_obj[i], x(12), y(s_landscape ? 76 : round ? 25 : 29));
+        lv_obj_set_size(s_wave_obj[i], x(width - 24), y(s_landscape ? 30 : round ? 11 : 14));
         lv_obj_set_clickable(s_wave_obj[i], false);
         lv_obj_set_scrollable(s_wave_obj[i], false);
         lv_obj_add_event_cb(s_wave_obj[i], draw_wave, LV_EVENT_DRAW_MAIN, (void *)(intptr_t)i);
-        s_time[i] = label(card, "00:00", 12, round ? 55 : 61, 56, color);
-        int bw = (width - 90) / 3;
-        s_play[i] = button(card, LV_SYMBOL_PLAY, 76, round ? 40 : 46, bw,
+        s_time[i] = label(card, "00:00", s_landscape ? 89 : 12, s_landscape ? 40 : round ? 55 : 61, s_landscape ? 70 : 56, color);
+        int bw = s_landscape ? 48 : (width - 90) / 3;
+        s_play[i] = button(card, LV_SYMBOL_PLAY, s_landscape ? 8 : 76, s_landscape ? 119 : round ? 40 : 46, bw,
                            i == 0 ? 0x247E71 : 0x986035, i * 3);
-        button(card, "CUE", 80 + bw, round ? 40 : 46, bw, 0x243747, i * 3 + 1);
-        button(card, "FILE", 84 + bw * 2, round ? 40 : 46, bw, 0x243747, i * 3 + 2);
+        button(card, "CUE", s_landscape ? 60 : 80 + bw, s_landscape ? 119 : round ? 40 : 46, bw, 0x243747, i * 3 + 1);
+        button(card, "FILE", s_landscape ? 112 : 84 + bw * 2, s_landscape ? 119 : round ? 40 : 46, bw, 0x243747, i * 3 + 2);
     }
     s_cross_text = label(s_mixer, "A  50 : 50  B", 85, 232, 190, 0xDCE6F0);
     lv_obj_set_style_text_align(s_cross_text, LV_TEXT_ALIGN_CENTER, 0);
@@ -1195,8 +1205,8 @@ static void create_ui(void)
     lv_obj_set_height(s_detail, s_height);
     s_disc = lv_obj_create(s_detail);
     lv_obj_remove_style_all(s_disc);
-    int diameter = s_width;
-    lv_obj_set_pos(s_disc, 0, (s_height - diameter) / 2);
+    int diameter=s_layout.disc.w;
+    lv_obj_set_pos(s_disc,s_layout.disc.x,s_layout.disc.y);
     lv_obj_set_size(s_disc, diameter, diameter);
     lv_obj_set_style_radius(s_disc, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(s_disc, lv_color_hex(0x0C151F), 0);
@@ -1207,6 +1217,12 @@ static void create_ui(void)
     lv_obj_set_clickable(s_disc, true);
     lv_obj_add_event_cb(s_disc, platter_touch, LV_EVENT_ALL, NULL);
     create_grooves(diameter);
+    if(s_landscape) {
+        control(s_detail,"< MIX",8,8,64,show_mixer,0);
+        control(s_detail,"MENU",288,8,64,deck_menu,0);
+        s_quick_play=control(s_detail,LV_SYMBOL_PLAY,8,310,64,detail_action,0);
+        control(s_detail,"CUE",288,310,64,detail_action,1);
+    }
     s_record_label = lv_button_create(s_disc);
     lv_obj_remove_style_all(s_record_label);
     lv_obj_set_size(s_record_label, diameter * 32 / 100, diameter * 32 / 100);
@@ -1221,7 +1237,7 @@ static void create_ui(void)
     lv_label_set_text(print, "DECK A\nMENU");
     lv_obj_set_style_text_align(print, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(print, lv_color_hex(0x08131A), 0);
-    lv_obj_set_style_text_font(print, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(print, s_landscape ? &lv_font_montserrat_16 : &lv_font_montserrat_14, 0);
     lv_obj_center(print);
     s_wheel_mode = print;
     lv_obj_add_event_cb(s_disc, draw_disc, LV_EVENT_DRAW_POST, NULL);
@@ -1325,7 +1341,9 @@ void app_main(void)
     sys_worker_init();
     ESP_ERROR_CHECK(settings_init());
     ESP_ERROR_CHECK(board_init());
-    ESP_ERROR_CHECK(lv_port_init());
+    /* Solco uses the long edge horizontally; launcher orientation is untouched. */
+    bool rectangle=!board_info()->round && board_info()->width!=board_info()->height;
+    ESP_ERROR_CHECK(lv_port_init_orientation(rectangle && board_info()->width<board_info()->height ? 1 : 0));
     clock_init();
     solco_engine_sync_init();
     lv_port_lock();

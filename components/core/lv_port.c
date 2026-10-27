@@ -55,6 +55,7 @@ static lv_display_t *s_disp = NULL;
 static lv_indev_t *s_indev = NULL;
 static TaskHandle_t s_task = NULL;
 static int s_rotation;
+static int s_rotation_override=-1;
 static uint16_t *s_rotated;
 static size_t s_rotate_bytes;
 static SemaphoreHandle_t s_flush_done = NULL;
@@ -1130,18 +1131,15 @@ static esp_err_t init_port(bool headless)
         return ESP_ERR_NO_MEM;
     }
 
-    s_rotation=(!board_info()->round && width!=height)?settings_get()->screen_rotation:0;
+    s_rotation=(!board_info()->round && width!=height)?(s_rotation_override>=0?s_rotation_override:settings_get()->screen_rotation):0;
     if(s_rotation) {
-        s_rotate_bytes=buffer_bytes;
-        s_rotated=heap_caps_malloc(buffer_bytes,caps);
-        if(!s_rotated) {
-            ESP_LOGE(TAG,"No RAM for rotated draw buffer; using native orientation");
-            s_rotation=0;s_rotate_bytes=0;
-        }
+        /* Reuse buffer 2 as DMA rotation output: no third internal-RAM buffer.
+         * Single-buffer LVGL waits for each flush before reusing its input. */
+        s_rotate_bytes=buffer_bytes;s_rotated=buf2;
     }
     s_disp = lv_display_create((s_rotation&1)?height:width, (s_rotation&1)?width:height);
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565_SWAPPED);   /* panel wants big endian */
-    lv_display_set_buffers(s_disp, buf1, buf2, buffer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_buffers(s_disp, buf1, s_rotation?NULL:buf2, buffer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(s_disp, flush_cb);
     if (!headless)
     {
@@ -1202,6 +1200,13 @@ static esp_err_t init_port(bool headless)
 
 esp_err_t lv_port_init(void)
 {
+    return init_port(false);
+}
+
+esp_err_t lv_port_init_orientation(uint8_t quarter_turns)
+{
+    if(quarter_turns>3) return ESP_ERR_INVALID_ARG;
+    s_rotation_override=quarter_turns;
     return init_port(false);
 }
 
