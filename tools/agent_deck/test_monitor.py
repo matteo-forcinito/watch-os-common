@@ -155,6 +155,22 @@ class MonitorTests(unittest.TestCase):
         m.record_hook(data,dict(hook_event_name='Stop',session_id=sid))
         sessions,_=m.claude_sessions(self.root/'claude',hooks=data)
         self.assertEqual(sessions[0]['status'],'done')
+    def test_each_subagent_is_its_own_card(self):
+        project=self.root/'claude'/'projects'/'p';sub=project/'s1'/'subagents';sub.mkdir(parents=True)
+        usage=dict(input_tokens=10,cache_creation_input_tokens=0,cache_read_input_tokens=19990,output_tokens=5)
+        (project/'s1.jsonl').write_text(json.dumps(dict(type='assistant',cwd='C:/w/r',message=dict(model='claude-a',stop_reason='end_turn',content=[])))+chr(10),encoding='utf-8')
+        (sub/'agent-x1.jsonl').write_text(json.dumps(dict(type='assistant',message=dict(model='claude-b',stop_reason='tool_use',usage=usage,content=[dict(type='tool_use',name='Grep')])))+chr(10),encoding='utf-8')
+        (sub/'agent-x1.meta.json').write_text(json.dumps(dict(agentType='designer-ui',description='Design pass')),encoding='utf-8')
+        (sub/'agent-x2.jsonl').write_text(json.dumps(dict(type='assistant',message=dict(model='claude-b',stop_reason='end_turn',content=[])))+chr(10),encoding='utf-8')
+        sessions,_=m.claude_sessions(self.root/'claude',now=time.time()+1)
+        by={s['id']:s for s in sessions}
+        self.assertEqual(len(sessions),3)
+        x1=by['claude:s1:x1']
+        self.assertEqual((x1['name'],x1['agent_type'],x1['model'],x1['status'],x1['activity']),('Design pass','designer-ui','claude-b','working','Strumento: Grep'))
+        self.assertEqual((x1['tokens'],x1['context_percent'],x1['parent_id'],x1['source']),(20005,10.0,'claude:s1','claude_subagent'))
+        self.assertEqual(by['claude:s1:x2']['status'],'done')
+        sessions,_=m.claude_sessions(self.root/'claude',now=time.time()+600)
+        self.assertEqual({s['id']:s for s in sessions}['claude:s1:x1']['status'],'unknown')
     def test_claude_context_percent_uses_last_message_only(self):
         project=self.root/'claude'/'projects'/'p';project.mkdir(parents=True)
         def line(model,inp,cc,cr,out=999):
@@ -163,7 +179,7 @@ class MonitorTests(unittest.TestCase):
         (project/'b.jsonl').write_text(line('claude-x[1m]',100000,100000,300000)+'\n',encoding='utf-8')
         (project/'c.jsonl').write_text(json.dumps(dict(type='assistant',message=dict(model='m',content=[])))+'\n',encoding='utf-8')
         sessions,_=m.claude_sessions(self.root/'claude',now=time.time()+30)
-        by={s['session_id']:s for s in sessions}
+        by={s['session_id']:s for s in sessions if s.get('source')!='claude_subagent'}
         self.assertEqual(by['a']['context_percent'],50.0);self.assertEqual(by['a']['tokens'],100000+999)
         self.assertEqual(by['b']['context_percent'],50.0)
         self.assertIsNone(by['c']['context_percent'])

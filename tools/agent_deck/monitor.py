@@ -275,6 +275,38 @@ def context_percent(usage, model):
     window = 1000000 if "[1m]" in str(model).lower() or used > 200000 else 200000
     return round(min(100.0, 100.0*used/window), 1)
 
+def claude_subagents(folder, parent, now):
+    """One card per subagent transcript (<session>/subagents/agent-<id>.jsonl): own model, tokens, context and step."""
+    out = []
+    try: paths = sorted((p for p in Path(folder).glob("agent-*.jsonl") if p.stat().st_mtime > now-86400), key=lambda p: p.stat().st_mtime, reverse=True)[:12]
+    except OSError: return out
+    for path in paths:
+        agent_id = clean(path.stem[6:], 40)
+        try: meta = json.loads(path.with_suffix(".meta.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError): meta = {}
+        kind = clean(meta.get("agentType") or "subagent", 60)
+        item = dict(id="claude:"+parent["session_id"]+":"+agent_id, session_id=parent["session_id"], agent_id=agent_id, parent_id=parent["id"], agent="claude",
+                    name=clean(meta.get("description") or kind, 100), agent_type=kind, repo=parent.get("repo", ""), cwd=parent.get("cwd", ""), branch=parent.get("branch", ""),
+                    model="", status="unknown", activity="Avvio", context_percent=None, tokens=None, quota=[], source="claude_subagent",
+                    observed_at=path.stat().st_mtime, capabilities=["observe"])
+        for event in bounded_json_lines(path):
+            msg = event.get("message") or {}
+            if event.get("type") != "assistant" or not isinstance(msg, dict): continue
+            item["model"] = clean(msg.get("model"), 80) or item["model"]
+            tools = [c.get("name", "") for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "tool_use"]
+            if msg.get("stop_reason") in ("end_turn", "stop_sequence") and not tools: item.update(status="done", activity="Completato")
+            else: item.update(status="working", activity="Strumento: "+clean(tools[-1], 70) if tools else "In elaborazione")
+            usage = msg.get("usage") or {}
+            values = [usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
+            if all(isinstance(v, (int, float)) for v in values): item["tokens"] = sum(values)
+            percent = context_percent(usage, item["model"])
+            if percent is not None: item["context_percent"] = percent
+        item["last_event_age"] = max(0, int(now-item["observed_at"]))
+        # Background subagents write their transcript continuously; silence means it stopped.
+        if item["status"] == "working" and item["last_event_age"] > 300: item.update(status="unknown", activity="Nessun evento recente")
+        out.append(item)
+    return out
+
 def claude_sessions(home, now=None, hooks=None):
     now = now or time.time()
     root = Path(home)/"projects"
@@ -323,6 +355,7 @@ def claude_sessions(home, now=None, hooks=None):
         stale = item["status"] == "working" and item.get("source") != "claude_hooks"
         if now-item["observed_at"] > 180 and stale: item.update(status="unknown", activity="Nessun evento recente")
         out.append(item)
+        out.extend(claude_subagents(path.parent/path.stem/"subagents", item, now))
     return out, None if out else "Claude Code: nessuna sessione nelle ultime 24 ore"
 
 SIM_SESSIONS = (("sim-alpha", "Aggiorna la documentazione", "repo-alpha", 12.5, 25000), ("sim-beta", "Correggi il test instabile", "repo-beta", 48.0, 96000),
