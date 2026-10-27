@@ -6,6 +6,7 @@ import time
 import unittest
 import subprocess
 import sys
+from test_panel import NativePanelTests
 from pathlib import Path
 from types import SimpleNamespace
 

@@ -24,3 +24,9 @@ The web dashboard imports the original SVG sprite/hat/animation section from
 `backend/internal/web/static/app.js` and its corresponding CSS sprite section.
 It maps local status values and assigns hats deterministically from project.
 The source markers are retained in the generated pages and Aetherion assets.
+
+Round first-open watchdog correction (27 October 2026): short arcs now restrict
+rasterization to conservative sector bounds while retaining upstream angle and
+coverage tests. A saved baseline rasterizer is used only in host regression tests;
+48 cases cover clipping, wrap-around, large/full arcs and thin notice dashes.
+The empty Connecting screen is exercised explicitly. No watchdog extension.

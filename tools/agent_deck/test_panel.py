@@ -18,11 +18,31 @@ class NativePanelTests(unittest.TestCase):
 #include <fstream>
 #include <vector>
 #include <cassert>
+#include <chrono>
+#include <cstdio>
 #include "layout_square.h"
 #include "layout_big.h"
 #include "layout_spring.h"
+#include "round_arc_reference.h"
 void image(const char* name,const Canvas& c){std::ofstream f(name,std::ios::binary);f<<"P6\n"<<c.w<<" "<<c.h<<"\n255\n";for(int i=0;i<c.w*c.h;i++){auto p=c.px[i];unsigned char b[3]={(unsigned char)(((p>>11)&31)*255/31),(unsigned char)(((p>>5)&63)*255/63),(unsigned char)((p&31)*255/31)};f.write((char*)b,3);}}
 int main(){
+ std::vector<uint16_t> actual(480*480),expected(480*480);
+ for(int i=0;i<48;i++){
+   Canvas a{actual.data(),480,480},e{expected.data(),480,480};a.fill(0x1234);e.fill(0x1234);
+   a.top=e.top=i%3?0:170;
+   float start=-370.f+i*19.37f,sweep=i%6==0?360.f:i%5==0?250.f:1.577f+i%9;
+   float r0=i%4?216.f:0.f,r1=i%4?220.f:80.f,cx=i%7?240.f:12.f,cy=i%8?240.f:-5.f;
+   referenceArc(e,cx,cy,r0,r1,start,sweep,0xFFFF);fillArc(a,cx,cy,r0,r1,start,sweep,0xFFFF);
+   assert(actual==expected);
+ }
+ Canvas bench{actual.data(),480,480};auto begin=std::chrono::steady_clock::now();
+ for(int i=0;i<80;i++)referenceArc(bench,240,240,216,220,i*4.5f,1.577f,0xFFFF);
+ auto middle=std::chrono::steady_clock::now();
+ for(int i=0;i<80;i++)fillArc(bench,240,240,216,220,i*4.5f,1.577f,0xFFFF);
+ auto end=std::chrono::steady_clock::now();
+ printf("ARC_REFERENCE_US %lld ARC_BOUNDED_US %lld\n",(long long)std::chrono::duration_cast<std::chrono::microseconds>(middle-begin).count(),(long long)std::chrono::duration_cast<std::chrono::microseconds>(end-middle).count());
+ // First-open state: no snapshot/agents yet, the path in the hardware core dump.
+ {RoundUi emptyUi{};Fleet empty{};SpringPanel emptyPanel(layoutSpring21());RoundInput emptyIn{&empty,LinkState::Connecting,"Aetherion",DeckScope::View,1234,1000,&emptyUi,0};roundTick(emptyUi,emptyPanel,empty,1234);emptyPanel.draw(bench,emptyIn);}
  Fleet f{};f.count=f.total=6;
  const char* names[]={"Codex","Talo build","Scribe","Verifica","AMOLED UI","Dashboard"};
  for(int i=0;i<6;i++){auto &a=f.agents[i];snprintf(a.id,sizeof(a.id),"agent-%d",i);a.slot=i;copyUtf8(a.title,sizeof(a.title),names[i]);copyUtf8(a.actDetail,sizeof(a.actDetail),"Agent Deck integration");copyUtf8(a.actTool,sizeof(a.actTool),"edit");a.species=i?Species::Claude:Species::Codex;a.tool=i?ToolKind::Other:ToolKind::Codex;a.status=i==2?Status::Waiting:Status::Running;a.ctxWindow=10000;a.ctxUsed=4100;a.costUsd=-1;a.usageKnown=false;a.turnsKnown=false;a.contextCountsKnown=false;}
@@ -44,10 +64,11 @@ int main(){
                 if '=' in line and not line.startswith('='):
                     k,v=line.split('=',1);env[k.upper()]=v
             compiler=sorted((vs/'VC/Tools/MSVC').glob('*/bin/Hostx64/x64/cl.exe'))[-1]
-            result=subprocess.run([str(compiler),'/nologo','/std:c++17','/EHsc','/W3','/D_CRT_SECURE_NO_WARNINGS','/I'+str(ROOT/'components/apps/agentdeck/upstream'),str(work/'test.cpp'),'/Fe:'+str(work/'test.exe')],cwd=work,env=env,capture_output=True,text=True)
+            result=subprocess.run([str(compiler),'/nologo','/std:c++17','/EHsc','/W3','/D_CRT_SECURE_NO_WARNINGS','/I'+str(ROOT/'components/apps/agentdeck/upstream'),'/I'+str(ROOT/'tools/agent_deck/fixtures'),str(work/'test.cpp'),'/Fe:'+str(work/'test.exe')],cwd=work,env=env,capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             result=subprocess.run([str(work/'test.exe')],cwd=work,capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            print(result.stdout)
             output=Path.home()/'.agent-deck/panel-preview';output.mkdir(parents=True,exist_ok=True)
             def chunk(kind,data):return struct.pack('!I',len(data))+kind+data+struct.pack('!I',zlib.crc32(kind+data)&0xffffffff)
             for ppm in work.glob('*.ppm'):

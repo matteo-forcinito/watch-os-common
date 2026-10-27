@@ -53,6 +53,7 @@
   "local_adaptations": [
     "model.h: nullable usage/context metadata",
     "layout_square.h and layout_big.h: unavailable metrics render as dashes",
-    "layout_spring.h: explicit release of lazy sprite caches on app close"
+    "layout_spring.h: explicit release of lazy sprite caches on app close",
+    "round_geom.h: conservative sector bounds for short arcs; pixel-equivalent baseline regression; fixes first-open round notice watchdog"
   ]
 }

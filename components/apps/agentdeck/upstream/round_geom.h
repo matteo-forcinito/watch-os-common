@@ -116,9 +116,35 @@ static inline void fillArc(Canvas& c, float cx, float cy, float r0, float r1, fl
   if (r1 <= 0 || sweep <= 0) return;
   if (r0 < 0) r0 = 0;
   const bool full = sweep >= 360.f;
+  // A short dash must not scan every pixel of the entire annulus. Keep the
+  // original coverage/angle tests, but bound work to its conservative sector.
+  int clipLeft=0,clipRight=c.w-1,clipTop=c.top,clipBottom=c.h-1;
+  if (!full) {
+    float minX=cx+r1+2,maxX=cx-r1-2,minY=cy+r1+2,maxY=cy-r1-2;
+    auto include=[&](float angle,float radius) {
+      const float rad=angle*kRoundPi/180.f;
+      const float x=cx+radius*sinf(rad),y=cy-radius*cosf(rad);
+      if(x<minX)minX=x;
+      if(x>maxX)maxX=x;
+      if(y<minY)minY=y;
+      if(y>maxY)maxY=y;
+    };
+    const float inner=r0>1?r0-1:0,outer=r1+1;
+    for(int ri=0;ri<2;ri++) {
+      const float radius=ri?outer:inner;
+      include(start,radius);include(start+sweep,radius);
+      for(int angle=0;angle<360;angle+=90)if(angleOnArc((float)angle,start,sweep))include((float)angle,radius);
+    }
+    clipLeft=(int)floorf(minX)-2;clipRight=(int)ceilf(maxX)+2;
+    clipTop=(int)floorf(minY)-2;clipBottom=(int)ceilf(maxY)+2;
+    if(clipLeft<0)clipLeft=0;
+    if(clipRight>=c.w)clipRight=c.w-1;
+    if(clipTop<c.top)clipTop=c.top;
+    if(clipBottom>=c.h)clipBottom=c.h-1;
+  }
   int yTop = (int)floorf(cy - r1 - 1), yBot = (int)ceilf(cy + r1 + 1);
-  if (yTop < c.top) yTop = c.top;
-  if (yBot > c.h - 1) yBot = c.h - 1;
+  if (yTop < clipTop) yTop = clipTop;
+  if (yBot > clipBottom) yBot = clipBottom;
   const float ro2 = (r1 + 0.5f) * (r1 + 0.5f);
   const float ri2 = r0 > 0.5f ? (r0 - 0.5f) * (r0 - 0.5f) : -1.f;
   for (int y = yTop; y <= yBot; y++) {
@@ -130,8 +156,8 @@ static inline void fillArc(Canvas& c, float cx, float cy, float r0, float r1, fl
     float xi = -1.f;
     if (ri2 > 0 && dy2 < ri2) xi = sqrtf(ri2 - dy2);
     int x0 = (int)floorf(cx - xo), x1 = (int)ceilf(cx + xo);
-    if (x0 < 0) x0 = 0;
-    if (x1 > c.w - 1) x1 = c.w - 1;
+    if (x0 < clipLeft) x0 = clipLeft;
+    if (x1 > clipRight) x1 = clipRight;
     for (int x = x0; x <= x1; x++) {
       const float dx = x + 0.5f - cx;
       if (xi > 1.5f && dx > -xi + 1.f && dx < xi - 1.f) {   // skip the hole in one go
