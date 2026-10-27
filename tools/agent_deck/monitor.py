@@ -292,9 +292,11 @@ def claude_subagents(folder, parent, now):
         for event in bounded_json_lines(path):
             msg = event.get("message") or {}
             if event.get("type") != "assistant" or not isinstance(msg, dict): continue
+            # API errors (e.g. rate limits) are written as "<synthetic>" messages with zero usage.
+            if msg.get("model") == "<synthetic>": item.update(status="unknown", activity="Interrotto: errore API"); continue
             item["model"] = clean(msg.get("model"), 80) or item["model"]
             tools = [c.get("name", "") for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "tool_use"]
-            if msg.get("stop_reason") in ("end_turn", "stop_sequence") and not tools: item.update(status="done", activity="Completato")
+            if (msg.get("stop_reason") in ("end_turn", "stop_sequence") and not tools) or "SubagentHandback" in tools: item.update(status="done", activity="Completato")
             else: item.update(status="working", activity="Strumento: "+clean(tools[-1], 70) if tools else "In elaborazione")
             usage = msg.get("usage") or {}
             values = [usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]

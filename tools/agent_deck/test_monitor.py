@@ -162,9 +162,11 @@ class MonitorTests(unittest.TestCase):
         (sub/'agent-x1.jsonl').write_text(json.dumps(dict(type='assistant',message=dict(model='claude-b',stop_reason='tool_use',usage=usage,content=[dict(type='tool_use',name='Grep')])))+chr(10),encoding='utf-8')
         (sub/'agent-x1.meta.json').write_text(json.dumps(dict(agentType='designer-ui',description='Design pass')),encoding='utf-8')
         (sub/'agent-x2.jsonl').write_text(json.dumps(dict(type='assistant',message=dict(model='claude-b',stop_reason='end_turn',content=[])))+chr(10),encoding='utf-8')
+        (sub/'agent-x3.jsonl').write_text(json.dumps(dict(type='assistant',message=dict(model='claude-b',stop_reason='tool_use',usage=usage,content=[dict(type='tool_use',name='SubagentHandback')])))+chr(10)+json.dumps(dict(type='assistant',message=dict(model='<synthetic>',stop_reason='stop_sequence',usage=dict(input_tokens=0),content=[])))+chr(10),encoding='utf-8')
         sessions,_=m.claude_sessions(self.root/'claude',now=time.time()+1)
         by={s['id']:s for s in sessions}
-        self.assertEqual(len(sessions),3)
+        self.assertEqual(len(sessions),4)
+        self.assertEqual((by['claude:s1:x3']['status'],by['claude:s1:x3']['context_percent']),('unknown',10.0))
         x1=by['claude:s1:x1']
         self.assertEqual((x1['name'],x1['agent_type'],x1['model'],x1['status'],x1['activity']),('Design pass','designer-ui','claude-b','working','Strumento: Grep'))
         self.assertEqual((x1['tokens'],x1['context_percent'],x1['parent_id'],x1['source']),(20005,10.0,'claude:s1','claude_subagent'))
