@@ -94,3 +94,34 @@ Wi-Fi attivo, perché la RAM interna è il nostro collo di bottiglia.
 4. Flush a bande alte + due draw unit + TE (5).
 
 Nessuna di queste modifiche è nella release 1.17.0.
+
+## Stato al 27/10/2026 (sera)
+
+1. **Fatto** (`548874d`): `display_init` gira in un task breve fissato al core
+   del task `lvgl`. Prova A/B su AMOLED 1.8, build QA, 8 app x 6 aperture con
+   swipe (5 minuti): 0 IRQ di flush persi prima e dopo; passaggio UI più lento
+   837 ms prima, 886 ms dopo (un picco isolato di 2502 ms coincide con l'avvio
+   del Wi-Fi). Il difetto non si è manifestato sull'AMOLED 1.8: la modifica è
+   preventiva e non peggiora nulla. Da includere nella prossima release.
+2. **Da fare con un Watcher collegato**: nessuna misura possibile senza la
+   scheda. Il firmware Watcher non tocca mai ES7243E e non sospende i codec
+   all'avvio. Serve una sospensione esplicita al boot (sequenze di chiusura di
+   `esp_codec_dev`), verificata con suoneria sveglia, AOD e misura di corrente.
+   Diventa obbligatoria se Muse gira come app esterna sul Watcher: tornando al
+   nostro OS i codec resterebbero aperti (~33 mA).
+
+## Muse come app esterna (fase 1)
+
+- Supporto ufficiale: AMOLED 1.75, 1.75C, Watcher (non AMOLED 1.8, Knob, Guition).
+- La loro tabella partizioni (NVS a 0x11000, 48 KB) è diversa dalla nostra:
+  l'immagine va compilata con la nostra tabella e con NVS condiviso.
+- NVS AMOLED 1.8 misurato dal backup: 6 pagine, ~630 voci utili, 486 attive.
+  Muse aggiunge namespace `muse`, `muse_battery` e i bond NimBLE: ci sta, con
+  margine stretto.
+- Serve un "torna al launcher" (selezione di ota_0 e riavvio) nel loro codice.
+- `mbedtls/private/gcm.h` e `aes/esp_aes_gcm.h` esistono anche in ESP-IDF 6.1:
+  forse non serve installare la 6.0.1. Da verificare compilando.
+- Servono dall'utente: account Muse con Developer mode, token SDK
+  (gadgets.muse.ai), accettazione dei termini SDK. Il token si può inviare dopo
+  il flash via seriale (`>sdk_token=...`).
+- Fase 2: comandi `link.register` per sveglie, agenda, Raccolta e Zampe.
