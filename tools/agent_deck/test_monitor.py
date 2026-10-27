@@ -137,6 +137,23 @@ class MonitorTests(unittest.TestCase):
     def test_missing_claude_is_not_a_fake_agent(self):
         sessions,error=m.claude_sessions(self.root)
         self.assertEqual(sessions,[]);self.assertIn('nessuna sessione',error)
+    def test_claude_hooks_drive_session_state(self):
+        project=self.root/'claude'/'projects'/'p';project.mkdir(parents=True)
+        sid='0f0e9d1c-aaaa-bbbb-cccc-1234567890ab'
+        (project/(sid+'.jsonl')).write_text(json.dumps(dict(type='assistant',cwd='C:/w/repo',message=dict(model='m',content=[])))+'\n',encoding='utf-8')
+        data=self.root/'deck'
+        self.assertIsNone(m.record_hook(data,dict(hook_event_name='Bogus',session_id=sid)))
+        self.assertIsNone(m.record_hook(data,dict(hook_event_name='Stop',session_id='../x')))
+        m.record_hook(data,dict(hook_event_name='UserPromptSubmit',session_id=sid,prompt='Fix   the build token=secret-value',cwd='C:/w/repo'))
+        m.record_hook(data,dict(hook_event_name='PreToolUse',session_id=sid,tool_name='Agent',tool_input=dict(description='Find callers')))
+        m.record_hook(data,dict(hook_event_name='PermissionRequest',session_id=sid,tool_name='Bash'))
+        sessions,_=m.claude_sessions(self.root/'claude',hooks=data)
+        self.assertEqual(sessions[0]['status'],'needs_input');self.assertEqual(sessions[0]['source'],'claude_hooks')
+        self.assertEqual(sessions[0]['subagents'],['Find callers'])
+        self.assertTrue(sessions[0]['goal'].startswith('Fix the build'));self.assertNotIn('secret-value',sessions[0]['goal'])
+        m.record_hook(data,dict(hook_event_name='Stop',session_id=sid))
+        sessions,_=m.claude_sessions(self.root/'claude',hooks=data)
+        self.assertEqual(sessions[0]['status'],'done')
     def test_process_probe_never_stops_the_process(self):
         child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(10)'])
         try:

@@ -227,7 +227,41 @@ def codex_sessions(home, now=None):
         return out, None
     except (sqlite3.Error, OSError, ValueError): return [], "Archivio Codex occupato o non leggibile"
 
-def claude_sessions(home, now=None):
+# Claude Code hook events -> (status, activity prefix). Hooks are the real status;
+# transcripts only fill in what hooks do not say (model, tokens, branch).
+HOOK_STATES = {"SessionStart": ("idle", "Sessione avviata"), "UserPromptSubmit": ("working", "Richiesta"),
+               "PreToolUse": ("working", "Strumento"), "PostToolUse": ("working", "Strumento"),
+               "PermissionRequest": ("needs_input", "Permesso richiesto"), "Notification": ("needs_input", "Ti aspetta"),
+               "Stop": ("done", "Turno completato"), "SessionEnd": ("idle", "Sessione chiusa"), "PreCompact": ("working", "Compattazione")}
+
+def record_hook(directory, event, now=None):
+    """Store one Claude Code hook payload as the session's latest state; never the transcript."""
+    name, session = event.get("hook_event_name"), clean(event.get("session_id"), 80)
+    if name not in HOOK_STATES or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", session): return None
+    folder = Path(directory)/"claude-hooks"; folder.mkdir(parents=True, exist_ok=True)
+    path = folder/(session+".json")
+    try: state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError): state = {}
+    status, activity = HOOK_STATES[name]
+    if name == "UserPromptSubmit":
+        state["goal"] = clean(" ".join(str(event.get("prompt") or "").split()), 300)
+        state["subagents"] = []
+    elif name in ("PreToolUse", "PostToolUse", "PermissionRequest"):
+        tool = clean(event.get("tool_name"), 70)
+        tool_input = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+        detail = tool_input.get("description") or tool_input.get("subagent_type") or ""
+        activity += ": "+tool+(" - "+clean(detail, 120) if detail else "")
+        if name == "PreToolUse" and tool in ("Agent", "Task"):
+            state["subagents"] = (state.get("subagents") or [])[-7:]+[clean(detail or tool_input.get("subagent_type") or tool, 120)]
+    elif name == "Notification":
+        activity = clean(event.get("message"), 200) or activity
+        if event.get("notification_type") not in (None, "", "permission_prompt", "idle_prompt", "elicitation_dialog"): status = state.get("status", "working")
+    state.update(session_id=session, status=status, activity=clean(activity, 240), event=name, cwd=clean(event.get("cwd"), 300),
+                 observed_at=now or time.time())
+    tmp = path.with_suffix(".tmp"); tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8"); os.replace(tmp, path)
+    return state
+
+def claude_sessions(home, now=None, hooks=None):
     now = now or time.time()
     root = Path(home)/"projects"
     if not root.exists(): return [], "Claude Code: nessuna sessione locale"
@@ -260,8 +294,17 @@ def claude_sessions(home, now=None):
                 usage = msg.get("usage") or {}
                 values = [usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
                 if all(isinstance(v, (int, float)) for v in values): item["tokens"] = sum(values)
+        hook = None
+        if hooks:
+            try: hook = json.loads((Path(hooks)/"claude-hooks"/(path.stem+".json")).read_text(encoding="utf-8"))
+            except (OSError, ValueError): pass
+        if hook and hook.get("observed_at", 0) >= item["observed_at"]-5:
+            item.update(status=hook.get("status", item["status"]), activity=hook.get("activity") or item["activity"],
+                        goal=hook.get("goal", ""), subagents=hook.get("subagents") or [], cwd=hook.get("cwd") or item["cwd"],
+                        observed_at=max(item["observed_at"], hook["observed_at"]), source="claude_hooks")
         item["repo"] = clean(Path(item["cwd"]).name, 80)
-        if now-item["observed_at"] > 180 and item["status"] == "working": item.update(status="unknown", activity="Nessun evento recente")
+        stale = item["status"] == "working" and item.get("source") != "claude_hooks"
+        if now-item["observed_at"] > 180 and stale: item.update(status="unknown", activity="Nessun evento recente")
         out.append(item)
     return out, None if out else "Claude Code: nessuna sessione nelle ultime 24 ore"
 
@@ -384,7 +427,7 @@ class Monitor:
     def collect(self):
         now = time.time()
         agents, error = codex_sessions(Path(os.environ.get("CODEX_HOME", Path.home()/".codex")), now)
-        claude, cerr = claude_sessions(Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home()/".claude")), now)
+        claude, cerr = claude_sessions(Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home()/".claude")), now, self.store.directory)
         agents.extend(claude)
         apply_owned_terminal_states(agents,getattr(self.args,"aetherion_data",None))
         quota_file=self.store.directory/'account_quota.json'
@@ -545,6 +588,7 @@ def main():
     p.add_argument("--kind", choices=["build", "test", "release", "process"], default="build");p.add_argument("--cwd", default=str(Path.cwd()));p.add_argument("command", nargs=argparse.REMAINDER)
     p = sub.add_parser("event");p.add_argument("--id", required=True);p.add_argument("--title", required=True);p.add_argument("--agent", choices=["codex", "claude", "manual"], default="codex")
     p.add_argument("--status", choices=sorted(STATES), required=True);p.add_argument("--activity", default="");p.add_argument("--notes", default="");p.add_argument("--resume", default="");p.add_argument("--cwd", default=str(Path.cwd()))
+    sub.add_parser("hook", help="Claude Code hook: legge il payload da stdin, non stampa nulla")
     p = sub.add_parser("snapshot");p.add_argument("--workspace", default=str(Path.cwd()))
     sub.add_parser('quota',help='Legge e salva solo percentuali e reset Codex, senza credenziali')
     p=sub.add_parser('pair');p.add_argument('--url',required=True);p.add_argument('--code',required=True)
@@ -559,6 +603,10 @@ def main():
                    resume=clean(args.resume, 300), cwd=str(Path(args.cwd).resolve()), repo=Path(args.cwd).name, branch=repo.get("branch", ""), commit=repo.get("commit", ""),
                    source="explicit_event", observed_at=time.time(), capabilities=["observe", "resume_in_terminal"])
         store.put(old);print("EVENT RECORDED")
+    elif args.op == "hook":
+        # Never block or fail the Claude session: any problem is silently dropped.
+        try: record_hook(args.data, json.loads(sys.stdin.buffer.read(1048576) or b"{}"))
+        except Exception: pass
     elif args.op == "snapshot":
         print(json.dumps(Monitor(args).collect(), ensure_ascii=False, indent=2))
     elif args.op == 'quota':
