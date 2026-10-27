@@ -182,6 +182,11 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual((x1['tokens'],x1['context_percent'],x1['parent_id'],x1['source']),(20005,10.0,'claude:s1','claude_subagent'))
         self.assertEqual(by['claude:s1:x2']['status'],'done')
         sessions,_=m.claude_sessions(self.root/'claude',now=time.time()+600)
+        self.assertEqual({s['id']:s for s in sessions}['claude:s1:x1']['status'],'working')
+        sessions,_=m.claude_sessions(self.root/'claude',now=time.time()+2000)
+        self.assertEqual({s['id']:s for s in sessions}['claude:s1:x1']['status'],'unknown')
+        with open(sub/'agent-x1.jsonl','a',encoding='utf-8') as f:f.write(json.dumps(dict(type='user',message=dict(content=[])))+chr(10))
+        sessions,_=m.claude_sessions(self.root/'claude',now=time.time()+600)
         self.assertEqual({s['id']:s for s in sessions}['claude:s1:x1']['status'],'unknown')
     def test_claude_context_percent_uses_last_message_only(self):
         project=self.root/'claude'/'projects'/'p';project.mkdir(parents=True)

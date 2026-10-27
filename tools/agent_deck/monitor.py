@@ -289,8 +289,10 @@ def claude_subagents(folder, parent, now):
                     name=clean(meta.get("description") or kind, 100), agent_type=kind, repo=parent.get("repo", ""), cwd=parent.get("cwd", ""), branch=parent.get("branch", ""),
                     model="", status="unknown", activity="Avvio", context_percent=None, tokens=None, quota=[], source="claude_subagent",
                     observed_at=path.stat().st_mtime, capabilities=["observe"])
+        pending = False
         for event in bounded_json_lines(path):
             msg = event.get("message") or {}
+            if event.get("type") == "user": pending = False
             if event.get("type") != "assistant" or not isinstance(msg, dict): continue
             # API errors (e.g. rate limits) are written as "<synthetic>" messages with zero usage.
             if msg.get("model") == "<synthetic>": item.update(status="unknown", activity="Interrotto: errore API"); continue
@@ -298,6 +300,7 @@ def claude_subagents(folder, parent, now):
             tools = [c.get("name", "") for c in msg.get("content") or [] if isinstance(c, dict) and c.get("type") == "tool_use"]
             if (msg.get("stop_reason") in ("end_turn", "stop_sequence") and not tools) or "SubagentHandback" in tools: item.update(status="done", activity="Completato")
             else: item.update(status="working", activity="Strumento: "+clean(tools[-1], 70) if tools else "In elaborazione")
+            pending = bool(tools) and item["status"] == "working"
             usage = msg.get("usage") or {}
             values = [usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
             if all(isinstance(v, (int, float)) for v in values): item["tokens"] = sum(values)
@@ -305,7 +308,8 @@ def claude_subagents(folder, parent, now):
             if percent is not None: item["context_percent"] = percent
         item["last_event_age"] = max(0, int(now-item["observed_at"]))
         # Background subagents write their transcript continuously; silence means it stopped.
-        if item["status"] == "working" and item["last_event_age"] > 300: item.update(status="unknown", activity="Nessun evento recente")
+        # A running tool (build, flash) writes nothing until it returns: allow it 30 minutes.
+        if item["status"] == "working" and item["last_event_age"] > (1800 if pending else 300): item.update(status="unknown", activity="Nessun evento recente")
         out.append(item)
     return out
 
