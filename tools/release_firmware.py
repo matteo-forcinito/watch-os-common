@@ -27,6 +27,13 @@ def qa_compile_commands(commands):
                    ('WATCH_LOCAL_QA_CONSOLE', 'CONFIG_WATCH_DEV_CONSOLE=1', 'LITE_QA=1'))
                for c in commands)
 
+def check_source_revision(local_sha, remote_ref, lookup, verify_only=False):
+    # Local preflight deliberately runs before the source branch is published.
+    # Actual publication still requires an exact remote commit match.
+    if not verify_only and lookup(remote_ref)['sha']!=local_sha:
+        raise RuntimeError('Build source is not the published source revision')
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--repo', required=True)
@@ -75,8 +82,7 @@ def main():
         if git('status', '--porcelain', '--untracked-files=no'):
             raise RuntimeError('Tracked source must be clean before packaging')
         source_sha = git('rev-parse', 'HEAD')
-        remote_sha = api('repos/'+a.repo+'/commits/'+a.source_ref)['sha']
-        if source_sha != remote_sha: raise RuntimeError('Build source is not the published source revision')
+        check_source_revision(source_sha,a.source_ref,lambda ref:api('repos/'+a.repo+'/commits/'+ref),a.verify_only)
         shared_commit = git('rev-parse', 'HEAD:watch-os-common')
         description = json.loads((build/'project_description.json').read_text())
         config = json.loads((build/'config/sdkconfig.json').read_text())
