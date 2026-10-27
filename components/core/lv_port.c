@@ -1089,6 +1089,39 @@ static void lvgl_task(void *arg)
 
 /* ------------------------------------------------------------- public */
 
+/*
+ * The panel bus interrupt is installed on the core of the task that sets the
+ * bus up. ESP-IDF's SPI bus lock can lose the wake-up of a task waiting on the
+ * other core (found by Meta's Muse SDK), so the display is started from a
+ * short task on the lvgl task's core, where every flush waits.
+ */
+typedef struct
+{
+    SemaphoreHandle_t done;
+    esp_err_t err;
+} display_start_t;
+
+static void display_start_task(void *arg)
+{
+    display_start_t *start = arg;
+    start->err = display_init(flush_done_isr, NULL);
+    xSemaphoreGive(start->done);
+    vTaskDelete(NULL);
+}
+
+static esp_err_t display_init_on_lvgl_core(void)
+{
+    StaticSemaphore_t storage;
+    display_start_t start = {.done = xSemaphoreCreateBinaryStatic(&storage), .err = ESP_FAIL};
+    if (xTaskCreatePinnedToCore(display_start_task, "lcd_start", 6144, &start, TASK_PRIORITY, NULL, TASK_CORE) !=
+        pdPASS)
+    {
+        return display_init(flush_done_isr, NULL);   /* no RAM for the task: previous behaviour */
+    }
+    xSemaphoreTake(start.done, portMAX_DELAY);
+    return start.err;
+}
+
 static esp_err_t init_port(bool headless)
 {
     s_headless = headless;
@@ -1105,7 +1138,7 @@ static esp_err_t init_port(bool headless)
         return ESP_ERR_NO_MEM;
     }
 
-    esp_err_t err = headless ? ESP_OK : display_init(flush_done_isr, NULL);
+    esp_err_t err = headless ? ESP_OK : display_init_on_lvgl_core();
 
     if (err != ESP_OK)
     {
