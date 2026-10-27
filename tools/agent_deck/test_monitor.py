@@ -155,6 +155,32 @@ class MonitorTests(unittest.TestCase):
         m.record_hook(data,dict(hook_event_name='Stop',session_id=sid))
         sessions,_=m.claude_sessions(self.root/'claude',hooks=data)
         self.assertEqual(sessions[0]['status'],'done')
+    def test_claude_context_percent_uses_last_message_only(self):
+        project=self.root/'claude'/'projects'/'p';project.mkdir(parents=True)
+        def line(model,inp,cc,cr,out=999):
+            return json.dumps(dict(type='assistant',cwd='C:/w/r',message=dict(model=model,stop_reason='end_turn',content=[],usage=dict(input_tokens=inp,cache_creation_input_tokens=cc,cache_read_input_tokens=cr,output_tokens=out))))
+        (project/'a.jsonl').write_text(line('claude-x',150000,0,0)+'\n'+line('claude-x',10000,20000,70000)+'\n',encoding='utf-8')
+        (project/'b.jsonl').write_text(line('claude-x[1m]',100000,100000,300000)+'\n',encoding='utf-8')
+        (project/'c.jsonl').write_text(json.dumps(dict(type='assistant',message=dict(model='m',content=[])))+'\n',encoding='utf-8')
+        sessions,_=m.claude_sessions(self.root/'claude',now=time.time()+30)
+        by={s['session_id']:s for s in sessions}
+        self.assertEqual(by['a']['context_percent'],50.0);self.assertEqual(by['a']['tokens'],100000+999)
+        self.assertEqual(by['b']['context_percent'],50.0)
+        self.assertIsNone(by['c']['context_percent'])
+        self.assertGreaterEqual(by['a']['last_event_age'],29)
+    def test_simulator_cycles_in_separate_directory(self):
+        with self.assertRaises(ValueError):m.sim_write(Path.home()/'.agent-deck',0)
+        real=self.root/'real';m.record_hook(real,dict(hook_event_name='Stop',session_id='real-1'))
+        with self.assertRaises(ValueError):m.sim_write(real,0)
+        d=self.root/'sim'
+        seen=set()
+        for step in range(3):
+            states=m.sim_write(d,step,now=100.0);seen.add(states[0]['status'])
+            self.assertEqual({s['status'] for s in states},{'working','needs_input','done'})
+        self.assertEqual(seen,{'working','needs_input','done'})
+        agents=m.sim_sessions(d,now=110.0)
+        self.assertEqual(len(agents),3);self.assertTrue(all(a['source']=='simulator' and a['id'].startswith('claude:sim-') for a in agents))
+        self.assertEqual(agents[0]['last_event_age'],10);self.assertIsNotNone(agents[0]['context_percent'])
     def test_process_probe_never_stops_the_process(self):
         child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(10)'])
         try:

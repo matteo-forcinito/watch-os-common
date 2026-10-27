@@ -46,6 +46,12 @@ Il monitor invia solo snapshot limitati a 24 KiB verso `/agentdeck/api/snapshot`
 
 Il contesto mostra l'ultimo utilizzo del turno rispetto alla finestra dichiarata, non i token cumulativi. Le quote Codex vengono mostrate solo se presenti negli eventi locali, con percentuale residua e data di osservazione/reset. Con `python tools/agent_deck/monitor.py quota` vengono lette anche le quote reali dell?account CLI corrente tramite `account/rateLimits/read` dell?App Server ufficiale: il processo stdio temporaneo viene chiuso subito dopo la lettura. Il monitor non legge i token di login e non salva identificativi account. `serve --live-quota` aggiorna queste quote ogni due minuti. Sono separate dalle sessioni, che potrebbero appartenere ad account differenti. Rimangono visibili data di rilevazione e reset. Claude non dichiara qui quote account e non vengono stimate. **Non esiste un numero affidabile di sessioni rimanenti:** durata e consumo delle sessioni variano. Un dato assente e indicato come non disponibile.
 
+## Simulatore (senza token)
+
+`python tools/agent_deck/monitor.py sim` scrive tre sessioni Claude sintetiche (working, needs_input, done a rotazione ogni 4 s) in `~/.agent-deck-sim`, mai in `~/.agent-deck/claude-hooks`.
+Per vederle in dashboard e sul device avvia il monitor con `serve --sim-dir ~/.agent-deck-sim` (sorgente `simulator`). `sim --dir <cartella> --interval 2 --steps 6` limita giri e cartella.
+Per ogni sessione Claude reale il monitor riporta anche `context_percent` (ultimo messaggio rispetto a 200k, o 1M se il modello contiene `[1m]`), `tokens` e `last_event_age`; nessun costo viene stimato.
+
 ## Azioni e limiti
 
 Il monitor osserva e fornisce il passaggio al terminale. Non inietta risposte nelle sessioni Codex/Claude, non approva permessi, non ferma processi esterni e non esegue shell dal browser. Le richieste di input vanno risolte nella sessione originale; l'assenza di eventi recenti viene segnalata come stato da verificare, non come una build ancora attiva. I task interni a un agente non esposti dai suoi file richiedono un evento esplicito o il wrapper `run`.

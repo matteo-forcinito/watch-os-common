@@ -266,6 +266,15 @@ def record_hook(directory, event, now=None):
     tmp = path.with_suffix(".tmp"); tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8"); os.replace(tmp, path)
     return state
 
+def context_percent(usage, model):
+    """Share of the context window held by the LAST assistant message (input + cache tokens); None when unknown. Never a cost."""
+    keys = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    if not isinstance(usage, dict) or not isinstance(usage.get("input_tokens"), (int, float)): return None
+    used = sum(v for v in (usage.get(k, 0) for k in keys) if isinstance(v, (int, float)) and not isinstance(v, bool))
+    # Transcripts rarely carry the "[1m]" suffix: usage above 200k proves the 1M window.
+    window = 1000000 if "[1m]" in str(model).lower() or used > 200000 else 200000
+    return round(min(100.0, 100.0*used/window), 1)
+
 def claude_sessions(home, now=None, hooks=None):
     now = now or time.time()
     root = Path(home)/"projects"
@@ -280,7 +289,7 @@ def claude_sessions(home, now=None, hooks=None):
     out = []
     for path in sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[:24]:
         item = dict(id="claude:"+path.stem, session_id=path.stem, agent="claude", name="Claude Code", repo="", cwd="", branch="", model="",
-                    status="unknown", activity="Stato non disponibile", context_percent=None, tokens=None, quota=[], source="claude_transcript",
+                    status="unknown", activity="Stato non disponibile", context_percent=None, tokens=None, last_event_age=None, quota=[], source="claude_transcript",
                     observed_at=path.stat().st_mtime, resume="claude --resume "+path.stem, capabilities=["observe", "resume_in_terminal"])
         for event in bounded_json_lines(path):
             item["cwd"] = clean(event.get("cwd") or item["cwd"], 300)
@@ -299,6 +308,8 @@ def claude_sessions(home, now=None, hooks=None):
                 usage = msg.get("usage") or {}
                 values = [usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
                 if all(isinstance(v, (int, float)) for v in values): item["tokens"] = sum(values)
+                percent = context_percent(usage, item["model"])
+                if percent is not None: item["context_percent"] = percent
         hook = None
         if hooks:
             try: hook = json.loads((Path(hooks)/"claude-hooks"/(path.stem+".json")).read_text(encoding="utf-8"))
@@ -308,10 +319,50 @@ def claude_sessions(home, now=None, hooks=None):
                         goal=hook.get("goal", ""), subagents=hook.get("subagents") or [], cwd=hook.get("cwd") or item["cwd"],
                         observed_at=max(item["observed_at"], hook["observed_at"]), source="claude_hooks")
         item["repo"] = clean(Path(item["cwd"]).name, 80)
+        item["last_event_age"] = max(0, int(now-item["observed_at"]))
         stale = item["status"] == "working" and item.get("source") != "claude_hooks"
         if now-item["observed_at"] > 180 and stale: item.update(status="unknown", activity="Nessun evento recente")
         out.append(item)
     return out, None if out else "Claude Code: nessuna sessione nelle ultime 24 ore"
+
+SIM_SESSIONS = (("sim-alpha", "Aggiorna la documentazione", "repo-alpha", 12.5, 25000), ("sim-beta", "Correggi il test instabile", "repo-beta", 48.0, 96000),
+                ("sim-gamma", "Prepara la nota di rilascio", "repo-gamma", 81.5, 163000))
+SIM_CYCLE = ("working", "needs_input", "done")
+
+def sim_write(directory, step, now=None):
+    """Write synthetic hook states (working -> needs_input -> done, one phase apart per session) into a SEPARATE directory."""
+    directory = Path(directory)
+    if directory.resolve() == (Path.home()/".agent-deck").resolve(): raise ValueError("Il simulatore non scrive nella cartella reale")
+    # Any non-simulated session file means this is a real hooks directory (e.g. a custom --data).
+    if any(not p.name.startswith("sim-") for p in (directory/"claude-hooks").glob("*.json")): raise ValueError("Il simulatore non scrive in una cartella con sessioni reali")
+    out = []
+    for i, (sid, goal, repo, ctx, tokens) in enumerate(SIM_SESSIONS):
+        phase = SIM_CYCLE[(step+i) % 3]
+        if phase == "working": events = [dict(hook_event_name="UserPromptSubmit", prompt=goal), dict(hook_event_name="PreToolUse", tool_name="Bash", tool_input=dict(description="Simulazione"))]
+        elif phase == "needs_input": events = [dict(hook_event_name="PermissionRequest", tool_name="Bash")]
+        else: events = [dict(hook_event_name="Stop")]
+        for e in events: state = record_hook(directory, dict(e, session_id=sid, cwd="C:/sim/"+repo), now)
+        state.update(goal=goal, simulated=True, model="claude-sim", context_percent=min(100.0, ctx+step), tokens=tokens+step*1000)
+        path = directory/"claude-hooks"/(sid+".json"); path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        out.append(state)
+    return out
+
+def sim_sessions(directory, now=None):
+    """Agents built from simulator hook files; only reads the given directory."""
+    now = now or time.time(); out = []
+    for path in sorted((Path(directory)/"claude-hooks").glob("sim-*.json"))[:8]:
+        try: h = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError): continue
+        out.append(dict(id="claude:"+h["session_id"], session_id=h["session_id"], agent="claude", name="Claude Code (simulato)", repo=Path(h.get("cwd") or "").name, cwd=h.get("cwd", ""), branch="main",
+                        model=h.get("model", ""), status=h.get("status", "unknown"), activity=h.get("activity", ""), goal=h.get("goal", ""), subagents=[], context_percent=h.get("context_percent"),
+                        tokens=h.get("tokens"), last_event_age=max(0, int(now-h.get("observed_at", now))), quota=[], source="simulator", observed_at=h.get("observed_at", now), capabilities=["observe"]))
+    return out
+
+def run_sim(directory, interval=4.0, steps=0):
+    step = 0
+    while not steps or step < steps:
+        sim_write(directory, step); step += 1
+        if not steps or step < steps: time.sleep(interval)
 
 class Store:
     def __init__(self, directory):
@@ -434,6 +485,7 @@ class Monitor:
         agents, error = codex_sessions(Path(os.environ.get("CODEX_HOME", Path.home()/".codex")), now)
         claude, cerr = claude_sessions(Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home()/".claude")), now, self.store.directory)
         agents.extend(claude)
+        if getattr(self.args, "sim_dir", None): agents.extend(sim_sessions(self.args.sim_dir, now))
         apply_owned_terminal_states(agents,getattr(self.args,"aetherion_data",None))
         quota_file=self.store.directory/'account_quota.json'
         if getattr(self.args,'live_quota',False) and now-self.quota_at>120:
@@ -588,11 +640,14 @@ def main():
     p = sub.add_parser("serve");p.add_argument("--workspace", default=str(Path.cwd()));p.add_argument("--port", type=int, default=9784)
     p.add_argument('--aetherion-data',help='Optional local Aetherion owner-state directory, read-only')
     p.add_argument("--interval", type=float, default=5);p.add_argument("--device-config")
+    p.add_argument("--sim-dir", help="Mostra anche le sessioni simulate scritte da 'sim' in questa cartella")
     p.add_argument("--live-quota",action='store_true',help='Legge le quote Codex via App Server ogni due minuti')
     p = sub.add_parser("run");p.add_argument("--title", required=True);p.add_argument("--agent", choices=["codex", "claude", "manual"], default="codex")
     p.add_argument("--kind", choices=["build", "test", "release", "process"], default="build");p.add_argument("--cwd", default=str(Path.cwd()));p.add_argument("command", nargs=argparse.REMAINDER)
     p = sub.add_parser("event");p.add_argument("--id", required=True);p.add_argument("--title", required=True);p.add_argument("--agent", choices=["codex", "claude", "manual"], default="codex")
     p.add_argument("--status", choices=sorted(STATES), required=True);p.add_argument("--activity", default="");p.add_argument("--notes", default="");p.add_argument("--resume", default="");p.add_argument("--cwd", default=str(Path.cwd()))
+    p = sub.add_parser("sim", help="Scrive stati hook sintetici (working/needs_input/done) in una cartella separata");p.add_argument("--dir", default=str(Path.home()/".agent-deck-sim"))
+    p.add_argument("--interval", type=float, default=4);p.add_argument("--steps", type=int, default=0, help="0 = fino a Ctrl+C")
     sub.add_parser("hook", help="Claude Code hook: legge il payload da stdin, non stampa nulla")
     p = sub.add_parser("snapshot");p.add_argument("--workspace", default=str(Path.cwd()))
     sub.add_parser('quota',help='Legge e salva solo percentuali e reset Codex, senza credenziali')
@@ -612,6 +667,10 @@ def main():
         # Never block or fail the Claude session: any problem is silently dropped.
         try: record_hook(args.data, json.loads(sys.stdin.buffer.read(1048576) or b"{}"))
         except Exception: pass
+    elif args.op == "sim":
+        try: run_sim(args.dir, args.interval, args.steps)
+        except KeyboardInterrupt: pass
+        except ValueError as exc: parser.error(str(exc))
     elif args.op == "snapshot":
         print(json.dumps(Monitor(args).collect(), ensure_ascii=False, indent=2))
     elif args.op == 'quota':

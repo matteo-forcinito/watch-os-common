@@ -4,6 +4,7 @@
 #include "appkit.h"
 #include "ui/ui.h"
 #include "hardware/board.h"
+#include "services/notify.h"
 #include "esp_timer.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
@@ -186,6 +187,42 @@ static esp_err_t acknowledge_control(httpd_req_t *request)
     if(changed)state_bump(STATE_AGENTDECK_VERSION);
     return appkit_json(request,control_snapshot());
 }
+/* "Ti aspetta": one OS notification per transition into needs_input.
+ * The first snapshot is only a baseline; a session leaving needs_input drops its notice. */
+static uint32_t alert_id(const char *id)
+{
+    uint32_t hash=2166136261u;
+    for(;*id;id++)hash=(hash^(uint8_t)*id)*16777619u;
+    return 0xA6000000u|(hash&0x00FFFFFFu);
+}
+static const cJSON *find_card(const cJSON *cards,const char *id)
+{
+    const cJSON *card;
+    cJSON_ArrayForEach(card,cards)if(!strcmp(value(card,"id"),id))return card;
+    return NULL;
+}
+typedef struct {notify_t items[3];int count;} alert_batch_t;
+static void alert_transitions(const cJSON *before,const cJSON *after,alert_batch_t *batch)
+{
+    const cJSON *old_cards=cJSON_GetObjectItemCaseSensitive(before,"cards"),*card;
+    const cJSON *new_cards=cJSON_GetObjectItemCaseSensitive(after,"cards");
+    cJSON_ArrayForEach(card,old_cards){
+        const cJSON *now=find_card(new_cards,value(card,"id"));
+        if(!strcmp(value(card,"status"),"needs_input")&&(!now||strcmp(value(now,"status"),"needs_input")))
+            notify_remove(alert_id(value(card,"id")));
+    }
+    cJSON_ArrayForEach(card,new_cards){
+        if(strcmp(value(card,"status"),"needs_input"))continue;
+        const cJSON *was=find_card(old_cards,value(card,"id"));
+        if(was&&!strcmp(value(was,"status"),"needs_input"))continue;
+        if(batch->count>=3)break;
+        notify_t n={.id=alert_id(value(card,"id"))};
+        snprintf(n.app,sizeof(n.app),"Agent Deck");
+        snprintf(n.title,sizeof(n.title),"%s ti aspetta",value(card,"name"));
+        snprintf(n.body,sizeof(n.body),"%s",value(card,"activity")[0]?value(card,"activity"):"Serve il tuo input");
+        batch->items[batch->count++]=n;
+    }
+}
 static esp_err_t push(httpd_req_t *request)
 {
     if (!appkit_authorized(request)) return appkit_unauthorized(request);
@@ -200,10 +237,14 @@ static esp_err_t push(httpd_req_t *request)
     if (!printed) { cJSON_Delete(next); return appkit_error(request,"503 Service Unavailable","Memoria insufficiente"); }
     xSemaphoreTake(lock,portMAX_DELAY);
     bool changed = !canonical || strcmp(canonical,printed);
-    cJSON_Delete(document);document=next;
+    cJSON *previous=document;document=next;
     free(canonical);canonical=printed;
     received=esp_timer_get_time();
+    alert_batch_t batch={.count=0};
+    if(previous&&changed)alert_transitions(previous,next,&batch);
     xSemaphoreGive(lock);
+    cJSON_Delete(previous);
+    for(int i=0;i<batch.count;i++)notify_add(&batch.items[i]); /* outside the lock: wakes screen, chimes */
     if (changed) state_bump(STATE_AGENTDECK_VERSION);
     return appkit_json(request,cJSON_CreateObject());
 }
@@ -291,12 +332,23 @@ static void timestamp_label(lv_obj_t *parent,const char *prefix,const cJSON *num
     char date[24],text[64];strftime(date,sizeof(date),"%d/%m %H:%M",&local);
     snprintf(text,sizeof(text),"%s %s",prefix,date);label(parent,text,0x959AAB);
 }
+/* Menu opens only from a stationary press: a drag or swipe always wins. */
+#define MENU_MOVE_LIMIT 12
+static lv_point_t menu_press;
+static bool menu_press_valid;
 static void panel_menu(lv_event_t *event)
 {
     lv_indev_t *input=lv_indev_active();if(!input)return;
+    lv_event_code_t code=lv_event_get_code(event);
     lv_point_t point;lv_indev_get_point(input,&point);
-    if(lv_event_get_code(event)==LV_EVENT_LONG_PRESSED||(point.y<50&&point.x<130)){controls=true;render();}
-    (void)event;
+    if(code==LV_EVENT_PRESSED){menu_press=point;menu_press_valid=true;return;}
+    if(code==LV_EVENT_PRESS_LOST||code==LV_EVENT_RELEASED){return;}
+    if(!menu_press_valid)return;
+    menu_press_valid=false;
+    int dx=point.x-menu_press.x,dy=point.y-menu_press.y;
+    if(dx*dx+dy*dy>MENU_MOVE_LIMIT*MENU_MOVE_LIMIT)return; /* pointer moved: scroll/swipe */
+    if(lv_indev_get_gesture_dir(input)!=LV_DIR_NONE||lv_indev_get_scroll_obj(input))return;
+    if(code==LV_EVENT_LONG_PRESSED||(menu_press.y<50&&menu_press.x<130)){controls=true;render();}
 }
 static void draft_changed(lv_event_t *event)
 {
@@ -315,8 +367,11 @@ static void render(void)
             lv_obj_set_style_pad_all(root,0,0);lv_obj_set_style_pad_row(root,0,0);
             lv_obj_remove_flag(root,LV_OBJ_FLAG_SCROLLABLE);
             native_panel=agentdeck_panel_create(root,ui_board_info()->width,ui_board_info()->height,ui_board_info()->round);
-            if(native_panel)lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_SHORT_CLICKED,NULL);
-            if(native_panel)lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_LONG_PRESSED,NULL);
+            if(native_panel){
+                lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_PRESSED,NULL);
+                lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_SHORT_CLICKED,NULL);
+                lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_LONG_PRESSED,NULL);
+            }
             else label(root,"Memoria PSRAM insufficiente per il deck",0xFF4D00);
         }
         xSemaphoreTake(lock,portMAX_DELAY);int64_t observed=received;xSemaphoreGive(lock);
