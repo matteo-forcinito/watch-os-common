@@ -234,6 +234,8 @@ HOOK_STATES = {"SessionStart": ("idle", "Sessione avviata"), "UserPromptSubmit":
                "PermissionRequest": ("needs_input", "Permesso richiesto"), "Notification": ("needs_input", "Ti aspetta"),
                "Stop": ("done", "Turno completato"), "SessionEnd": ("idle", "Sessione chiusa"), "PreCompact": ("working", "Compattazione")}
 
+HARNESS_PROMPT = re.compile(r"\s*(<(task-notification|agent-message|system-reminder|command-|local-command)|\[SYSTEM NOTIFICATION)")
+
 def record_hook(directory, event, now=None):
     """Store one Claude Code hook payload as the session's latest state; never the transcript."""
     name, session = event.get("hook_event_name"), clean(event.get("session_id"), 80)
@@ -244,8 +246,11 @@ def record_hook(directory, event, now=None):
     except (OSError, ValueError): state = {}
     status, activity = HOOK_STATES[name]
     if name == "UserPromptSubmit":
-        state["goal"] = clean(" ".join(str(event.get("prompt") or "").split()), 300)
-        state["subagents"] = []
+        prompt = re.sub(r"</?pasted_content[^>]*>", "", str(event.get("prompt") or ""))
+        # Task notifications and subagent hand-backs arrive as prompts but are not new requests.
+        if not HARNESS_PROMPT.match(prompt):
+            state["goal"] = clean(" ".join(prompt.split()), 300)
+            state["subagents"] = []
     elif name in ("PreToolUse", "PostToolUse", "PermissionRequest"):
         tool = clean(event.get("tool_name"), 70)
         tool_input = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}

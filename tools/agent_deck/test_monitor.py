@@ -146,6 +146,7 @@ class MonitorTests(unittest.TestCase):
         self.assertIsNone(m.record_hook(data,dict(hook_event_name='Stop',session_id='../x')))
         m.record_hook(data,dict(hook_event_name='UserPromptSubmit',session_id=sid,prompt='Fix   the build token=secret-value',cwd='C:/w/repo'))
         m.record_hook(data,dict(hook_event_name='PreToolUse',session_id=sid,tool_name='Agent',tool_input=dict(description='Find callers')))
+        m.record_hook(data,dict(hook_event_name='UserPromptSubmit',session_id=sid,prompt='<task-notification> <task-id>x</task-id>'))
         m.record_hook(data,dict(hook_event_name='PermissionRequest',session_id=sid,tool_name='Bash'))
         sessions,_=m.claude_sessions(self.root/'claude',hooks=data)
         self.assertEqual(sessions[0]['status'],'needs_input');self.assertEqual(sessions[0]['source'],'claude_hooks')
