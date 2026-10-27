@@ -1,5 +1,15 @@
-/* Storage and synthesis live on core 0. The audio task never touches files. */
+/* Storage and synthesis live on core 0. The audio task never touches files.
+ *
+ * Ownership (no lock is ever taken by the audio task):
+ *   audio task   deck transport (vinyl, play, loop edges in use), mixer, studio;
+ *                receives commands through a lock-free queue (cmdq.h) and
+ *                publishes a double-buffered snapshot with a sequence counter.
+ *   storage task files, page cache, track sources, loop edge staging; publishes
+ *                each page by tag (invalidate, copy, publish) and each source by
+ *                generation (release/acquire).
+ *   s_lock       storage/UI-only data: library, titles, error text. */
 #include "engine.h"
+#include "cmdq.h"
 #include "core/power.h"
 #include "core/sys.h"
 #include "esp_heap_caps.h"
@@ -35,33 +45,54 @@ _Static_assert(SOLCO_LOOP_EDGE_PAGES >= 4 && SOLCO_LOOP_EDGE_PAGES % 2 == 0,
 #define TRACKS 32
 #define RATE 44100
 #define DEMO_FRAMES (RATE / 2)
+/* Live hits are scheduled this many frames after their arrival: constant latency,
+ * no quantization to the block in progress. */
+#ifndef SOLCO_LIVE_DELAY_FRAMES
+#define SOLCO_LIVE_DELAY_FRAMES FRAMES
+#endif
+
+#define LOAD(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)
+#define STORE(p, v) __atomic_store_n((p), (v), __ATOMIC_RELEASE)
+#define RELAXED(p) __atomic_load_n((p), __ATOMIC_RELAXED)
 
 extern const int16_t s_pulse_pcm[] asm("_binary_pulse_pcm_start");
 extern const int16_t s_chord_pcm[] asm("_binary_chord_pcm_start");
 
 typedef struct
 {
+    /* ---- storage-owned, published to audio ---- */
     int16_t *pcm;
     uint16_t peaks[PAGES];
-    uint32_t tags[PAGES];
-    int16_t *loop_pcm;
-    uint32_t loop_tags[SOLCO_LOOP_EDGE_PAGES];
-    int16_t *loop_staging_pcm;
-    uint32_t loop_staging_tags[SOLCO_LOOP_EDGE_PAGES], loop_request;
-    bool loop_pending;
-    solco_vinyl_t loop_proposal;
-    uint32_t length;
-    uint32_t generation;
-    uint32_t miss_frame, miss_tag;
+    uint32_t tags[PAGES];               /* UINT32_MAX while a page is being written */
+    int16_t *loop_staging_pcm;          /* pointer swapped by audio, see loop_stage */
+    uint32_t loop_staging_tags[SOLCO_LOOP_EDGE_PAGES];
+    uint32_t staged_id;                 /* storage: stage the staging tags belong to */
+    uint32_t loop_ready;                /* storage -> audio: staging complete for this id */
+    uint32_t generation;                /* source generation, release after the fields below */
+    uint32_t ready_generation;          /* == generation once playable */
+    uint32_t length;                    /* frames; grows 0 -> N once within a generation */
+    bool demo;
+    int track;
+    /* storage-only */
     FILE *file;
     solco_wav_t wav;
-    solco_vinyl_t vinyl;
-    bool demo;
-    bool ready;
-    bool playing;
     bool mp3, preparing;
-    int track;
-    char title[64];
+    char title[64];                     /* s_lock */
+    /* ---- audio-owned ---- */
+    solco_vinyl_t vinyl;
+    bool playing;
+    uint32_t audio_generation;
+    bool a_demo, a_ready;
+    int a_track;
+    uint32_t a_length;
+    int16_t *loop_pcm;
+    uint32_t loop_tags[SOLCO_LOOP_EDGE_PAGES];
+    bool loop_pending;
+    uint32_t loop_ids;                  /* audio: last id issued */
+    /* audio -> storage */
+    uint32_t loop_stage;                /* id that needs staging, 0 = none */
+    solco_vinyl_t loop_proposal;        /* valid while loop_stage is unchanged */
+    uint32_t miss_frame, miss_tag;      /* diagnostics, racy reads */
 } deck_t;
 
 typedef struct
@@ -70,54 +101,125 @@ typedef struct
     int action;
     int track;
 } command_t;
+
+enum
+{
+    CMD_TOGGLE = 1,
+    CMD_SCRATCH,
+    CMD_JOG,
+    CMD_LOOP,
+    CMD_KEYLOCK,
+    CMD_RATE,
+    CMD_STUDIO,
+};
+
+/* Audio -> everyone. Double buffer: the writer fills cell (seq + 1) & 1, then
+ * increments seq; a reader retries if seq moved while it copied. */
+typedef struct
+{
+    struct
+    {
+        bool playing, held, looping, loop_marked, keylock, ready;
+        uint32_t generation, frame, loop_in, loop_out;
+        int64_t speed, rate;
+    } deck[2];
+    uint16_t peak;
+    uint32_t underruns, audio_errors, restarts, mix_us, cycle_us, late_cycles, blocks, clips;
+    uint32_t mix_hist[8]; /* mix time in eighths of the block budget */
+    studio_status_t studio;
+    int64_t anchor_offset_us; /* frame(t) = (t - offset) * RATE / 1e6 */
+    bool anchor_valid;
+} snapshot_t;
+
 static const char *TAG = "solco";
 static deck_t s_decks[2];
 static char s_tracks[TRACKS][256];
 static int s_track_count;
-static QueueHandle_t s_commands;
-/* All callers are tasks. A priority-inheriting mutex keeps I2S DMA interrupts
- * serviceable while WSOLA renders a grain; a spinlock would mask them. */
+static QueueHandle_t s_commands; /* UI -> storage (file operations) */
+static solco_cmdq_t s_audio_commands;
 static StaticSemaphore_t s_lock_storage;
-static SemaphoreHandle_t s_lock;
+static SemaphoreHandle_t s_lock; /* never taken by the audio task */
+static char s_error[64];
+static int s_cross = 500, s_volume = 0;
+static uint32_t s_audio_fault; /* 0 ok, 1 output unavailable, 2 restarting */
+static uint32_t s_force_restart; /* development: exercise the recovery path */
+static snapshot_t s_snapshot[2];
+static uint32_t s_snapshot_seq;
+static uint32_t s_studio_input_drops, s_studio_init_us;
+
+/* Audio-task private state. */
+static int16_t s_a[FRAMES * 2], s_b[FRAMES * 2], s_out[FRAMES * 2];
+static solco_mix_t s_mix;
+static studio_t s_studio;
+static int16_t s_bus[FRAMES * 2];
+static snapshot_t s_live;
+
+static int s_motion_mode;
+static unsigned s_motion_calibration;
+static uint32_t s_motion_reads, s_motion_errors, s_motion_hits;
+static int s_motion_learned, s_motion_pad;
 
 void solco_engine_sync_init(void)
 {
     s_lock = xSemaphoreCreateRecursiveMutexStatic(&s_lock_storage);
     configASSERT(s_lock);
+    solco_cmdq_init(&s_audio_commands);
 }
-static solco_status_t s_status = {.cross = 500, .volume = 0};
-static int16_t s_a[FRAMES * 2], s_b[FRAMES * 2], s_out[FRAMES * 2];
-static solco_mix_t s_mix;
-static studio_t s_studio;
-static studio_status_t s_studio_status;
-static QueueHandle_t s_studio_commands;
-static int16_t s_bus[FRAMES * 2];
-static uint64_t s_anchor_frame;
-static int64_t s_anchor_time;
-static int s_motion_mode;
-static unsigned s_motion_calibration;
-static uint32_t s_studio_input_drops, s_studio_init_us;
-static uint32_t s_motion_reads, s_motion_errors, s_motion_hits;
-static int s_motion_learned, s_motion_pad;
+
+static void snapshot_read(snapshot_t *out)
+{
+    for (;;)
+    {
+        uint32_t seq = LOAD(&s_snapshot_seq);
+        *out = s_snapshot[seq & 1];
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (RELAXED(&s_snapshot_seq) == seq)
+            return;
+    }
+}
+static void snapshot_publish(void)
+{
+    uint32_t seq = RELAXED(&s_snapshot_seq) + 1;
+    /* The previous sequence store must be visible before this buffer changes. */
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    s_snapshot[seq & 1] = s_live;
+    STORE(&s_snapshot_seq, seq);
+}
+
+static bool audio_command(const solco_cmd_t *cmd)
+{
+    if (solco_cmdq_push(&s_audio_commands, cmd))
+        return true;
+    return false;
+}
 
 bool solco_studio_submit_at(studio_event_t event, int64_t time_us)
 {
-    if (!s_studio_commands || event.type < STUDIO_HIT || event.type > STUDIO_KIT ||
+    if (event.type < STUDIO_HIT || event.type > STUDIO_KIT ||
         (event.type == STUDIO_HIT &&
          (event.value >= STUDIO_BANKS || !event.velocity || event.velocity > 127)))
     {
         return false;
     }
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    int64_t delta = time_us - s_anchor_time;
-    event.frame = time_us > 0 && s_anchor_time
-                      ? s_anchor_frame + (delta > 0 ? (uint64_t)delta * RATE / 1000000 : 0)
-                      : 0;
-    xSemaphoreGiveRecursive(s_lock);
-    if (xQueueSend(s_studio_commands, &event, 0) == pdTRUE)
+    bool live = !time_us && event.type == STUDIO_HIT;
+    if (live)
+        time_us = esp_timer_get_time();
+    event.frame = 0;
+    if (time_us > 0)
     {
-        return true;
+        snapshot_t snap;
+        snapshot_read(&snap);
+        if (snap.anchor_valid)
+        {
+            int64_t frame = (time_us - snap.anchor_offset_us) * RATE / 1000000;
+            if (live)
+                frame += SOLCO_LIVE_DELAY_FRAMES;
+            event.frame = frame > 0 ? (uint64_t)frame : 0;
+        }
     }
+    solco_cmd_t cmd = {.type = CMD_STUDIO, .event = event};
+    if (audio_command(&cmd))
+        return true;
     __atomic_add_fetch(&s_studio_input_drops, 1, __ATOMIC_RELAXED);
     return false;
 }
@@ -128,10 +230,10 @@ void solco_studio_command(int type, int value, int velocity)
 }
 void solco_studio_local_status(studio_status_t *status)
 {
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    *status = s_studio_status;
+    snapshot_t snap;
+    snapshot_read(&snap);
+    *status = snap.studio;
     status->dropped += __atomic_load_n(&s_studio_input_drops, __ATOMIC_RELAXED);
-    xSemaphoreGiveRecursive(s_lock);
 }
 void solco_studio_status(studio_status_t *status) { solco_studio_local_status(status); }
 uint32_t solco_studio_init_us(void) { return s_studio_init_us; }
@@ -236,7 +338,7 @@ static void motion_task(void *arg)
 static void error_text(const char *text)
 {
     xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    snprintf(s_status.error, sizeof(s_status.error), "%s", text);
+    snprintf(s_error, sizeof(s_error), "%s", text);
     xSemaphoreGiveRecursive(s_lock);
     ESP_LOGW(TAG, "%s", text);
 }
@@ -266,34 +368,37 @@ static void scan(void)
     ESP_LOGI(TAG, "%d audio files in /sdcard/music", s_track_count);
 }
 
+/* Storage: start a new source generation. The audio task resets the transport
+ * (keeping rate and key lock) when it observes the new generation. */
+static void publish_source(deck_t *d, bool demo, uint32_t length, bool ready)
+{
+    d->demo = demo;
+    STORE(&d->length, length);
+    uint32_t generation = RELAXED(&d->generation) + 1;
+    if (!generation)
+        generation = 1;
+    STORE(&d->generation, generation);
+    if (ready)
+        STORE(&d->ready_generation, generation);
+    solco_prepare_cancel((int)(d - s_decks), generation); /* jobs of older generations stop */
+}
+
 static void reset_deck(int index, bool next)
 {
     deck_t *d = &s_decks[index];
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    d->playing = false;
-    bool reuse = !next && d->mp3 && d->file && d->ready;
-    d->ready = false;
+    STORE(&d->ready_generation, 0); /* audio stops this deck at its next block */
+    bool reuse = !next && d->mp3 && d->file && RELAXED(&d->length);
     d->preparing = false;
-    ++d->generation;
-    int32_t rate = d->vinyl.play_speed;
-    solco_keylock_t *lock = d->vinyl.keylock;
-    bool keylock_enabled = d->vinyl.keylock_enabled;
-    if (lock) memset(lock, 0, sizeof(*lock));
-    memset(&d->vinyl, 0, sizeof(d->vinyl));
-    d->vinyl.play_speed = rate;
-    d->vinyl.keylock = lock;
-    d->vinyl.keylock_enabled = keylock_enabled;
-    memset(d->tags, 0xff, sizeof(d->tags));
-    memset(d->loop_tags, 0xff, sizeof(d->loop_tags));
-    memset(d->loop_staging_tags, 0xff, sizeof(d->loop_staging_tags));
-    d->loop_pending = false;
-    ++d->loop_request;
+    for (int i = 0; i < PAGES; ++i)
+        __atomic_store_n(&d->tags[i], UINT32_MAX, __ATOMIC_RELAXED);
     memset(d->peaks, 0, sizeof(d->peaks));
-    s_status.error[0] = '\0';
+    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
+    s_error[0] = '\0';
     xSemaphoreGiveRecursive(s_lock);
-    solco_prepare_cancel(index, d->generation);
     if (reuse)
     {
+        /* Same prepared cache: a new timeline, ready again once page 0 is back. */
+        publish_source(d, false, RELAXED(&d->length), false);
         return;
     }
     if (d->file)
@@ -307,7 +412,6 @@ static void reset_deck(int index, bool next)
     }
     bool demo = d->track < 2;
     uint32_t length = DEMO_FRAMES;
-    bool ready = demo;
     d->mp3 = false;
     char title[64] = {0};
     if (demo)
@@ -321,16 +425,13 @@ static void reset_deck(int index, bool next)
         if (d->mp3)
         {
             xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-            d->demo = false;
-            d->length = 0;
-            d->preparing = true;
             snprintf(d->title, sizeof(d->title), "%.63s", path + 14);
             xSemaphoreGiveRecursive(s_lock);
-            if (!solco_prepare_request(index, d->generation, path))
+            d->preparing = true;
+            publish_source(d, false, 0, false);
+            if (!solco_prepare_request(index, RELAXED(&d->generation), path))
             {
-                xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
                 d->preparing = false;
-                xSemaphoreGiveRecursive(s_lock);
                 error_text("Preparazione occupata: riprova");
             }
             return;
@@ -354,25 +455,37 @@ static void reset_deck(int index, bool next)
         snprintf(title, sizeof(title), "%.63s", path + 14);
     }
     xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    d->demo = demo;
-    d->length = length;
-    d->ready = ready;
     memcpy(d->title, title, sizeof(title));
     xSemaphoreGiveRecursive(s_lock);
+    publish_source(d, demo, length, demo);
+}
+
+/* Page publication protocol: invalidate the tag, copy, publish the new tag. The
+ * audio task re-reads the tag after its sample reads (seqlock per page). */
+static void publish_page(uint32_t *tag, int16_t *dst, const int16_t *src, size_t frames,
+                         uint32_t page)
+{
+    __atomic_store_n(tag, UINT32_MAX, __ATOMIC_RELAXED);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    memcpy(dst, src, frames * 2 * sizeof(int16_t));
+    STORE(tag, page);
 }
 
 /* Bidirectional page cache, filled outside the audio task. Each tag identifies
  * an absolute WAV page; modulo placement never aliases stale samples. */
-static void fill(int index)
+static void fill(int index, const snapshot_t *snap)
 {
     deck_t *d = &s_decks[index];
-    if (d->demo || !d->file || !d->length)
+    uint32_t length = RELAXED(&d->length);
+    if (d->demo || !d->file || !length)
     {
         return;
     }
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    uint32_t current = (uint32_t)(d->vinyl.cursor / SOLCO_SAMPLE_ONE) / PAGE;
-    uint32_t total = (d->length + PAGE - 1) / PAGE;
+    uint32_t generation = RELAXED(&d->generation);
+    /* Until audio has adopted this generation its cursor belongs to the old source. */
+    uint32_t position = snap->deck[index].generation == generation ? snap->deck[index].frame : 0;
+    uint32_t current = position / PAGE;
+    uint32_t total = (length + PAGE - 1) / PAGE;
     if (current >= total)
     {
         current = total - 1;
@@ -384,14 +497,34 @@ static void fill(int index)
     }
     uint32_t wanted = UINT32_MAX;
     int edge_slot = -1;
-    bool staging = d->loop_pending;
-    uint32_t request = d->loop_request;
-    solco_vinyl_t *range = staging ? &d->loop_proposal : &d->vinyl;
-    uint32_t *edge_tags = staging ? d->loop_staging_tags : d->loop_tags;
-    if (range->loop_marked)
+    /* Loop edges requested by the audio task: staged, then swapped by audio. */
+    uint32_t stage = LOAD(&d->loop_stage);
+    solco_vinyl_t proposal = {0};
+    if (stage && stage != RELAXED(&d->loop_ready))
     {
-        uint32_t head = range->loop_in / PAGE;
-        uint32_t tail = range->loop_out > range->loop_in ? (range->loop_out - 1) / PAGE : head;
+        proposal = d->loop_proposal;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (RELAXED(&d->loop_stage) != stage)
+            stage = 0; /* superseded while copying; next pass */
+        if (stage && d->staged_id != stage)
+        {
+            memset(d->loop_staging_tags, 0xff, sizeof(d->loop_staging_tags));
+            d->staged_id = stage;
+        }
+    }
+    else
+    {
+        stage = 0;
+    }
+    if (stage && !proposal.loop_marked)
+    {
+        STORE(&d->loop_ready, stage); /* nothing to stage */
+        return;
+    }
+    if (stage)
+    {
+        uint32_t head = proposal.loop_in / PAGE;
+        uint32_t tail = proposal.loop_out > proposal.loop_in ? (proposal.loop_out - 1) / PAGE : head;
         uint32_t edges[SOLCO_LOOP_EDGE_PAGES];
         for (int i = 0; i < SOLCO_LOOP_EDGE_PAGES / 2; ++i)
         {
@@ -400,12 +533,18 @@ static void fill(int index)
         }
         for (int i = 0; i < SOLCO_LOOP_EDGE_PAGES; ++i)
         {
-            if (edge_tags[i] != edges[i])
+            if (d->loop_staging_tags[i] != edges[i])
             {
                 wanted = edges[i];
                 edge_slot = i;
                 break;
             }
+        }
+        if (wanted == UINT32_MAX)
+        {
+            /* Every new edge page is staged: hand it over to the audio task. */
+            STORE(&d->loop_ready, stage);
+            return;
         }
     }
     for (int i = 0; wanted == UINT32_MAX && i < PAGES * 2; ++i)
@@ -416,20 +555,19 @@ static void fill(int index)
         {
             continue;
         }
-        if (d->tags[page % PAGES] != (uint32_t)page)
+        if (RELAXED(&d->tags[page % PAGES]) != (uint32_t)page)
         {
             wanted = (uint32_t)page;
             break;
         }
     }
-    xSemaphoreGiveRecursive(s_lock);
     if (wanted == UINT32_MAX)
     {
         return;
     }
     int16_t pcm[PAGE * 2];
     uint32_t first = wanted * PAGE;
-    size_t frames = d->length - first < PAGE ? d->length - first : PAGE;
+    size_t frames = length - first < PAGE ? length - first : PAGE;
     size_t unit = d->wav.channels * sizeof(int16_t);
     if (fseek(d->file, (long)(d->wav.offset + first * unit), SEEK_SET) != 0 ||
         fread(pcm, unit, frames, d->file) != frames)
@@ -437,11 +575,7 @@ static void fill(int index)
         error_text("Errore lettura microSD");
         fclose(d->file);
         d->file = NULL;
-        xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-        d->playing = false;
-        d->ready = false;
-        d->vinyl.held = false;
-        xSemaphoreGiveRecursive(s_lock);
+        STORE(&d->ready_generation, 0); /* audio stops and releases this deck */
         return;
     }
     if (d->wav.channels == 1)
@@ -460,62 +594,20 @@ static void fill(int index)
             peak = magnitude;
         }
     }
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
     if (edge_slot >= 0)
     {
-        if (staging)
-        {
-            if (d->loop_pending && d->loop_request == request)
-            {
-                memcpy(d->loop_staging_pcm + edge_slot * PAGE * 2, pcm,
-                       frames * 2 * sizeof(int16_t));
-                d->loop_staging_tags[edge_slot] = wanted;
-                bool complete = true;
-                for (int i = 0; i < SOLCO_LOOP_EDGE_PAGES; ++i)
-                    if (d->loop_staging_tags[i] == UINT32_MAX)
-                        complete = false;
-                if (complete)
-                {
-                    /* Publish only once every new edge page is available. The old
-                     * loop keeps playing during SD reads; no uncached midpoint jump. */
-                    /* Both buffers have identical capacity. Publish by swapping
-                     * ownership, avoiding a 64 KiB copy in the audio mutex. */
-                    int16_t *previous = d->loop_pcm;
-                    d->loop_pcm = d->loop_staging_pcm;
-                    d->loop_staging_pcm = previous;
-                    memcpy(d->loop_tags, d->loop_staging_tags, sizeof(d->loop_tags));
-                    d->vinyl.loop_in = d->loop_proposal.loop_in;
-                    d->vinyl.loop_out = d->loop_proposal.loop_out;
-                    d->vinyl.loop_enabled = d->loop_proposal.loop_enabled;
-                    d->vinyl.loop_marked = d->loop_proposal.loop_marked;
-                    int64_t low = (int64_t)d->vinyl.loop_in * SOLCO_SAMPLE_ONE;
-                    int64_t high = (int64_t)d->vinyl.loop_out * SOLCO_SAMPLE_ONE;
-                    if (!d->vinyl.held && (d->vinyl.cursor < low || d->vinyl.cursor >= high))
-                    {
-                        d->vinyl.cursor = d->vinyl.target = low;
-                        d->vinyl.gate = 0;
-                    }
-                    d->loop_pending = false;
-                }
-            }
-        }
-        else
-        {
-            memcpy(d->loop_pcm + edge_slot * PAGE * 2, pcm, frames * 2 * sizeof(int16_t));
-            d->loop_tags[edge_slot] = wanted;
-        }
-        xSemaphoreGiveRecursive(s_lock);
+        /* Staging belongs to storage until loop_ready == stage: plain copy. */
+        memcpy(d->loop_staging_pcm + edge_slot * PAGE * 2, pcm, frames * 2 * sizeof(int16_t));
+        d->loop_staging_tags[edge_slot] = wanted;
         return;
     }
     uint32_t slot = wanted % PAGES;
-    memcpy(d->pcm + slot * PAGE * 2, pcm, frames * 2 * sizeof(int16_t));
     d->peaks[slot] = peak;
-    d->tags[slot] = wanted;
+    publish_page(&d->tags[slot], d->pcm + slot * PAGE * 2, pcm, frames, wanted);
     if (wanted == 0)
     {
-        d->ready = true;
+        STORE(&d->ready_generation, generation);
     }
-    xSemaphoreGiveRecursive(s_lock);
 }
 
 /* USB stdout may block for 50 ms when the host stops reading. Never log in audio. */
@@ -532,6 +624,11 @@ static void log_status(void *arg)
         (unsigned long)status.frames[0], (unsigned long)status.frames[1]);
 }
 
+static bool deck_busy(const snapshot_t *snap, int deck)
+{
+    return snap->deck[deck].playing || snap->deck[deck].held;
+}
+
 static void storage_task(void *arg)
 {
     (void)arg;
@@ -544,8 +641,9 @@ static void storage_task(void *arg)
     int64_t last_log = esp_timer_get_time();
     for (;;)
     {
-        studio_status_t studio;
-        solco_studio_local_status(&studio);
+        snapshot_t snap;
+        snapshot_read(&snap);
+        studio_status_t studio = snap.studio;
         if (studio.revision != saved_revision && esp_timer_get_time() >= next_save)
         {
             next_save = esp_timer_get_time() + 2000000;
@@ -578,15 +676,13 @@ static void storage_task(void *arg)
         while (solco_prepare_poll(&prepared))
         {
             deck_t *d = &s_decks[prepared.deck];
-            if (d->generation != prepared.generation || !d->preparing)
+            if (RELAXED(&d->generation) != prepared.generation || !d->preparing)
             {
                 continue;
             }
             if (prepared.error[0])
             {
-                xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
                 d->preparing = false;
-                xSemaphoreGiveRecursive(s_lock);
                 error_text(prepared.error);
                 continue;
             }
@@ -602,10 +698,8 @@ static void storage_task(void *arg)
                 d->file = file;
                 d->wav = wav;
             }
-            xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
             d->preparing = false;
-            d->length = valid ? wav.bytes / (wav.channels * 2) : 0;
-            xSemaphoreGiveRecursive(s_lock);
+            STORE(&d->length, valid ? wav.bytes / (wav.channels * 2) : 0);
             if (!valid)
             {
                 error_text("Cache PCM non disponibile");
@@ -614,13 +708,11 @@ static void storage_task(void *arg)
         command_t command;
         while (xQueueReceive(s_commands, &command, 0) == pdTRUE)
         {
+            snapshot_read(&snap);
             if (command.action == 3 || command.action == 5 || command.action == 6)
             {
-                xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-                bool busy = s_decks[0].playing || s_decks[1].playing || s_decks[0].vinyl.held ||
-                            s_decks[1].vinyl.held ||
+                bool busy = deck_busy(&snap, 0) || deck_busy(&snap, 1) ||
                             (command.action == 6 && (s_decks[0].preparing || s_decks[1].preparing));
-                xSemaphoreGiveRecursive(s_lock);
                 if (busy)
                 {
                     error_text("Pausa i deck prima di rileggere");
@@ -664,41 +756,24 @@ static void storage_task(void *arg)
                 reset_deck(1, false);
                 continue;
             }
-            if (command.action == 0)
+            if ((command.action == 2 || command.action == 4) && deck_busy(&snap, command.deck))
             {
-                xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-                if (s_decks[command.deck].ready)
-                {
-                    s_decks[command.deck].playing = !s_decks[command.deck].playing;
-                }
-                xSemaphoreGiveRecursive(s_lock);
+                error_text("Pausa prima di FILE");
+                continue;
             }
-            else
+            if (command.action == 4)
             {
-                xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-                bool playing = s_decks[command.deck].playing || s_decks[command.deck].vinyl.held;
-                xSemaphoreGiveRecursive(s_lock);
-                if ((command.action == 2 || command.action == 4) && playing)
+                if (command.track < 0 || command.track >= s_track_count + 2)
                 {
-                    error_text("Pausa prima di FILE");
                     continue;
                 }
-                if (command.action == 4)
-                {
-                    if (command.track < 0 || command.track >= s_track_count + 2)
-                    {
-                        continue;
-                    }
-                    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-                    s_decks[command.deck].ready = false;
-                    s_decks[command.deck].track = command.track;
-                    xSemaphoreGiveRecursive(s_lock);
-                }
-                reset_deck(command.deck, command.action == 2);
+                s_decks[command.deck].track = command.track;
             }
+            reset_deck(command.deck, command.action == 2);
         }
-        fill(0);
-        fill(1);
+        snapshot_read(&snap);
+        fill(0, &snap);
+        fill(1, &snap);
         if (esp_timer_get_time() - last_log > 10000000)
         {
             sys_post(log_status, NULL);
@@ -708,11 +783,11 @@ static void storage_task(void *arg)
     }
 }
 
-/* Caller holds the short state lock; no filesystem or allocation here. */
+/* Audio task only; no filesystem, allocation or lock here. */
 static bool sample(void *source, int64_t frame, int16_t stereo[2])
 {
     deck_t *d = source;
-    if (d->demo)
+    if (d->a_demo)
     {
         int64_t at = frame;
         if (at < 0 || at >= DEMO_FRAMES) at %= DEMO_FRAMES;
@@ -720,11 +795,11 @@ static bool sample(void *source, int64_t frame, int16_t stereo[2])
         {
             at += DEMO_FRAMES;
         }
-        const int16_t *loop = d->track == 0 ? s_pulse_pcm : s_chord_pcm;
+        const int16_t *loop = d->a_track == 0 ? s_pulse_pcm : s_chord_pcm;
         stereo[0] = stereo[1] = loop[at];
         return true;
     }
-    if (frame < 0 || frame >= d->length)
+    if (frame < 0 || frame >= d->a_length)
     {
         d->miss_frame = (uint32_t)frame;
         d->miss_tag = UINT32_MAX;
@@ -733,12 +808,15 @@ static bool sample(void *source, int64_t frame, int16_t stereo[2])
     uint32_t page = (uint32_t)frame / PAGE;
     /* Most WSOLA reads hit the ordinary cache. Avoid scanning all boundary
      * pages for every sample; the reserved edges are a fallback after wraps. */
-    if (d->tags[page % PAGES] == page)
+    uint32_t *tag = &d->tags[page % PAGES];
+    if (LOAD(tag) == page)
     {
         size_t at = ((size_t)frame % RING) * 2;
         stereo[0] = d->pcm[at];
         stereo[1] = d->pcm[at + 1];
-        return true;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (RELAXED(tag) == page)
+            return true; /* not replaced while we read it */
     }
     if (d->vinyl.loop_enabled)
     {
@@ -754,27 +832,164 @@ static bool sample(void *source, int64_t frame, int16_t stereo[2])
         }
     }
     d->miss_frame = (uint32_t)frame;
-    d->miss_tag = d->tags[page % PAGES];
+    d->miss_tag = RELAXED(tag);
     return false;
+}
+
+static void issue_loop(deck_t *d, const solco_vinyl_t *proposal, bool staged)
+{
+    uint32_t id = ++d->loop_ids ? d->loop_ids : ++d->loop_ids;
+    if (staged)
+    {
+        /* Seqlock for storage's copy of the proposal: 0 while it is rewritten. */
+        __atomic_store_n(&d->loop_stage, 0, __ATOMIC_RELAXED);
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+        d->loop_proposal = *proposal;
+        d->loop_pending = true;
+        STORE(&d->loop_stage, id);
+    }
+    else
+    {
+        d->vinyl = *proposal;
+        d->loop_pending = false;
+        STORE(&d->loop_stage, 0);
+    }
+}
+
+/* Audio: adopt a new source generation, the ready state and staged loop edges. */
+static void deck_sync(deck_t *d, int index)
+{
+    uint32_t generation = LOAD(&d->generation);
+    if (generation != d->audio_generation)
+    {
+        d->audio_generation = generation;
+        d->a_demo = d->demo;
+        d->a_track = d->track;
+        d->playing = false;
+        int64_t rate = d->vinyl.play_speed;
+        solco_keylock_t *lock = d->vinyl.keylock;
+        bool keylock_enabled = d->vinyl.keylock_enabled;
+        if (lock)
+            memset(lock, 0, sizeof(*lock));
+        memset(&d->vinyl, 0, sizeof(d->vinyl));
+        d->vinyl.play_speed = rate;
+        d->vinyl.keylock = lock;
+        d->vinyl.keylock_enabled = keylock_enabled;
+        memset(d->loop_tags, 0xff, sizeof(d->loop_tags));
+        d->loop_pending = false;
+        STORE(&d->loop_stage, 0);
+        /* A cue/load starts a new timeline: never drain its first samples
+         * using the previous source's pause fade. */
+        if (index == 0)
+            s_mix.a = 0;
+        else
+            s_mix.b = 0;
+    }
+    d->a_length = LOAD(&d->length);
+    d->a_ready = LOAD(&d->ready_generation) == generation && generation;
+    if (!d->a_ready)
+    {
+        d->playing = false;
+        d->vinyl.held = false;
+    }
+    uint32_t stage = RELAXED(&d->loop_stage);
+    if (d->loop_pending && stage && LOAD(&d->loop_ready) == stage)
+    {
+        /* Publish only once every new edge page is available. The old loop kept
+         * playing during SD reads; swap buffers, no copy, no uncached jump. */
+        int16_t *previous = d->loop_pcm;
+        d->loop_pcm = d->loop_staging_pcm;
+        d->loop_staging_pcm = previous;
+        memcpy(d->loop_tags, d->loop_staging_tags, sizeof(d->loop_tags));
+        d->vinyl.loop_in = d->loop_proposal.loop_in;
+        d->vinyl.loop_out = d->loop_proposal.loop_out;
+        d->vinyl.loop_enabled = d->loop_proposal.loop_enabled;
+        d->vinyl.loop_marked = d->loop_proposal.loop_marked;
+        int64_t low = (int64_t)d->vinyl.loop_in * SOLCO_SAMPLE_ONE;
+        int64_t high = (int64_t)d->vinyl.loop_out * SOLCO_SAMPLE_ONE;
+        if (!d->vinyl.held && (d->vinyl.cursor < low || d->vinyl.cursor >= high))
+        {
+            d->vinyl.cursor = d->vinyl.target = low;
+            d->vinyl.gate = 0;
+        }
+        d->loop_pending = false;
+        /* A new id: storage restarts staging from scratch for the next request,
+         * into the buffer we just released. */
+        uint32_t id = ++d->loop_ids ? d->loop_ids : ++d->loop_ids;
+        (void)id;
+        STORE(&d->loop_stage, 0);
+    }
+}
+
+static void apply_command(const solco_cmd_t *cmd)
+{
+    if (cmd->type == CMD_STUDIO)
+    {
+        studio_push(&s_studio, cmd->event);
+        return;
+    }
+    if (cmd->deck > 1)
+        return;
+    deck_t *d = &s_decks[cmd->deck];
+    switch (cmd->type)
+    {
+    case CMD_TOGGLE:
+        if (d->a_ready)
+            d->playing = !d->playing;
+        break;
+    case CMD_SCRATCH:
+        if (d->a_ready)
+            solco_vinyl_touch(&d->vinyl, (int)cmd->wide, cmd->value, d->a_length, d->a_demo);
+        break;
+    case CMD_JOG:
+        if (d->a_ready)
+            solco_vinyl_jog(&d->vinyl, cmd->value, (uint32_t)cmd->wide, d->a_length, d->a_demo);
+        break;
+    case CMD_LOOP:
+    {
+        solco_vinyl_t proposal = d->vinyl;
+        if (d->loop_pending)
+        {
+            proposal.loop_in = d->loop_proposal.loop_in;
+            proposal.loop_out = d->loop_proposal.loop_out;
+            proposal.loop_enabled = d->loop_proposal.loop_enabled;
+            proposal.loop_marked = d->loop_proposal.loop_marked;
+        }
+        if (d->a_ready && !d->vinyl.held && solco_vinyl_loop(&proposal, cmd->value, d->a_length))
+            issue_loop(d, &proposal, !(d->a_demo || !proposal.loop_enabled || cmd->value == 0));
+        break;
+    }
+    case CMD_KEYLOCK:
+        d->vinyl.keylock_enabled = cmd->value != 0;
+        break;
+    case CMD_RATE:
+        d->vinyl.play_speed = cmd->wide;
+        if (!d->playing && !d->vinyl.held)
+        {
+            d->vinyl.transport_rate = cmd->wide;
+            d->vinyl.rate_initialized = true;
+        }
+        break;
+    }
 }
 
 static bool take(deck_t *d, int16_t *out)
 {
     solco_vinyl_tick(&d->vinyl, (uint32_t)(esp_timer_get_time() / 1000));
     bool missing = false;
-    if (!d->ready || (!d->playing && !d->vinyl.held && d->vinyl.gate < 0.0001f))
+    if (!d->a_ready || (!d->playing && !d->vinyl.held && d->vinyl.gate < 0.0001f))
     {
         memset(out, 0, FRAMES * 4);
         return false;
     }
-    bool active = solco_vinyl_render(&d->vinyl, out, FRAMES, d->playing, d->length, d->demo, sample,
-                                     d, &missing);
+    bool active = solco_vinyl_render(&d->vinyl, out, FRAMES, d->playing, d->a_length, d->a_demo,
+                                     sample, d, &missing);
     if (missing)
     {
-        ++s_status.underruns;
+        ++s_live.underruns;
     }
-    if (!d->demo && !d->vinyl.held && !d->vinyl.loop_enabled &&
-        ((d->vinyl.play_speed >= 0 && d->vinyl.cursor >= (int64_t)d->length * SOLCO_SAMPLE_ONE) ||
+    if (!d->a_demo && !d->vinyl.held && !d->vinyl.loop_enabled &&
+        ((d->vinyl.play_speed >= 0 && d->vinyl.cursor >= (int64_t)d->a_length * SOLCO_SAMPLE_ONE) ||
          (d->vinyl.play_speed < 0 && d->vinyl.cursor <= 0)))
     {
         d->playing = false;
@@ -782,55 +997,81 @@ static bool take(deck_t *d, int16_t *out)
     return active;
 }
 
+static bool output_open(void)
+{
+    if (audio_start(RATE, SOLCO_OUTPUT_CHANNELS) != ESP_OK)
+        return false;
+    /* A single user-facing digital fader; no hidden -22.5 dB codec attenuation. */
+    if (audio_set_volume(100) != ESP_OK)
+    {
+        audio_stop();
+        return false;
+    }
+    return true;
+}
+
+/* Never gives up: retries with backoff, the decks keep their state meanwhile. */
+static void output_recover(bool first)
+{
+    uint32_t backoff = 20;
+    if (!first)
+    {
+        audio_stop();
+        vTaskDelay(pdMS_TO_TICKS(backoff));
+    }
+    while (!output_open())
+    {
+        STORE(&s_audio_fault, 1);
+        snapshot_publish();
+        vTaskDelay(pdMS_TO_TICKS(backoff));
+        backoff = backoff < 1000 ? backoff * 2 : 1000;
+    }
+    STORE(&s_audio_fault, 0);
+    /* Fade every gain in from silence: no click after an output restart. */
+    s_mix.a = s_mix.b = s_mix.master = s_mix.studio = 0;
+}
+
+static void publish_decks(void)
+{
+    for (int i = 0; i < 2; ++i)
+    {
+        deck_t *d = &s_decks[i];
+        int64_t position = d->vinyl.cursor / SOLCO_SAMPLE_ONE;
+        s_live.deck[i].playing = d->playing;
+        s_live.deck[i].held = d->vinyl.held;
+        s_live.deck[i].looping = d->vinyl.loop_enabled;
+        s_live.deck[i].loop_marked = d->vinyl.loop_marked;
+        s_live.deck[i].keylock = d->vinyl.keylock_enabled;
+        s_live.deck[i].ready = d->a_ready;
+        s_live.deck[i].generation = d->audio_generation;
+        s_live.deck[i].frame = position < 0 ? 0 : (uint32_t)position;
+        s_live.deck[i].loop_in = d->vinyl.loop_in;
+        s_live.deck[i].loop_out = d->vinyl.loop_out;
+        s_live.deck[i].speed = d->vinyl.speed;
+        s_live.deck[i].rate = d->vinyl.play_speed ? d->vinyl.play_speed : SOLCO_SAMPLE_ONE;
+    }
+}
+
 static void audio_task(void *arg)
 {
     (void)arg;
     power_cpu_boost(true);
-    esp_err_t err = audio_start(RATE, SOLCO_OUTPUT_CHANNELS);
-    if (err != ESP_OK)
-    {
-        error_text("Uscita audio non disponibile");
-        power_cpu_boost(false);
-        vTaskDelete(NULL);
-        return;
-    }
-    /* A single user-facing digital fader; no hidden -22.5 dB codec attenuation. */
-    err = audio_set_volume(100);
-    if (err != ESP_OK)
-    {
-        error_text("Regolazione uscita non disponibile");
-        audio_stop();
-        power_cpu_boost(false);
-        vTaskDelete(NULL);
-        return;
-    }
-    uint32_t generation[2] = {0};
+    output_recover(true);
     int64_t last_write = 0;
+    const uint32_t budget_us = FRAMES * 1000000 / RATE;
     for (;;)
     {
         int64_t start = esp_timer_get_time();
-        xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-        /* A cue/load starts a new timeline: never drain its first samples
-         * using the previous source's pause fade. Only the audio task owns mix. */
-        if (generation[0] != s_decks[0].generation)
+        deck_sync(&s_decks[0], 0);
+        deck_sync(&s_decks[1], 1);
+        solco_cmd_t cmd;
+        while (solco_cmdq_pop(&s_audio_commands, &cmd))
         {
-            generation[0] = s_decks[0].generation;
-            s_mix.a = 0;
-        }
-        if (generation[1] != s_decks[1].generation)
-        {
-            generation[1] = s_decks[1].generation;
-            s_mix.b = 0;
+            apply_command(&cmd);
         }
         bool a = take(&s_decks[0], s_a);
         bool b = take(&s_decks[1], s_b);
-        int cross = s_status.cross, volume = s_status.volume;
-        xSemaphoreGiveRecursive(s_lock);
-        studio_event_t event;
-        while (xQueueReceive(s_studio_commands, &event, 0) == pdTRUE)
-        {
-            studio_push(&s_studio, event);
-        }
+        int cross = RELAXED(&s_cross), volume = RELAXED(&s_volume);
         studio_render(&s_studio, s_bus, FRAMES);
         solco_mix_studio(&s_mix, s_a, s_b, s_bus, s_out, FRAMES, cross, volume, a, b,
                          s_studio.status.enabled || s_studio.status.playing ||
@@ -839,46 +1080,59 @@ static void audio_task(void *arg)
         s_mix.peak = solco_fold_mono(s_out, FRAMES);
 #endif
         uint32_t elapsed = (uint32_t)(esp_timer_get_time() - start);
-        err = audio_write(s_out, FRAMES * SOLCO_OUTPUT_CHANNELS);
+        esp_err_t err = audio_write(s_out, FRAMES * SOLCO_OUTPUT_CHANNELS);
         int64_t written = esp_timer_get_time();
         uint32_t cycle = last_write ? (uint32_t)(written - last_write) : 0;
         last_write = written;
-        xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-        uint16_t released_peak = (uint16_t)((uint32_t)s_status.peak * 985 / 1000);
-        s_status.peak = s_mix.peak > released_peak ? s_mix.peak : released_peak;
-        s_status.clips = s_mix.clipped;
-        if (elapsed > s_status.mix_us)
+        uint16_t released_peak = (uint16_t)((uint32_t)s_live.peak * 985 / 1000);
+        s_live.peak = s_mix.peak > released_peak ? s_mix.peak : released_peak;
+        s_live.clips = s_mix.clipped;
+        if (elapsed > s_live.mix_us)
         {
-            s_status.mix_us = elapsed;
+            s_live.mix_us = elapsed;
         }
+        uint32_t bucket = elapsed * 8 / budget_us;
+        ++s_live.mix_hist[bucket > 7 ? 7 : bucket];
         /* Diagnostic bound, not an analog underrun detector. Exclude initial DMA priming. */
-        if (s_status.blocks > 100)
+        if (s_live.blocks > 100)
         {
-            if (cycle > s_status.cycle_us)
+            if (cycle > s_live.cycle_us)
             {
-                s_status.cycle_us = cycle;
+                s_live.cycle_us = cycle;
             }
             if (cycle > 17415)
             {
-                ++s_status.late_cycles;
+                ++s_live.late_cycles;
             }
         }
-        s_studio_status = s_studio.status;
-        s_anchor_frame = s_studio.status.frame;
-        s_anchor_time = written;
-        ++s_status.blocks;
+        /* Frame/time line for event scheduling: the lower envelope of the write
+         * returns, so an event mapped through it is never behind the block being
+         * rendered. Relaxed by 1 us per block to follow slow drift. */
+        int64_t offset = written - (int64_t)(s_studio.status.frame * 1000000 / RATE);
         if (err != ESP_OK)
+            s_live.anchor_valid = false; /* the line restarts after recovery */
+        else if (!s_live.anchor_valid || offset < s_live.anchor_offset_us + 1)
         {
-            ++s_status.audio_errors;
+            s_live.anchor_offset_us = offset;
+            s_live.anchor_valid = true;
         }
-        xSemaphoreGiveRecursive(s_lock);
+        else
+            s_live.anchor_offset_us += 1;
+        s_live.studio = s_studio.status;
+        ++s_live.blocks;
         if (err != ESP_OK)
         {
-            error_text("Errore uscita audio: riproduzione fermata");
-            audio_stop();
-            power_cpu_boost(false);
-            vTaskDelete(NULL);
-            return;
+            ++s_live.audio_errors;
+        }
+        publish_decks();
+        snapshot_publish();
+        if (err != ESP_OK || __atomic_exchange_n(&s_force_restart, 0, __ATOMIC_ACQUIRE))
+        {
+            ++s_live.restarts;
+            s_live.anchor_valid = false;
+            STORE(&s_audio_fault, 2);
+            output_recover(false);
+            last_write = 0;
         }
     }
 }
@@ -895,6 +1149,7 @@ esp_err_t solco_engine_start(void)
         s_decks[i].loop_pcm =
             heap_caps_calloc(PAGE * SOLCO_LOOP_EDGE_PAGES * 2, sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         memset(s_decks[i].loop_tags, 0xff, sizeof(s_decks[i].loop_tags));
+        memset(s_decks[i].tags, 0xff, sizeof(s_decks[i].tags));
         s_decks[i].pcm =
             heap_caps_calloc(RING * 2, sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!s_decks[i].vinyl.keylock || !s_decks[i].pcm || !s_decks[i].loop_pcm || !s_decks[i].loop_staging_pcm)
@@ -937,12 +1192,8 @@ esp_err_t solco_engine_start(void)
         }
         fclose(pattern);
     }
-    s_studio_status = s_studio.status;
-    s_studio_commands = xQueueCreate(64, sizeof(studio_event_t));
-    if (!s_studio_commands)
-    {
-        return ESP_ERR_NO_MEM;
-    }
+    s_live.studio = s_studio.status;
+    snapshot_publish();
     if (imu_supported() && !sys_task_create(motion_task, "solco_motion", 4096, NULL, 2, 0))
     {
         return ESP_ERR_NO_MEM;
@@ -978,148 +1229,149 @@ static bool command(int deck, int action)
     return false;
 }
 
-bool solco_toggle(int deck) { return command(deck, 0); }
+static bool deck_command(int type, int deck, int32_t value, int64_t wide)
+{
+    if (deck < 0 || deck > 1)
+        return false;
+    solco_cmd_t cmd = {.type = (uint8_t)type, .deck = (uint8_t)deck, .value = value, .wide = wide};
+    if (audio_command(&cmd))
+        return true;
+    error_text("Comandi occupati: riprova");
+    return false;
+}
+
+bool solco_toggle(int deck) { return deck_command(CMD_TOGGLE, deck, 0, 0); }
 bool solco_cue(int deck) { return command(deck, 1); }
 bool solco_next(int deck) { return command(deck, 2); }
 
 void solco_scratch(int deck, int phase, int32_t frames)
 {
-    if (deck < 0 || deck > 1 || phase < 0 || phase > 2)
+    if (phase < 0 || phase > 2)
     {
         return;
     }
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    deck_t *d = &s_decks[deck];
-    if (d->ready)
-    {
-        solco_vinyl_touch(&d->vinyl, phase, frames, d->length, d->demo);
-    }
-    xSemaphoreGiveRecursive(s_lock);
+    deck_command(CMD_SCRATCH, deck, frames, phase);
 }
 
 void solco_jog(int deck, int steps)
 {
-    if (deck < 0 || deck > 1)
-    {
-        return;
-    }
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    deck_t *d = &s_decks[deck];
-    if (d->ready)
-    {
-        solco_vinyl_jog(&d->vinyl, steps, (uint32_t)(esp_timer_get_time() / 1000), d->length,
-                        d->demo);
-    }
-    xSemaphoreGiveRecursive(s_lock);
+    deck_command(CMD_JOG, deck, steps, (int64_t)(uint32_t)(esp_timer_get_time() / 1000));
 }
 
+/* Validated here against the published state for the UI's answer; the audio task
+ * applies it to the live transport (same rules, a few ms later). */
 bool solco_loop(int deck, int action)
 {
     if (deck < 0 || deck > 1)
         return false;
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    deck_t *d = &s_decks[deck];
-    solco_vinyl_t proposal = d->vinyl;
-    if (d->loop_pending)
-    {
-        proposal.loop_in = d->loop_proposal.loop_in;
-        proposal.loop_out = d->loop_proposal.loop_out;
-        proposal.loop_enabled = d->loop_proposal.loop_enabled;
-        proposal.loop_marked = d->loop_proposal.loop_marked;
-    }
-    bool ok = d->ready && !d->vinyl.held && solco_vinyl_loop(&proposal, action, d->length);
-    if (ok)
-    {
-        ++d->loop_request;
-        if (d->demo || !proposal.loop_enabled || action == 0)
-        {
-            d->vinyl = proposal;
-            d->loop_pending = false;
-        }
-        else
-        {
-            d->loop_proposal = proposal;
-            d->loop_pending = true;
-            memset(d->loop_staging_tags, 0xff, sizeof(d->loop_staging_tags));
-        }
-    }
-    xSemaphoreGiveRecursive(s_lock);
-    return ok;
+    snapshot_t snap;
+    snapshot_read(&snap);
+    solco_vinyl_t probe = {
+        .cursor = (int64_t)snap.deck[deck].frame * SOLCO_SAMPLE_ONE,
+        .loop_in = snap.deck[deck].loop_in,
+        .loop_out = snap.deck[deck].loop_out,
+        .loop_enabled = snap.deck[deck].looping,
+        .loop_marked = snap.deck[deck].loop_marked,
+    };
+    uint32_t length = RELAXED(&s_decks[deck].length);
+    if (!snap.deck[deck].ready || snap.deck[deck].held || !solco_vinyl_loop(&probe, action, length))
+        return false;
+    return deck_command(CMD_LOOP, deck, action, 0);
 }
 
 bool solco_keylock(int deck, bool enabled)
 {
-    if (deck < 0 || deck > 1) return false;
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    s_decks[deck].vinyl.keylock_enabled = enabled;
-    xSemaphoreGiveRecursive(s_lock);
-    return true;
+    return deck_command(CMD_KEYLOCK, deck, enabled, 0);
 }
 
-bool solco_rate(int deck, int32_t rate)
+bool solco_rate_fine(int deck, int64_t rate_q32)
 {
-    if (deck < 0 || deck > 1 ||
-        (rate != 32768 && rate != 65536 && rate != 98304 && rate != 131072 && rate != -32768 &&
-         rate != -65536 && rate != -98304 && rate != -131072))
+    int64_t magnitude = rate_q32 < 0 ? -rate_q32 : rate_q32;
+    if (magnitude < SOLCO_SAMPLE_ONE / 16 || magnitude > 4 * SOLCO_SAMPLE_ONE)
         return false;
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    deck_t *d = &s_decks[deck];
-    d->vinyl.play_speed = rate;
-    if (!d->playing && !d->vinyl.held)
-    {
-        d->vinyl.transport_rate = rate;
-        d->vinyl.rate_initialized = true;
-    }
-    xSemaphoreGiveRecursive(s_lock);
-    return true;
+    return deck_command(CMD_RATE, deck, 0, rate_q32);
 }
+
+bool solco_rate(int deck, int32_t rate) { return solco_rate_fine(deck, SOLCO_RATE_FROM_Q16(rate)); }
 
 void solco_cross(int value)
 {
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    s_status.cross = value < 0 ? 0 : value > 1000 ? 1000 : value;
-    xSemaphoreGiveRecursive(s_lock);
+    __atomic_store_n(&s_cross, value < 0 ? 0 : value > 1000 ? 1000 : value, __ATOMIC_RELAXED);
 }
 
 void solco_volume(int value)
 {
-    xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    s_status.volume = value < 0 ? 0 : value > 100 ? 100 : value;
-    xSemaphoreGiveRecursive(s_lock);
+    __atomic_store_n(&s_volume, value < 0 ? 0 : value > 100 ? 100 : value, __ATOMIC_RELAXED);
+}
+
+void solco_test_audio_restart(void) { STORE(&s_force_restart, 1); }
+
+void solco_mix_histogram(uint32_t histogram[8], uint32_t *restarts, uint32_t *dropped)
+{
+    snapshot_t snap;
+    snapshot_read(&snap);
+    memcpy(histogram, snap.mix_hist, sizeof(snap.mix_hist));
+    *restarts = snap.restarts;
+    *dropped = atomic_load_explicit(&s_audio_commands.dropped, memory_order_relaxed);
 }
 
 void solco_status(solco_status_t *status)
 {
+    snapshot_t snap;
+    snapshot_read(&snap);
+    memset(status, 0, sizeof(*status));
+    status->cross = RELAXED(&s_cross);
+    status->volume = RELAXED(&s_volume);
+    status->peak = snap.peak;
+    status->underruns = snap.underruns;
+    status->audio_errors = snap.audio_errors;
+    status->mix_us = snap.mix_us;
+    status->cycle_us = snap.cycle_us;
+    status->late_cycles = snap.late_cycles;
+    status->blocks = snap.blocks;
+    status->clips = snap.clips;
     xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
-    *status = s_status;
+    memcpy(status->error, s_error, sizeof(status->error));
+    for (int i = 0; i < 2; ++i)
+        memcpy(status->title[i], s_decks[i].title, sizeof(status->title[i]));
+    xSemaphoreGiveRecursive(s_lock);
+    uint32_t fault = RELAXED(&s_audio_fault);
+    if (!status->error[0] && fault)
+    {
+        snprintf(status->error, sizeof(status->error), "%s",
+                 fault == 1 ? "Uscita audio non disponibile: nuovo tentativo"
+                            : "Uscita audio riavviata");
+    }
     for (int i = 0; i < 2; ++i)
     {
-        status->playing[i] = s_decks[i].playing;
         deck_t *d = &s_decks[i];
-        int64_t position = d->vinyl.cursor / SOLCO_SAMPLE_ONE;
-        status->frames[i] = position < 0 ? 0 : (uint32_t)position;
-        int64_t phase = position % (RATE * 18);
-        status->platter_phase[i] = (uint32_t)(phase < 0 ? phase + RATE * 18 : phase);
-        status->looping[i] = d->vinyl.loop_enabled;
-        status->loop_marked[i] = d->vinyl.loop_marked;
-        status->loop_in[i] = d->vinyl.loop_in;
-        status->loop_out[i] = d->vinyl.loop_out;
-        status->scratching[i] = d->vinyl.held;
-        status->ready[i] = d->ready;
+        status->playing[i] = snap.deck[i].playing;
+        status->frames[i] = snap.deck[i].frame;
+        int64_t phase = (int64_t)status->frames[i] % (RATE * 18);
+        status->platter_phase[i] = (uint32_t)phase;
+        status->looping[i] = snap.deck[i].looping;
+        status->loop_marked[i] = snap.deck[i].loop_marked;
+        status->loop_in[i] = snap.deck[i].loop_in;
+        status->loop_out[i] = snap.deck[i].loop_out;
+        status->scratching[i] = snap.deck[i].held;
+        status->ready[i] = snap.deck[i].ready;
         status->preparing[i] = d->preparing;
         status->prepare_percent[i] = solco_prepare_percent(i);
-        status->speed[i] = d->vinyl.speed;
-        status->keylock[i] = d->vinyl.keylock_enabled;
-        status->rate[i] = d->vinyl.play_speed ? d->vinyl.play_speed : 65536;
-        status->buffered[i] = 0;
+        status->speed[i] = SOLCO_RATE_TO_Q16(snap.deck[i].speed);
+        status->keylock[i] = snap.deck[i].keylock;
+        status->rate[i] = SOLCO_RATE_TO_Q16(snap.deck[i].rate);
+        status->rate_ppm[i] =
+            (int32_t)((snap.deck[i].rate - (snap.deck[i].rate < 0 ? -SOLCO_SAMPLE_ONE : SOLCO_SAMPLE_ONE)) *
+                      1000000 / SOLCO_SAMPLE_ONE);
         status->miss_frame[i] = d->miss_frame;
         status->miss_tag[i] = d->miss_tag;
-        memcpy(status->title[i], d->title, sizeof(status->title[i]));
+        bool demo = d->demo;
+        /* Display only: racy reads of the cache directory are harmless here. */
         for (uint32_t j = 0; j < 64; ++j)
         {
             uint32_t page = (status->frames[i] + j * PAGE / 2) / PAGE;
             uint32_t slot = page % PAGES;
-            if (d->demo)
+            if (demo)
             {
                 uint16_t peak = 0;
                 const int16_t *loop = d->track == 0 ? s_pulse_pcm : s_chord_pcm;
@@ -1137,22 +1389,21 @@ void solco_status(solco_status_t *status)
             }
             else
             {
-                status->wave[i][j] = d->tags[slot] == page ? d->peaks[slot] : 0;
+                status->wave[i][j] = RELAXED(&d->tags[slot]) == page ? d->peaks[slot] : 0;
             }
         }
         for (int j = 0; j < PAGES; ++j)
         {
-            if (d->tags[j] != UINT32_MAX)
+            if (RELAXED(&d->tags[j]) != UINT32_MAX)
             {
                 status->buffered[i] += PAGE;
             }
         }
-        if (d->demo)
+        if (demo)
         {
             status->buffered[i] = DEMO_FRAMES;
         }
     }
-    xSemaphoreGiveRecursive(s_lock);
 }
 
 #if CONFIG_WATCH_DEV_CONSOLE

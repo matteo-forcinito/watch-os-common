@@ -21,7 +21,8 @@ typedef struct
     uint32_t loop_in[2], loop_out[2];
     bool scratching[2], ready[2], preparing[2];
     int prepare_percent[2];
-    int32_t speed[2], rate[2];
+    int32_t speed[2], rate[2]; /* Q16 */
+    int32_t rate_ppm[2];       /* fine pitch relative to 1x, ppm */
     uint32_t frames[2], platter_phase[2];
     uint32_t buffered[2];
     uint32_t miss_frame[2], miss_tag[2];
@@ -63,6 +64,12 @@ void solco_scratch(int deck, int phase, int32_t frames);
 void solco_jog(int deck, int steps);
 bool solco_loop(int deck, int action);
 bool solco_rate(int deck, int32_t rate_q16);
+/* Continuous rate, Q32 (1x = 1 << 32): pitch faders and clock trims; |rate| 1/16x..4x. */
+bool solco_rate_fine(int deck, int64_t rate_q32);
+/* Mix time histogram in eighths of the block budget, output restarts, queue drops. */
+void solco_mix_histogram(uint32_t histogram[8], uint32_t *restarts, uint32_t *dropped);
+/* Development: stop and reopen the audio output as after a driver error. */
+void solco_test_audio_restart(void);
 bool solco_keylock(int deck, bool enabled);
 void solco_cross(int value);
 void solco_volume(int value);

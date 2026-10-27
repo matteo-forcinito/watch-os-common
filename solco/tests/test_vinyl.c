@@ -177,17 +177,17 @@ int main(void)
     const int32_t rates[] = {-131072, -98304, -65536, -32768, 32768, 65536, 98304, 131072};
     for (unsigned r = 0; r < sizeof(rates) / sizeof(rates[0]); ++r)
     {
-        v = (solco_vinyl_t){.cursor = 50000 * SOLCO_SAMPLE_ONE, .play_speed = rates[r]};
+        v = (solco_vinyl_t){.cursor = 50000 * SOLCO_SAMPLE_ONE, .play_speed = SOLCO_RATE_FROM_Q16(rates[r])};
         before = v.cursor;
         for (int i = 0; i < 10; ++i)
             solco_vinyl_render(&v, pcm, 256, true, length, false, bounded_source, &length,
                                &missing);
-        assert(!missing && v.speed == rates[r]);
+        assert(!missing && v.speed == SOLCO_RATE_FROM_Q16(rates[r]));
         assert(rates[r] > 0 ? v.cursor > before : v.cursor < before);
         for (int i = 0; i < 30; ++i)
             solco_vinyl_render(&v, pcm, 256, false, length, false, bounded_source, &length,
                                &missing);
-        assert(v.speed == 0 && v.play_speed == rates[r]);
+        assert(v.speed == 0 && v.play_speed == SOLCO_RATE_FROM_Q16(rates[r]));
         solco_vinyl_touch(&v, 0, 0, length, false);
         solco_vinyl_touch(&v, 1, 1000, length, false);
         solco_vinyl_render(&v, pcm, 256, true, length, false, bounded_source, &length, &missing);
@@ -196,10 +196,10 @@ int main(void)
         for (int i = 0; i < 10; ++i)
             solco_vinyl_render(&v, pcm, 256, true, length, false, bounded_source, &length,
                                &missing);
-        assert(v.speed == rates[r]);
+        assert(v.speed == SOLCO_RATE_FROM_Q16(rates[r]));
     }
     v = (solco_vinyl_t){.cursor = 10 * SOLCO_SAMPLE_ONE,
-                        .play_speed = -131072,
+                        .play_speed = SOLCO_RATE_FROM_Q16(-131072),
                         .loop_enabled = true,
                         .loop_marked = true,
                         .loop_in = 0,
@@ -207,5 +207,23 @@ int main(void)
     for (int i = 0; i < 20; ++i)
         solco_vinyl_render(&v, pcm, 256, true, length, false, bounded_source, &length, &missing);
     assert(!missing && v.cursor > 0 && v.cursor < 4000 * SOLCO_SAMPLE_ONE);
+    /* Fine pitch: +1 ppm and +0.01 % advance exactly, without 15 ppm quantization. */
+    const int64_t fine[] = {SOLCO_SAMPLE_ONE + SOLCO_SAMPLE_ONE / 1000000,
+                            SOLCO_SAMPLE_ONE + SOLCO_SAMPLE_ONE / 10000,
+                            -(SOLCO_SAMPLE_ONE - SOLCO_SAMPLE_ONE / 1250)};
+    for (unsigned r = 0; r < sizeof(fine) / sizeof(fine[0]); ++r)
+    {
+        v = (solco_vinyl_t){.cursor = 50000 * SOLCO_SAMPLE_ONE,
+                            .play_speed = fine[r],
+                            .speed = fine[r],
+                            .transport_rate = fine[r],
+                            .rate_initialized = true,
+                            .gate = 1.f};
+        before = v.cursor;
+        for (int i = 0; i < 100; ++i)
+            solco_vinyl_render(&v, pcm, 256, true, length, false, bounded_source, &length,
+                               &missing);
+        assert(!missing && v.cursor == before + fine[r] * 25600);
+    }
     puts("Vinyl behavioral, encoder jog and reverse-from-EOF tests passed");
 }

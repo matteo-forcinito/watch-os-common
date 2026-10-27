@@ -5,15 +5,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Q16 sample cursor. A held platter follows the finger; release resumes PLAY. */
-#define SOLCO_SAMPLE_ONE 65536LL
+/* Q32.32 sample cursor and rates: 2.3e-4 ppm speed resolution for pitch faders and
+ * clock trims. A held platter follows the finger; release resumes PLAY. */
+#define SOLCO_SAMPLE_ONE 4294967296LL
+/* Public rates stay Q16 (1x = 65536); internal ones are Q32. */
+#define SOLCO_RATE_FROM_Q16(rate) ((int64_t)(rate) * 65536)
+#define SOLCO_RATE_TO_Q16(rate) ((int32_t)((rate) / 65536))
 typedef struct
 {
     solco_keylock_t *keylock;
     bool keylock_enabled;
     int64_t cursor, target;
-    int32_t speed, play_speed; /* Zero-initialized play_speed means normal +1x. */
-    int32_t transport_rate;
+    int64_t speed, play_speed; /* Q32; zero-initialized play_speed means normal +1x. */
+    int64_t transport_rate;
     bool rate_initialized;
     float gate;
     bool held;

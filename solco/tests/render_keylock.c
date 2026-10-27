@@ -23,8 +23,8 @@ int main(int argc,char **argv)
     int rate=atoi(argv[3]);assert(rate);
     solco_keylock_t *lock=calloc(1,sizeof(*lock));assert(lock);
     solco_vinyl_t v={0};v.keylock=lock;v.keylock_enabled=atoi(argv[4])!=0;
-    v.play_speed=v.speed=rate;
-    v.cursor=rate<0?(int64_t)(source.frames-1)*65536:0;
+    v.play_speed=v.speed=SOLCO_RATE_FROM_Q16(rate);
+    v.cursor=rate<0?(int64_t)(source.frames-1)*SOLCO_SAMPLE_ONE:0;
     uint32_t frames=(uint32_t)((int64_t)source.frames*65536/abs(rate));
     uint32_t count=frames*4;
     for(int i=0;i<4;++i){header[4+i]=(unsigned char)((count+36)>>(i*8));header[40+i]=(unsigned char)(count>>(i*8));}

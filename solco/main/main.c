@@ -7,6 +7,7 @@
 #include "core/settings.h"
 #include "core/sys.h"
 #include "engine.h"
+#include "vinyl.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "extapp_sdk.h"
@@ -988,6 +989,34 @@ bool devcon_app_command(char *line)
         printf("@OK deck-rate\n");
         return true;
     }
+    if (sscanf(line, "deck-pitch %d %d", &deck, &action) == 2)
+    {
+        /* Fine pitch in ppm around forward 1x, e.g. 80000 = +8 %. */
+        int64_t rate = SOLCO_SAMPLE_ONE + SOLCO_SAMPLE_ONE / 1000000 * action +
+                       SOLCO_SAMPLE_ONE % 1000000 * action / 1000000;
+        printf("@PITCH accepted=%d\n", solco_rate_fine(deck, rate));
+        printf("@OK deck-pitch\n");
+        return true;
+    }
+    if (!strcmp(line, "solco-perf"))
+    {
+        uint32_t histogram[8], restarts, dropped;
+        solco_mix_histogram(histogram, &restarts, &dropped);
+        printf("@MIXHIST %lu %lu %lu %lu %lu %lu %lu %lu restarts=%lu dropped=%lu\n",
+               (unsigned long)histogram[0], (unsigned long)histogram[1],
+               (unsigned long)histogram[2], (unsigned long)histogram[3],
+               (unsigned long)histogram[4], (unsigned long)histogram[5],
+               (unsigned long)histogram[6], (unsigned long)histogram[7], (unsigned long)restarts,
+               (unsigned long)dropped);
+        printf("@OK solco-perf\n");
+        return true;
+    }
+    if (!strcmp(line, "solco-audio-restart"))
+    {
+        solco_test_audio_restart();
+        printf("@OK solco-audio-restart\n");
+        return true;
+    }
     if (sscanf(line, "deck-loop %d %d", &deck, &action) == 2)
     {
         printf("@LOOP accepted=%d\n", solco_loop(deck, action));
@@ -1103,7 +1132,7 @@ bool devcon_app_command(char *line)
     printf("@CACHE miss=%lu/%lu tag=%lu/%lu wheel=%d\n", (unsigned long)status.miss_frame[0],
            (unsigned long)status.miss_frame[1], (unsigned long)status.miss_tag[0],
            (unsigned long)status.miss_tag[1], s_wheel_vinyl);
-    printf("@TIMING cycle_us=%lu late=%lu blocks=%lu dma_frames=128 dma_count=6\n",
+    printf("@TIMING cycle_us=%lu late=%lu blocks=%lu\n",
            (unsigned long)status.cycle_us, (unsigned long)status.late_cycles,
            (unsigned long)status.blocks);
     if (status.error[0])
@@ -1111,7 +1140,8 @@ bool devcon_app_command(char *line)
         printf("@ERROR %s\n", status.error);
     }
     printf("@KEYLOCK enabled=%d/%d\n", status.keylock[0], status.keylock[1]);
-    printf("@RATE value=%ld/%ld\n", (long)status.rate[0], (long)status.rate[1]);
+    printf("@RATE value=%ld/%ld ppm=%ld/%ld\n", (long)status.rate[0], (long)status.rate[1],
+           (long)status.rate_ppm[0], (long)status.rate_ppm[1]);
     printf("@LOOPS active=%d/%d in=%lu/%lu out=%lu/%lu\n", status.looping[0], status.looping[1],
            (unsigned long)status.loop_in[0], (unsigned long)status.loop_in[1],
            (unsigned long)status.loop_out[0], (unsigned long)status.loop_out[1]);

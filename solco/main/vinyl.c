@@ -129,31 +129,34 @@ bool solco_vinyl_render(solco_vinyl_t *v, int16_t *out, size_t frames, bool play
     {
         return false;
     }
-    int32_t base_rate = v->play_speed ? v->play_speed : (int32_t)SOLCO_SAMPLE_ONE;
+    /* Q16 thresholds of the original servo, scaled to the Q32 cursor. */
+    const int64_t q = SOLCO_SAMPLE_ONE / 65536;
+    int64_t base_rate = v->play_speed ? v->play_speed : SOLCO_SAMPLE_ONE;
     if (!v->rate_initialized)
     {
         v->transport_rate = base_rate;
         v->rate_initialized = true;
     }
-    int32_t desired = playing ? base_rate : 0;
+    int64_t desired = playing ? base_rate : 0;
     if (v->held)
     {
         /* Position servo ~25 ms, bounded at +/-4x. No queued UI seek commands. */
         int64_t velocity = (v->target - v->cursor) / 1102;
-        desired = velocity < -262144 ? -262144 : velocity > 262144 ? 262144 : (int32_t)velocity;
+        const int64_t limit = 4 * SOLCO_SAMPLE_ONE;
+        desired = velocity < -limit ? -limit : velocity > limit ? limit : velocity;
     }
     bool active = playing || v->held;
     for (size_t i = 0; i < frames; ++i)
     {
-        int32_t rate_change = base_rate - v->transport_rate;
+        int64_t rate_change = base_rate - v->transport_rate;
         v->transport_rate += rate_change / 1024;
-        if (rate_change && rate_change < 1024 && rate_change > -1024)
+        if (rate_change && rate_change < 1024 * q && rate_change > -1024 * q)
             v->transport_rate = base_rate;
         /* Roughly 120 ms rate transition; platter servo and pause stay fast. */
-        int32_t goal = playing && !v->held ? v->transport_rate : desired;
-        int32_t change = goal - v->speed;
+        int64_t goal = playing && !v->held ? v->transport_rate : desired;
+        int64_t change = goal - v->speed;
         v->speed += change / 128;
-        if (change && change < 128 && change > -128)
+        if (change && change < 128 * q && change > -128 * q)
         {
             v->speed = goal;
         }
@@ -183,15 +186,20 @@ bool solco_vinyl_render(solco_vinyl_t *v, int16_t *out, size_t frames, bool play
             continue;
         }
         int64_t frame = v->cursor / SOLCO_SAMPLE_ONE;
-        int32_t fraction = (int32_t)(v->cursor % SOLCO_SAMPLE_ONE);
+        int64_t fraction = v->cursor % SOLCO_SAMPLE_ONE;
         if (fraction < 0)
         {
             --frame;
-            fraction += (int32_t)SOLCO_SAMPLE_ONE;
+            fraction += SOLCO_SAMPLE_ONE;
         }
         int16_t locked[2] = {0};
         solco_keylock_t *lock = v->keylock;
-        bool use_lock = lock && v->keylock_enabled && playing && !v->held;
+        /* Within 0.1 % of +/-1x the pitch error is under 2 cents: plain resampling,
+         * no WSOLA (it was ~25 % of a block per deck). Clock trims stay here too. */
+        int64_t transport = v->transport_rate < 0 ? -v->transport_rate : v->transport_rate;
+        bool near_unity = transport > SOLCO_SAMPLE_ONE - SOLCO_SAMPLE_ONE / 1000 &&
+                          transport < SOLCO_SAMPLE_ONE + SOLCO_SAMPLE_ONE / 1000;
+        bool use_lock = lock && v->keylock_enabled && playing && !v->held && !near_unity;
         if (lock)
         {
             if (use_lock || lock->wet > 0.001f)
@@ -221,11 +229,11 @@ bool solco_vinyl_render(solco_vinyl_t *v, int16_t *out, size_t frames, bool play
             *missing = true;
             continue; /* Hold position on a cache miss instead of skipping music. */
         }
-        int32_t magnitude = v->speed < 0 ? -v->speed : v->speed;
+        int64_t magnitude = v->speed < 0 ? -v->speed : v->speed;
         float target_gate = (playing || v->held) ? 1.0f : 0.0f;
-        if (magnitude < 1311)
+        if (magnitude < 1311 * q)
         {
-            target_gate *= magnitude / 1311.0f;
+            target_gate *= (float)magnitude / (float)(1311 * q);
         }
         v->gate += (target_gate - v->gate) * 0.008f;
         float seam = 1.f;

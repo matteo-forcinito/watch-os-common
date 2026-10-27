@@ -26,8 +26,8 @@ int main(void)
         input_hz=frequencies[f];
         memset(state,0,sizeof(*state));
         solco_vinyl_t v = {0};
-        v.keylock = state; v.keylock_enabled = true; v.play_speed = rates[r];
-        v.speed = rates[r]; v.cursor = (int64_t)44100 * 30 * 65536;
+        v.keylock = state; v.keylock_enabled = true; v.play_speed = SOLCO_RATE_FROM_Q16(rates[r]);
+        v.speed = v.play_speed; v.cursor = (int64_t)44100 * 30 * SOLCO_SAMPLE_ONE;
         int crossings=0, previous=0, peak=0;
         for (int block = 0; block < 800; ++block)
         {
@@ -50,8 +50,8 @@ int main(void)
         printf("input=%.0fHz rate=%d pitch=%.3fHz peak=%d\n",input_hz,rates[r],frequency,peak);
         assert(fabs(frequency-input_hz)<3);
         assert(peak>10000 && peak<=12002);
-        int64_t expected=(int64_t)44100*30*65536+(int64_t)rates[r]*800*256;
-        assert(llabs(v.cursor-expected)<65536);
+        int64_t expected=(int64_t)44100*30*SOLCO_SAMPLE_ONE+SOLCO_RATE_FROM_Q16(rates[r])*800*256;
+        assert(llabs(v.cursor-expected)<SOLCO_SAMPLE_ONE);
         /* Touch takes priority; release returns to the selected rate. */
         solco_vinyl_touch(&v,0,0,44100*60,false);
         solco_vinyl_touch(&v,1,2205,44100*60,false);
