@@ -1,0 +1,14 @@
+# Muse as a Watch OS external app: our partition table, Muse in ota_1.
+# Loaded after Muse's own defaults and board overlay.
+CONFIG_MUSE_WATCH_OS_SLOT=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_watch_os.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+# Muse's own OTA would write the other slot, which holds Watch OS.
+CONFIG_HOMEHUB_OTA_ENABLED=n
+# Plain NVS shared with Watch OS; encryption would also program eFuse keys.
+CONFIG_NVS_ENCRYPTION=n
+CONFIG_HOMEHUB_PAIRING_EFUSE_AUTH=n
+# Our bootloader stays: no signed-image scheme is needed for ota_1.
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n
