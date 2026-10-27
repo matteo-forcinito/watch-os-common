@@ -40,13 +40,14 @@ void ui_toast(const char *text)
     lv_obj_t *toast = lv_obj_create(lv_layer_top());
     s_toast = toast;
     lv_obj_remove_style_all(toast);
-    lv_obj_set_style_bg_color(toast, lv_color_hex(UI_COLOR_CARD_HI), 0);
+    /* HUD pill: dark surface, neon frame. No shadow: it would be recomputed on every frame of the slide. */
+    lv_obj_set_style_bg_color(toast, lv_color_hex(TK_SURFACE_1), 0);
     lv_obj_set_style_bg_opa(toast, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(toast, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_pad_hor(toast, 22, 0);
-    lv_obj_set_style_pad_ver(toast, 12, 0);
-    lv_obj_set_style_shadow_width(toast, 24, 0);
-    lv_obj_set_style_shadow_opa(toast, LV_OPA_50, 0);
+    lv_obj_set_style_radius(toast, TK_R_PILL, 0);
+    lv_obj_set_style_border_width(toast, TK_LW_HAIR, 0);
+    lv_obj_set_style_border_color(toast, ui_accent(), 0);
+    lv_obj_set_style_pad_hor(toast, TK_SP_6, 0);
+    lv_obj_set_style_pad_ver(toast, TK_SP_3, 0);
     lv_obj_set_size(toast, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_max_width(toast, LV_PCT(90), 0);
     lv_obj_align(toast, LV_ALIGN_TOP_MID, 0, -80);
@@ -56,7 +57,7 @@ void ui_toast(const char *text)
     lv_obj_t *label = lv_label_create(toast);
     lv_label_set_text(label, text);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(TK_TEXT), 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(label, LV_SIZE_CONTENT);
     lv_obj_set_style_max_width(label, 280, 0);
@@ -67,7 +68,7 @@ void ui_toast(const char *text)
     lv_anim_set_var(&in, toast);
     lv_anim_set_exec_cb(&in, anim_set_y);
     lv_anim_set_values(&in, -80, 14);
-    lv_anim_set_duration(&in, 260);
+    lv_anim_set_duration(&in, TK_T_OVERLAY);
     lv_anim_set_path_cb(&in, lv_anim_path_ease_out);
     lv_anim_start(&in);
 
@@ -76,8 +77,8 @@ void ui_toast(const char *text)
     lv_anim_set_var(&out, toast);
     lv_anim_set_exec_cb(&out, anim_set_y);
     lv_anim_set_values(&out, 14, -100);
-    lv_anim_set_duration(&out, 260);
-    lv_anim_set_delay(&out, 2200);
+    lv_anim_set_duration(&out, TK_T_OVERLAY);
+    lv_anim_set_delay(&out, TK_T_OVERLAY + TK_T_TOAST_HOLD);
     lv_anim_set_path_cb(&out, lv_anim_path_ease_in);
     lv_anim_set_completed_cb(&out, anim_delete_ready);
     lv_anim_start(&out);
@@ -141,11 +142,13 @@ void ui_confirm(const char *title, const char *text, const char *ok_text, uint32
 
     lv_obj_t *card = lv_obj_create(overlay);
     lv_obj_remove_style_all(card);
-    lv_obj_set_style_bg_color(card, lv_color_hex(UI_COLOR_CARD), 0);
+    lv_obj_set_style_bg_color(card, lv_color_hex(TK_SURFACE_1), 0);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(card, 28, 0);
-    lv_obj_set_style_pad_all(card, 20, 0);
-    lv_obj_set_style_pad_row(card, 12, 0);
+    lv_obj_set_style_radius(card, TK_R_M, 0);
+    lv_obj_set_style_border_width(card, TK_LW_HAIR, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(TK_LINE_HI), 0);
+    lv_obj_set_style_pad_all(card, TK_SP_4 + TK_SP_1, 0);
+    lv_obj_set_style_pad_row(card, TK_SP_3, 0);
     lv_obj_set_width(card, LV_PCT(88));
     lv_obj_set_height(card, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
@@ -155,7 +158,7 @@ void ui_confirm(const char *title, const char *text, const char *ok_text, uint32
     lv_obj_t *title_label = lv_label_create(card);
     lv_label_set_text(title_label, title);
     lv_obj_set_style_text_font(title_label, UI_FONT_LARGE, 0);
-    lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(title_label, lv_color_hex(TK_TEXT), 0);
 
     if (text != NULL)
     {
@@ -237,7 +240,7 @@ static void keyboard_create(lv_obj_t *screen, void *arg)
         lv_textarea_set_password_mode(s_textarea, s_request.password);
         lv_obj_set_style_bg_color(s_textarea, lv_color_hex(UI_COLOR_CARD), 0);
         lv_obj_set_style_border_width(s_textarea, 0, 0);
-        lv_obj_set_style_radius(s_textarea, 12, 0);
+        lv_obj_set_style_radius(s_textarea, TK_R_S, 0);
         lv_obj_add_state(s_textarea, LV_STATE_FOCUSED);
         lv_obj_add_event_cb(screen, keyboard_event, LV_EVENT_READY, NULL);
         lv_obj_add_event_cb(screen, keyboard_event, LV_EVENT_CANCEL, NULL);
@@ -267,7 +270,7 @@ static void keyboard_create(lv_obj_t *screen, void *arg)
     lv_textarea_set_text(s_textarea, s_request.initial);
     lv_textarea_set_password_mode(s_textarea, s_request.password);
     lv_obj_set_width(s_textarea, LV_PCT(92));
-    lv_obj_set_style_radius(s_textarea, 16, 0);
+    lv_obj_set_style_radius(s_textarea, TK_R_S, 0);
     lv_obj_set_style_bg_color(s_textarea, lv_color_hex(UI_COLOR_CARD), 0);
     lv_obj_set_style_border_width(s_textarea, 0, 0);
     lv_obj_add_state(s_textarea, LV_STATE_FOCUSED);

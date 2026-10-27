@@ -5,9 +5,10 @@
  * The look of the system: colors, fonts and ready-made widgets, so every app
  * looks the same and stays short.
  *
- *   Pure black background (AMOLED: black pixels are off), rounded cards,
- *   one accent color, large touch targets, press feedback that shrinks the
- *   card a little (feels physical), smooth scrolling with momentum.
+ *   NEON NOIR: pure black background (AMOLED: black pixels are off), thin
+ *   neon outlines instead of filled bubbles, tracked uppercase captions,
+ *   one accent colour, large touch targets, colour-flash press feedback,
+ *   smooth scrolling with momentum. Tokens: core/ui_tokens.h.
  *
  * A typical settings-like page:
  *
@@ -22,24 +23,35 @@
 
 #include "lvgl.h"
 #include "hardware/board.h"
+#include "core/ui_tokens.h"
 
-/* ---- palette (iOS / watchOS-like system colors, readable on black) */
-#define UI_COLOR_BG          0x000000
-#define UI_COLOR_CARD        0x1C1C1E
-#define UI_COLOR_CARD_HI     0x2C2C2E
-#define UI_COLOR_SEPARATOR   0x38383A
-#define UI_COLOR_TEXT        0xFFFFFF
-#define UI_COLOR_TEXT_DIM    0x8E8E93
-#define UI_COLOR_RED         0xFF453A
-#define UI_COLOR_ORANGE      0xFF9F0A
-#define UI_COLOR_YELLOW      0xFFD60A
-#define UI_COLOR_GREEN       0x30D158
-#define UI_COLOR_TEAL        0x40C8E0
-#define UI_COLOR_BLUE        0x0A84FF
-#define UI_COLOR_INDIGO      0x5E5CE6
-#define UI_COLOR_PURPLE      0xBF5AF2
-#define UI_COLOR_PINK        0xFF375F
-#define UI_COLOR_GRAY        0x636366
+/*
+ * ---- palette: NEON NOIR (see core/ui_tokens.h, the single source of the
+ * design tokens). The UI_COLOR_* names are kept as aliases so every app
+ * follows the theme; new code should use the TK_* tokens directly.
+ */
+#define UI_COLOR_BG          TK_VOID
+#define UI_COLOR_CARD        TK_SURFACE_1
+#define UI_COLOR_CARD_HI     TK_SURFACE_2
+#define UI_COLOR_SEPARATOR   TK_LINE
+#define UI_COLOR_TEXT        TK_TEXT
+#define UI_COLOR_TEXT_DIM    TK_TEXT_2
+#define UI_COLOR_RED         TK_RED
+#define UI_COLOR_ORANGE      TK_AMBER
+#define UI_COLOR_YELLOW      TK_AMBER
+#define UI_COLOR_GREEN       TK_LIME
+#define UI_COLOR_TEAL        TK_CYAN
+#define UI_COLOR_BLUE        TK_CYAN
+#define UI_COLOR_INDIGO      TK_VIOLET
+#define UI_COLOR_PURPLE      TK_VIOLET
+#define UI_COLOR_PINK        TK_MAGENTA
+#define UI_COLOR_GRAY        TK_TEXT_3
+
+/* Tracked uppercase HUD captions (ASCII only) and boot/unit micro text. */
+#define UI_FONT_HUD     (&lv_font_montserrat_14)
+#define UI_FONT_MICRO   (&lv_font_montserrat_12)
+#define UI_HUD_LETTER_SPACE   3
+#define UI_MICRO_LETTER_SPACE 2
 
 /* UI dimensions follow the logical display; hardware/board.h stays native. */
 const board_info_t *ui_board_info(void);
@@ -68,6 +80,31 @@ void ui_init(void);
 lv_color_t ui_accent(void);
 static inline lv_color_t ui_color(uint32_t hex) { return lv_color_hex(hex); }
 
+/* Neon `color` mixed over black (TK_GLOW_G1/G2/G3): the "glow" of a colour.
+ * Cheap but not free: call it when building widgets, not on every frame. */
+static inline lv_color_t ui_glow(uint32_t color, uint8_t level)
+{
+    return lv_color_mix(lv_color_hex(color), lv_color_black(), level);
+}
+
+/* The user accent as 0xRRGGBB, mapped onto the neon palette. */
+uint32_t ui_accent_hex(void);
+
+/*
+ * True while live animations should rest: a screen slide is running or the
+ * user is dragging/scrolling. Every "live" timer checks it at each tick, so
+ * transitions get the whole frame time.
+ */
+bool ui_motion_paused(void);
+
+/*
+ * Boot splash on lv_layer_top(), shown right after lv_port_init() (takes the
+ * LVGL lock itself). It animates while services start, holds still while
+ * the UI is built and dismisses itself once the home screen is loaded.
+ * Never delays the boot; does nothing without a display (recovery).
+ */
+void ui_splash_show(void);
+
 /* ---- layout */
 
 /*
@@ -79,7 +116,7 @@ lv_obj_t *ui_page(lv_obj_t *screen, const char *title);
 /* The page title (ui_page adds one; for pages rebuilt with lv_obj_clean). Centred on round panels. */
 lv_obj_t *ui_title(lv_obj_t *page, const char *text);
 
-/* Small gray caption between groups of rows. */
+/* Section caption: "// SECTION" in tracked uppercase accent (plain small text when non-ASCII). */
 lv_obj_t *ui_section(lv_obj_t *page, const char *text);
 
 /* Plain text paragraph (wraps). */
@@ -105,8 +142,11 @@ lv_obj_t *ui_slider_row(lv_obj_t *page, const char *icon, const char *text,
 /* Big rounded button. */
 lv_obj_t *ui_button(lv_obj_t *parent, const char *text, uint32_t color, lv_event_cb_t on_click, void *user_data);
 
-/* Round colored bubble with an LV_SYMBOL or an image ("S:/..."). */
+/* HUD chip: outlined circle with a neon LV_SYMBOL, or an image ("S:/...") clipped to it. */
 lv_obj_t *ui_icon_bubble(lv_obj_t *parent, const char *icon, uint32_t color, int32_t size);
+
+/* Recolour a chip made by ui_icon_bubble() (ring, tint and glyph). */
+void ui_icon_bubble_set_color(lv_obj_t *bubble, uint32_t color);
 
 /* Give any object the card look + press feedback. */
 void ui_make_card(lv_obj_t *obj);

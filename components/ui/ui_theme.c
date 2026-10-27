@@ -50,9 +50,32 @@ static const lv_font_t *ttf(const uint8_t *start, const uint8_t *end, int size, 
     return font;
 }
 
+uint32_t ui_accent_hex(void)
+{
+    return settings_accent_hex();
+}
+
 lv_color_t ui_accent(void)
 {
-    return lv_color_hex(settings_get()->accent_color);
+    return lv_color_hex(ui_accent_hex());
+}
+
+bool ui_motion_paused(void)
+{
+    if (lv_display_get_screen_loading(lv_display_get_default()) != NULL)
+    {
+        return true;   /* a slide is running: it gets the whole frame time */
+    }
+
+    for (lv_indev_t *indev = lv_indev_get_next(NULL); indev != NULL; indev = lv_indev_get_next(indev))
+    {
+        if (lv_indev_get_scroll_obj(indev) != NULL)
+        {
+            return true;   /* the user is dragging a page or the tileview */
+        }
+    }
+
+    return false;
 }
 
 /* Built-in font + TTF fallback for the non-ASCII characters. */
@@ -82,11 +105,11 @@ void ui_init(void)
     ui_font_headline = ttf(semibold_ttf_start, semibold_ttf_end, 38, &lv_font_montserrat_32);
 
     lv_display_t *disp = lv_port_display();
-    lv_theme_t *theme = lv_theme_default_init(disp, ui_accent(), lv_color_hex(UI_COLOR_TEAL), true, UI_FONT_BODY);
+    lv_theme_t *theme = lv_theme_default_init(disp, ui_accent(), lv_color_hex(TK_MAGENTA), true, UI_FONT_BODY);
     lv_display_set_theme(disp, theme);
     lv_port_set_focus_color(ui_accent());
 
-    lv_obj_set_style_bg_color(lv_layer_bottom(), lv_color_black(), 0);
+    lv_obj_set_style_bg_color(lv_layer_bottom(), lv_color_hex(TK_VOID), 0);
     lv_obj_set_style_bg_opa(lv_layer_bottom(), LV_OPA_COVER, 0);
 
     ui_register_keyboard_app();

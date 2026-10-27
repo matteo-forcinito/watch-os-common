@@ -91,7 +91,8 @@ static void animate(lv_timer_t *timer)
 {
     market_ui_t *ui = lv_timer_get_user_data(timer);
     if (ui->page != 0 || lv_screen_active() != ui->screen || power_screen() >= POWER_SCREEN_AOD) return;
-    ui->angle = (ui->angle + 2) % 360;
+    if (ui_motion_paused()) return;   /* slides and drags get the whole frame */
+    ui->angle = (ui->angle + 1) % 360;
     int radius = ui_board_info()->width / 3;
     for (int i = 0; i < 3; i++)
     {
@@ -305,9 +306,9 @@ static void remove_app(lv_event_t *event)
 static void show_hero(market_ui_t *ui)
 {
     lv_obj_t *scene = ui->content;
-    lv_obj_set_style_bg_color(scene, lv_color_hex(0x080B1D), 0);
-    lv_obj_set_style_bg_grad_color(scene, lv_color_hex(0x252052), 0);
-    lv_obj_set_style_bg_grad_dir(scene, LV_GRAD_DIR_VER, 0);
+    /* Solid black: a full-screen gradient under the moving satellites was
+     * recomputed around each of them on every step (and banded in RGB565). */
+    lv_obj_set_style_bg_color(scene, lv_color_hex(TK_VOID), 0);
     lv_obj_set_style_bg_opa(scene, LV_OPA_COVER, 0);
     lv_obj_set_clickable(scene, true);
     lv_obj_add_event_cb(scene, enter, LV_EVENT_CLICKED, ui);
@@ -321,19 +322,16 @@ static void show_hero(market_ui_t *ui)
     lv_obj_remove_style_all(ui->orb);
     lv_obj_set_size(ui->orb, diameter, diameter);
     lv_obj_set_style_radius(ui->orb, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(ui->orb, lv_color_hex(0x756BFF), 0);
-    lv_obj_set_style_bg_grad_color(ui->orb, lv_color_hex(0x141737), 0);
-    lv_obj_set_style_bg_grad_dir(ui->orb, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_color(ui->orb, lv_color_hex(TK_VIOLET_G3), 0);
     lv_obj_set_style_bg_opa(ui->orb, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(ui->orb, 2, 0);
-    lv_obj_set_style_border_color(ui->orb, lv_color_hex(0xB9B7FF), 0);
-    lv_obj_set_style_shadow_width(ui->orb, 0, 0);
-    lv_obj_set_style_shadow_color(ui->orb, lv_color_hex(0x695CFF), 0);
-    lv_obj_set_style_shadow_opa(ui->orb, LV_OPA_30, 0);
+    lv_obj_set_style_border_width(ui->orb, TK_LW, 0);
+    lv_obj_set_style_border_color(ui->orb, lv_color_hex(TK_VIOLET), 0);
+    lv_obj_set_style_outline_width(ui->orb, TK_LW_RING, 0);
+    lv_obj_set_style_outline_color(ui->orb, lv_color_hex(TK_VIOLET_G2), 0);
     lv_obj_set_clickable(ui->orb, false);
     lv_obj_set_scrollable(ui->orb, false);
     lv_obj_align(ui->orb, LV_ALIGN_CENTER, 0, -30);
-    lv_obj_t *icon = label(ui->orb, LV_SYMBOL_DOWNLOAD, &lv_font_montserrat_32, 0xFFFFFF);
+    lv_obj_t *icon = label(ui->orb, LV_SYMBOL_DOWNLOAD, &lv_font_montserrat_32, TK_VIOLET);
     lv_obj_center(icon);
     for (int i = 0; i < 3; i++)
     {
@@ -341,13 +339,13 @@ static void show_hero(market_ui_t *ui)
         lv_obj_remove_style_all(ui->satellite[i]);
         lv_obj_set_size(ui->satellite[i], 10 + i * 3, 10 + i * 3);
         lv_obj_set_style_radius(ui->satellite[i], LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(ui->satellite[i], lv_color_hex(i == 0 ? 0x5EE7D9 : 0xCEC7FF), 0);
+        lv_obj_set_style_bg_color(ui->satellite[i], lv_color_hex(i == 0 ? TK_CYAN : TK_VIOLET), 0);
         lv_obj_set_style_bg_opa(ui->satellite[i], LV_OPA_COVER, 0);
         lv_obj_set_clickable(ui->satellite[i], false);
     }
-    lv_obj_t *title = label(scene, "MARKET", ui_font_title, 0xFFFFFF);
+    lv_obj_t *title = label(scene, "MARKET", ui_font_title, TK_TEXT);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, diameter / 2 + 5);
-    lv_obj_t *hint = label(scene, "Tocca o scorri verso l'alto", UI_FONT_SMALL, 0xB8B8D5);
+    lv_obj_t *hint = label(scene, "Tocca o scorri verso l'alto", UI_FONT_SMALL, TK_TEXT_2);
     lv_obj_align(hint, LV_ALIGN_CENTER, 0, diameter / 2 + 24);
     lv_timer_resume(ui->animation);
     animate(ui->animation);
@@ -765,6 +763,16 @@ static bool back(void)
     return true;
 }
 
+/* The first catalog download starts once the page is on screen, not inside
+ * create(): its task (network, TLS) would compete with the first frames. */
+static void refresh_after_load(lv_event_t *event)
+{
+    market_ui_t *ui = lv_event_get_user_data(event);
+    lv_obj_remove_event_cb_with_user_data(ui->screen, refresh_after_load, ui);
+    if (market_count() == 0 && !market_busy() && market_refresh() == ESP_OK && ui->poll != NULL)
+        lv_timer_resume(ui->poll);
+}
+
 static void create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
@@ -782,7 +790,7 @@ static void create(lv_obj_t *screen, void *arg)
     ui->border = settings_get()->border_progress ? ui_border_progress_create(screen, 0x8C7EFF) : NULL;
     if (ui->border != NULL) lv_obj_set_hidden(ui->border, true);
     ui->poll = lv_timer_create(poll, 300, ui);
-    ui->animation = lv_timer_create(animate, 60, ui);
+    ui->animation = lv_timer_create(animate, TK_T_LIVE_TICK, ui);
     if (ui->poll == NULL || ui->animation == NULL)
     {
         if (ui->poll != NULL) lv_timer_pause(ui->poll);
@@ -791,7 +799,8 @@ static void create(lv_obj_t *screen, void *arg)
         return;
     }
     lv_timer_pause(ui->poll);
-    if (market_count() == 0 && !market_busy()) market_refresh();
+    if (market_count() == 0 && !market_busy())
+        lv_obj_add_event_cb(screen, refresh_after_load, LV_EVENT_SCREEN_LOADED, ui);
     render(ui);
     if (market_busy()) lv_timer_resume(ui->poll);
 }

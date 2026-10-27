@@ -50,6 +50,7 @@ extern void wifi_diagnostic_drop(void) __attribute__((weak));
 static heap_trace_record_t *s_trace;
 #endif
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -335,6 +336,119 @@ static void swipe(int x1, int y1, int x2, int y2)
     lv_port_fake_touch(false, x2, y2);
 }
 
+/* Render cost of the screen on display: full redraws, then each visible child of
+ * the first object with several children hidden in turn (its share of the frame). */
+static uint32_t bench_redraw(void)
+{
+    const int runs = 6;
+    int64_t start = esp_timer_get_time();
+    for (int i = 0; i < runs; i++)
+    {
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(NULL);
+    }
+    return (uint32_t)((esp_timer_get_time() - start) / runs);
+}
+
+static const char *bench_class(const lv_obj_t *obj)
+{
+    if (lv_obj_check_type(obj, &lv_label_class)) return "label";
+    if (lv_obj_check_type(obj, &lv_image_class)) return "image";
+    if (lv_obj_check_type(obj, &lv_arc_class)) return "arc";
+    if (lv_obj_check_type(obj, &lv_button_class)) return "button";
+    if (lv_obj_check_type(obj, &lv_canvas_class)) return "canvas";
+    if (lv_obj_check_type(obj, &lv_obj_class)) return "obj";
+    return "other";
+}
+
+static void bench_cb(void *arg)
+{
+    int into = (int)(intptr_t)arg;   /* < 0: the automatic object, else one of its children */
+    lv_obj_t *obj = lv_screen_active();
+    printf("@BENCH full_us=%lu\n", (unsigned long)bench_redraw());
+    for (int depth = 0; depth < 8; depth++)
+    {
+        if (lv_obj_check_type(obj, &lv_tileview_class))
+        {
+            obj = lv_tileview_get_tile_active(obj);
+            continue;
+        }
+        lv_obj_t *only = NULL;
+        int visible = 0;
+        for (uint32_t i = 0; i < lv_obj_get_child_count(obj); i++)
+        {
+            lv_obj_t *child = lv_obj_get_child(obj, i);
+            if (!lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) { visible++; only = child; }
+        }
+        if (visible != 1) break;
+        obj = only;
+    }
+    if (into >= 0 && (uint32_t)into < lv_obj_get_child_count(obj)) obj = lv_obj_get_child(obj, into);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(obj) && i < 24; i++)
+    {
+        lv_obj_t *child = lv_obj_get_child(obj, i);
+        if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+        lv_obj_add_flag(child, LV_OBJ_FLAG_HIDDEN);
+        uint32_t without = bench_redraw();
+        lv_obj_remove_flag(child, LV_OBJ_FLAG_HIDDEN);
+        printf("@BENCH child=%lu class=%s w=%ld h=%ld children=%lu without_us=%lu\n", (unsigned long)i,
+               bench_class(child), (long)lv_obj_get_width(child),
+               (long)lv_obj_get_height(child), (unsigned long)lv_obj_get_child_count(child), (unsigned long)without);
+    }
+    printf("@BENCH full_us=%lu\n", (unsigned long)bench_redraw());
+}
+
+/* Cost of one test object drawn over the current screen (development only). */
+static lv_point_precise_t s_bench_points[40];
+
+static void bench_obj_cb(void *arg)
+{
+    int kind = (int)(intptr_t)arg;
+    int32_t w = lv_display_get_horizontal_resolution(NULL), h = lv_display_get_vertical_resolution(NULL);
+    uint32_t before = bench_redraw();
+    lv_obj_t *o;
+    if (kind <= 1)
+    {
+        o = lv_line_create(lv_layer_top());
+        lv_obj_remove_style_all(o);
+        s_bench_points[0] = (lv_point_precise_t){w - 8, 5};
+        s_bench_points[1] = (lv_point_precise_t){w - 8, h - 6};
+        lv_line_set_points(o, s_bench_points, 2);
+        lv_obj_set_style_line_width(o, 5, 0);
+        lv_obj_set_style_line_rounded(o, kind == 0, 0);
+        lv_obj_set_style_line_color(o, lv_color_hex(0x30D158), 0);
+    }
+    else if (kind == 2)
+    {
+        o = lv_obj_create(lv_layer_top());
+        lv_obj_remove_style_all(o);
+        lv_obj_set_size(o, w - 6, h - 6);
+        lv_obj_center(o);
+        lv_obj_set_style_border_width(o, 5, 0);
+        lv_obj_set_style_border_color(o, lv_color_hex(0x30D158), 0);
+        lv_obj_set_style_radius(o, 30, 0);
+    }
+    else
+    {
+        o = lv_line_create(lv_layer_top());
+        lv_obj_remove_style_all(o);
+        int n = 0;
+        s_bench_points[n++] = (lv_point_precise_t){w / 2, 5};
+        s_bench_points[n++] = (lv_point_precise_t){w - 6, 5};
+        s_bench_points[n++] = (lv_point_precise_t){w - 6, h - 6};
+        s_bench_points[n++] = (lv_point_precise_t){5, h - 6};
+        s_bench_points[n++] = (lv_point_precise_t){5, 5};
+        s_bench_points[n++] = (lv_point_precise_t){w / 2, 5};
+        lv_line_set_points(o, s_bench_points, n);
+        lv_obj_set_style_line_width(o, 5, 0);
+        lv_obj_set_style_line_rounded(o, true, 0);
+        lv_obj_set_style_line_color(o, lv_color_hex(0x30D158), 0);
+    }
+    uint32_t with = bench_redraw();
+    lv_obj_delete(o);
+    printf("@BENCH obj=%d before_us=%lu with_us=%lu\n", kind, (unsigned long)before, (unsigned long)with);
+}
+
 static void cmd_pmu(void)
 {
     printf("@PMU present=%d battery=%d%% mv=%d usb=%d charging=%d battery_present=%d\n", pmu_present(),
@@ -597,14 +711,30 @@ static void handle(char *line)
     {
         cmd_pmu();
     }
+    else if (strcmp(cmd, "benchobj") == 0 && a1 != NULL)
+    {
+        power_wake(POWER_WAKE_OTHER);
+        vTaskDelay(pdMS_TO_TICKS(300));
+        run_in_ui(bench_obj_cb, (void *)(intptr_t)atoi(a1));
+    }
+    else if (strcmp(cmd, "bench") == 0)
+    {
+        power_wake(POWER_WAKE_OTHER);
+        vTaskDelay(pdMS_TO_TICKS(300));
+        run_in_ui(bench_cb, (void *)(intptr_t)(a1 != NULL ? atoi(a1) : -1));
+    }
     else if (strcmp(cmd, "perf") == 0)
     {
         lv_port_perf_t perf;
         lv_port_perf_snapshot(&perf, a1 != NULL && strcmp(a1, "reset") == 0);
-        printf("@PERF passes=%lu over16=%lu over33=%lu max_ms=%lu internal=%u largest=%u psram=%u\n",
+        printf("@PERF passes=%lu over16=%lu over33=%lu max_ms=%lu frames=%lu bands=%lu frame_avg_us=%lu "
+               "frame_max_us=%lu span_us=%lu copy_us=%lu internal=%u largest=%u psram=%u\n",
                (unsigned long)perf.passes, (unsigned long)perf.slow_16ms, (unsigned long)perf.slow_33ms,
-               (unsigned long)perf.max_ms, (unsigned)sys_internal_free(), (unsigned)sys_internal_largest(),
-               (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+               (unsigned long)perf.max_ms, (unsigned long)perf.frames, (unsigned long)perf.bands,
+               (unsigned long)(perf.frames ? perf.frame_sum_us / perf.frames : 0),
+               (unsigned long)perf.frame_max_us, (unsigned long)perf.span_us, (unsigned long)perf.copy_us,
+               (unsigned)sys_internal_free(),
+               (unsigned)sys_internal_largest(), (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     }
     else if (strcmp(cmd, "tasks") == 0)
     {

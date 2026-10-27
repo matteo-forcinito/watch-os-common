@@ -1,4 +1,5 @@
 #include "core/settings.h"
+#include "core/ui_tokens.h"
 
 #include "core/state.h"
 #include "core/sys.h"
@@ -48,7 +49,7 @@ static void set_defaults(settings_t *s)
     s->weather_lon = 12.4103f;
     s->radio_station = -1;
     s->watchface = 0;
-    s->accent_color = 0x3D8BFF;
+    s->accent_color = TK_CYAN;
     s->knob_focus = false;
     s->update_channel = 0;
     s->border_progress = false;
@@ -220,6 +221,32 @@ esp_err_t settings_init(void)
 const settings_t *settings_get(void)
 {
     return &s_settings;
+}
+
+uint32_t settings_accent_hex(void)
+{
+    switch (s_settings.accent_color)
+    {
+        case 0x3D8BFF:
+        case 0x0A84FF:
+        case 0x40C8E0:
+        case 0x34C6F4:
+            return TK_CYAN;
+        case 0xFF375F:
+            return TK_MAGENTA;
+        case 0xFF9F0A:
+        case 0xFFD60A:
+            return TK_AMBER;
+        case 0x30D158:
+            return TK_LIME;
+        case 0xBF5AF2:
+        case 0x5E5CE6:
+            return TK_VIOLET;
+        case 0xFF453A:
+            return TK_RED;
+        default:
+            return s_settings.accent_color;
+    }
 }
 
 void settings_save(const settings_t *settings)

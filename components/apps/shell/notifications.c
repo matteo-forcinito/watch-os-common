@@ -88,7 +88,7 @@ static void rebuild(lv_observer_t *observer, lv_subject_t *subject)
         lv_label_set_text(body, n.body);
         lv_label_set_long_mode(body, LV_LABEL_LONG_MODE_WRAP);
         lv_obj_set_width(body, LV_PCT(100));
-        lv_obj_set_style_text_color(body, lv_color_hex(0xD1D1D6), 0);
+        lv_obj_set_style_text_color(body, lv_color_hex(TK_TEXT), 0);
     }
 
     lv_obj_t *button = ui_button(s_list, "Cancella tutto", UI_COLOR_CARD_HI, clear_all, NULL);

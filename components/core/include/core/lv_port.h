@@ -160,6 +160,10 @@ lv_draw_buf_t *lv_port_mirror_take(bool full, lv_area_t *area);
 bool lv_port_mirror_active(void);
 typedef struct {
     uint32_t passes, slow_16ms, slow_33ms, max_ms;
+    /* Rendered frames, bands sent, slowest frame, sum of frame times (render + flush),
+     * time from the first to the last frame start since the reset (FPS = frames / span). */
+    uint32_t frames, bands, frame_max_us, span_us;
+    uint64_t frame_sum_us, copy_us;   /* copy_us: band mode, PSRAM -> DMA piece copies */
 } lv_port_perf_t;
 void lv_port_perf_snapshot(lv_port_perf_t *out, bool reset);
 void lv_port_mirror_lease(void);

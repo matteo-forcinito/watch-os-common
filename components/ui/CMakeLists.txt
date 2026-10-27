@@ -9,6 +9,7 @@ idf_component_register(
         "ui_weather.c"
         "ui_image.c"
         "ui_border_progress.c"
+        "ui_splash.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

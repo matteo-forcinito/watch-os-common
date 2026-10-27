@@ -31,13 +31,10 @@ static bool active(voice_memo_phase_t phase)
 
 static void depth(void *object, int32_t value)
 {
+    /* Colour step only: the button is large, scaling it or moving a shadow
+     * under it would redraw most of the screen on every frame. */
     lv_obj_t *button = object;
-    lv_obj_set_style_translate_y(button, value * 6 / 100, 0);
-    lv_obj_set_style_transform_scale_x(button, 256 - value * 5 / 100, 0);
-    lv_obj_set_style_transform_scale_y(button, 256 - value * 5 / 100, 0);
-    lv_obj_set_style_shadow_ofs_y(button, 8 - value * 6 / 100, 0);
-    lv_obj_set_style_bg_color(button, lv_color_hex(value > 50 ? 0xFF5141 : 0xF83224), 0);
-    lv_obj_set_style_bg_grad_color(button, lv_color_hex(value > 50 ? 0xC82218 : 0xA40D0A), 0);
+    lv_obj_set_style_bg_color(button, value > 50 ? ui_glow(TK_RED, TK_GLOW_G1) : ui_glow(TK_RED, TK_GLOW_G2), 0);
 }
 
 static void animate_depth(bool pressed)
@@ -106,7 +103,8 @@ static void tick(lv_timer_t *timer)
             default: break;
         }
         lv_label_set_text(s_hint, message);
-        lv_obj_set_style_shadow_width(s_button, s_snapshot.phase == VOICE_MEMO_RECORDING ? 24 : 12, 0);
+        lv_obj_set_style_border_color(s_button, s_snapshot.phase == VOICE_MEMO_RECORDING ? lv_color_hex(TK_RED)
+                                                                                    : ui_glow(TK_RED, TK_GLOW_G1), 0);
         if (!busy && (s_drawn_phase == VOICE_MEMO_RECORDING || s_locked))
         {
             s_held = false;
@@ -281,7 +279,7 @@ static void menu_event(lv_event_t *e)
     s_menu = lv_obj_create(s_screen);
     lv_obj_remove_style_all(s_menu);
     lv_obj_set_size(s_menu, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(s_menu, lv_color_hex(0x240402), 0);
+    lv_obj_set_style_bg_color(s_menu, lv_color_hex(TK_RED_G3), 0);
     lv_obj_set_style_bg_opa(s_menu, LV_OPA_COVER, 0);
     lv_obj_set_clickable(s_menu, true);
     lv_obj_set_scrollable(s_menu, false);
@@ -448,19 +446,16 @@ static void create(lv_obj_t *screen, void *arg)
     s_drawn_phase = (voice_memo_phase_t)-1;
     s_drawn_second = UINT32_MAX;
     lv_obj_set_scrollable(screen, false);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x8D100B), 0);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(TK_VOID), 0);
     s_button = lv_button_create(screen);
     lv_obj_remove_style_all(s_button);
     lv_obj_set_size(s_button, ui_board_info()->width - 12, ui_board_info()->height - 20);
     lv_obj_set_pos(s_button, 6, 4);
     lv_obj_set_style_radius(s_button, ui_board_info()->round ? LV_RADIUS_CIRCLE : ui_board_info()->display_corner_radius, 0);
     lv_obj_set_style_bg_opa(s_button, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_grad_dir(s_button, LV_GRAD_DIR_VER, 0);
-    lv_obj_set_style_border_width(s_button, 6, 0);
-    lv_obj_set_style_border_color(s_button, lv_color_hex(0xFF7963), 0);
-    lv_obj_set_style_border_opa(s_button, LV_OPA_60, 0);
-    lv_obj_set_style_shadow_color(s_button, lv_color_hex(0x640A06), 0);
-    lv_obj_set_style_shadow_opa(s_button, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(s_button, ui_glow(TK_RED, TK_GLOW_G2), 0);
+    lv_obj_set_style_border_width(s_button, TK_LW_RING, 0);
+    lv_obj_set_style_border_color(s_button, ui_glow(TK_RED, TK_GLOW_G1), 0);
     lv_obj_set_scrollable(s_button, false);
     lv_obj_set_gesture_bubble(s_button, false);
     lv_port_set_focusable(s_button);

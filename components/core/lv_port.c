@@ -1,4 +1,5 @@
 #include "core/lv_port.h"
+#include "core/ui_tokens.h"
 #include "core/orientation.h"
 
 #include "core/power.h"
@@ -73,17 +74,58 @@ static _Atomic int64_t s_pass_start_us = 0;
 static _Atomic uint32_t s_max_pass_ms = 0;
 static _Atomic uint32_t s_flush_timeouts = 0;
 static _Atomic uint32_t s_perf_passes, s_perf_slow16, s_perf_slow33, s_perf_max;
+/* Frames actually rendered (render + flush of every band), for FPS during swipes. */
+static _Atomic uint32_t s_perf_frames, s_perf_bands, s_perf_frame_max_us;
+static _Atomic uint64_t s_perf_frame_sum_us, s_perf_copy_us;
+static _Atomic int64_t s_perf_first_us, s_perf_last_us;
+static int64_t s_frame_start_us;   /* lvgl task only */
 
 void lv_port_perf_snapshot(lv_port_perf_t *out, bool reset)
 {
     if (out == NULL) return;
+    out->passes = atomic_load(&s_perf_passes);
+    out->slow_16ms = atomic_load(&s_perf_slow16);
+    out->slow_33ms = atomic_load(&s_perf_slow33);
+    out->max_ms = atomic_load(&s_perf_max);
+    out->frames = atomic_load(&s_perf_frames);
+    out->bands = atomic_load(&s_perf_bands);
+    out->frame_max_us = atomic_load(&s_perf_frame_max_us);
+    out->frame_sum_us = atomic_load(&s_perf_frame_sum_us);
+    out->copy_us = atomic_load(&s_perf_copy_us);
+    int64_t first = atomic_load(&s_perf_first_us), last = atomic_load(&s_perf_last_us);
+    out->span_us = first != 0 && last > first ? (uint32_t)(last - first) : 0;
     if (reset) {
-        *out = (lv_port_perf_t){atomic_exchange(&s_perf_passes, 0), atomic_exchange(&s_perf_slow16, 0),
-            atomic_exchange(&s_perf_slow33, 0), atomic_exchange(&s_perf_max, 0)};
-    } else {
-        *out = (lv_port_perf_t){atomic_load(&s_perf_passes), atomic_load(&s_perf_slow16),
-            atomic_load(&s_perf_slow33), atomic_load(&s_perf_max)};
+        atomic_store(&s_perf_passes, 0);
+        atomic_store(&s_perf_slow16, 0);
+        atomic_store(&s_perf_slow33, 0);
+        atomic_store(&s_perf_max, 0);
+        atomic_store(&s_perf_frames, 0);
+        atomic_store(&s_perf_bands, 0);
+        atomic_store(&s_perf_frame_max_us, 0);
+        atomic_store(&s_perf_frame_sum_us, 0);
+        atomic_store(&s_perf_copy_us, 0);
+        atomic_store(&s_perf_first_us, 0);
+        atomic_store(&s_perf_last_us, 0);
     }
+}
+
+/* LV_EVENT_RENDER_START / LV_EVENT_REFR_READY: time of one rendered frame. */
+static void frame_timing_cb(lv_event_t *e)
+{
+    int64_t now = esp_timer_get_time();
+    if (lv_event_get_code(e) == LV_EVENT_RENDER_START)
+    {
+        s_frame_start_us = now;
+        if (atomic_load(&s_perf_first_us) == 0) atomic_store(&s_perf_first_us, now);
+        atomic_store(&s_perf_last_us, now);
+        return;
+    }
+    if (s_frame_start_us == 0) return;
+    uint32_t us = (uint32_t)(now - s_frame_start_us);
+    s_frame_start_us = 0;
+    atomic_fetch_add(&s_perf_frames, 1);
+    atomic_fetch_add(&s_perf_frame_sum_us, us);
+    if (us > atomic_load(&s_perf_frame_max_us)) atomic_store(&s_perf_frame_max_us, us);
 }
 
 /* Synthetic touch (monkey test): 0 = none, else FAKE_xxx flags | x << 12 | y. */
@@ -122,14 +164,149 @@ static bool s_focus_quiet = false;         /* focus set by a rebuild, not by the
 
 /* ------------------------------------------------------------- display */
 
+/*
+ * Band mode (CONFIG_WATCH_LV_BAND_LINES > 0, DMA panels only).
+ *
+ * LVGL walks every widget once per band it draws: a full screen in 28 short
+ * bands of internal RAM costs far more than in 4 tall ones. So LVGL draws tall
+ * bands in PSRAM, and a sender task copies each band, a few rows at a time,
+ * into the two small internal DMA buffers (one copied while the other is on
+ * the wire). Internal RAM use stays the same as before.
+ */
+typedef struct
+{
+    int16_t x1, y1, x2, y2;
+    const uint8_t *pixels;
+} band_t;
+
+static bool s_band_mode;
+static uint8_t *s_chunk[2];
+static size_t s_chunk_bytes;
+static QueueHandle_t s_bands;
+static SemaphoreHandle_t s_chunk_free;
+static _Atomic int s_chunks_left;
+
 static void flush_done_isr(void *ctx)
 {
     (void)ctx;
 
     BaseType_t woken = pdFALSE;
+    if (s_band_mode)
+    {
+        /* Signal the band before freeing the piece: the sender drains stale
+         * done signals only after taking both pieces back. */
+        if (atomic_fetch_sub(&s_chunks_left, 1) == 1) xSemaphoreGiveFromISR(s_flush_done, &woken);
+        xSemaphoreGiveFromISR(s_chunk_free, &woken);
+        portYIELD_FROM_ISR(woken);
+        return;
+    }
     xSemaphoreGiveFromISR(s_flush_done, &woken);
     portYIELD_FROM_ISR(woken);
 }
+
+/*
+ * Native panel rectangle of a logical area (screen rotation), and the copy of
+ * native rows [ny1, ny1 + rows) of it into dst (row-major, native width).
+ * Along a native row the logical position moves by a constant step, so the
+ * inner loop is a pointer walk: no per-pixel geometry (it used to cost more
+ * than drawing the frame).
+ */
+static void native_rect(const band_t *b, int *nx1, int *ny1, int *nx2, int *ny2)
+{
+    int w = board_info()->width, h = board_info()->height;
+    int ax, ay, bx, by;
+    orientation_native(s_rotation, w, h, b->x1, b->y1, &ax, &ay);
+    orientation_native(s_rotation, w, h, b->x2, b->y2, &bx, &by);
+    *nx1 = ax < bx ? ax : bx;
+    *ny1 = ay < by ? ay : by;
+    *nx2 = ax > bx ? ax : bx;
+    *ny2 = ay > by ? ay : by;
+}
+
+static void copy_native_rows(const band_t *b, int nx1, int nx2, int ny1, int rows, uint16_t *dst)
+{
+    int stride = b->x2 - b->x1 + 1;
+    int nw = nx2 - nx1 + 1;
+    const uint16_t *src = (const uint16_t *)b->pixels;
+
+    if (s_rotation == 0)
+    {
+        memcpy(dst, src + (size_t)(ny1 - b->y1) * stride, (size_t)rows * nw * sizeof(uint16_t));
+        return;
+    }
+
+    int w = board_info()->width, h = board_info()->height;
+    int lx, ly, lx_next, ly_next;
+    orientation_logical(s_rotation, w, h, nx1, ny1, &lx, &ly);
+    orientation_logical(s_rotation, w, h, nx1 + 1, ny1, &lx_next, &ly_next);
+    int step = (ly_next - ly) * stride + (lx_next - lx);
+
+    for (int r = 0; r < rows; r++)
+    {
+        orientation_logical(s_rotation, w, h, nx1, ny1 + r, &lx, &ly);
+        const uint16_t *sp = src + (ly - b->y1) * stride + (lx - b->x1);
+        for (int i = 0; i < nw; i++)
+        {
+            *dst++ = *sp;
+            sp += step;
+        }
+    }
+}
+
+#if CONFIG_WATCH_LV_BAND_LINES > 0
+/* A free DMA piece; after 100 ms go on anyway (a lost interrupt must not freeze the screen). */
+static void chunk_take(void)
+{
+    if (xSemaphoreTake(s_chunk_free, pdMS_TO_TICKS(100)) != pdTRUE)
+    {
+        atomic_fetch_add(&s_flush_timeouts, 1);
+    }
+}
+
+/* Sender task (lvgl core, one priority above it): band -> pieces of even native row counts. */
+static void band_sender_task(void *arg)
+{
+    (void)arg;
+    int k = 0;
+    band_t b;
+
+    while (true)
+    {
+        xQueueReceive(s_bands, &b, portMAX_DELAY);
+        int nx1, ny1, nx2, ny2;
+        native_rect(&b, &nx1, &ny1, &nx2, &ny2);
+        size_t row = (size_t)(nx2 - nx1 + 1) * sizeof(uint16_t);
+        int rows = (int)(s_chunk_bytes / row) & ~1;
+        if (rows < 2) rows = 2;
+        int height = ny2 - ny1 + 1;
+        /* Both pieces of the band before are on the panel (even after a flush
+         * timeout): no late interrupt can count against this band. */
+        chunk_take();
+        chunk_take();
+        xSemaphoreGive(s_chunk_free);
+        xSemaphoreGive(s_chunk_free);
+        /* Drop a done signal left by a band that already timed out. */
+        xSemaphoreTake(s_flush_done, 0);
+        atomic_store(&s_chunks_left, (height + rows - 1) / rows);
+
+        for (int y = 0; y < height; y += rows)
+        {
+            int h = height - y < rows ? height - y : rows;
+            chunk_take();
+            int64_t copy_start = esp_timer_get_time();
+            copy_native_rows(&b, nx1, nx2, ny1 + y, h, (uint16_t *)s_chunk[k]);
+            atomic_fetch_add(&s_perf_copy_us, (uint64_t)(esp_timer_get_time() - copy_start));
+            if (display_draw(nx1, ny1 + y, nx2, ny1 + y + h - 1, s_chunk[k]) != ESP_OK)
+            {
+                /* No interrupt will come for this piece: account for it here. */
+                xSemaphoreGive(s_chunk_free);
+                if (atomic_fetch_sub(&s_chunks_left, 1) == 1) xSemaphoreGive(s_flush_done);
+            }
+            k ^= 1;
+        }
+    }
+}
+#endif
 
 /* Only the UI task touches these; no framebuffer is retained between requests. */
 static lv_draw_buf_t *s_capture;
@@ -411,6 +588,7 @@ lv_draw_buf_t *lv_port_mirror_take(bool full, lv_area_t *area)
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *pixels)
 {
+    atomic_fetch_add(&s_perf_bands, 1);
     capture_flush(area, pixels);
     if (s_mirror != NULL)
     {
@@ -423,22 +601,16 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *pixels)
         lv_display_flush_ready(disp);
         return;
     }
-    if(s_rotation) {
-        int ax,ay,bx,by;
-        int w=board_info()->width,h=board_info()->height;
-        orientation_native(s_rotation,w,h,area->x1,area->y1,&ax,&ay);
-        orientation_native(s_rotation,w,h,area->x2,area->y2,&bx,&by);
-        int x1=ax<bx?ax:bx,y1=ay<by?ay:by;
-        int x2=ax>bx?ax:bx,y2=ay>by?ay:by;
-        int stride=area->x2-area->x1+1;
-        size_t count=(size_t)stride*(area->y2-area->y1+1);
-        if(count*2>s_rotate_bytes) {lv_display_flush_ready(disp);return;}
-        const uint16_t *src=(const uint16_t *)pixels;
-        for(int y=area->y1;y<=area->y2;y++) for(int x=area->x1;x<=area->x2;x++) {
-            int nx,ny;orientation_native(s_rotation,w,h,x,y,&nx,&ny);
-            s_rotated[(ny-y1)*(x2-x1+1)+nx-x1]=src[(y-area->y1)*stride+x-area->x1];
-        }
-        display_draw(x1,y1,x2,y2,s_rotated);
+    band_t band = {(int16_t)area->x1, (int16_t)area->y1, (int16_t)area->x2, (int16_t)area->y2, pixels};
+    if (s_band_mode) {
+        xQueueSend(s_bands, &band, portMAX_DELAY);   /* flush_wait_cb waits for the last piece */
+    } else if (s_rotation) {
+        int nx1, ny1, nx2, ny2;
+        native_rect(&band, &nx1, &ny1, &nx2, &ny2);
+        size_t count = (size_t)(nx2 - nx1 + 1) * (size_t)(ny2 - ny1 + 1);
+        if (count * 2 > s_rotate_bytes) {lv_display_flush_ready(disp); return;}
+        copy_native_rows(&band, nx1, nx2, ny1, ny2 - ny1 + 1, s_rotated);
+        display_draw(nx1, ny1, nx2, ny2, s_rotated);
     } else display_draw(area->x1, area->y1, area->x2, area->y2, pixels);
 }
 
@@ -707,7 +879,7 @@ static void style_focus(lv_obj_t *obj)
     lv_obj_set_style_outline_pad(obj, 3, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_outline_opa(obj, LV_OPA_COVER, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_outline_color(obj, s_focus_color, LV_STATE_FOCUS_KEY);
-    lv_obj_set_style_outline_color(obj, lv_color_hex(0xFF9F0A), LV_STATE_FOCUS_KEY | LV_STATE_EDITED);
+    lv_obj_set_style_outline_color(obj, lv_color_hex(TK_AMBER), LV_STATE_FOCUS_KEY | LV_STATE_EDITED);
 
     /* Scrolling to the focused object is ours (centred, see on_group_focus), not LVGL's. */
     lv_obj_set_scroll_on_focus(obj, false);
@@ -1170,15 +1342,56 @@ static esp_err_t init_port(bool headless)
          * Single-buffer LVGL waits for each flush before reusing its input. */
         s_rotate_bytes=buffer_bytes;s_rotated=buf2;
     }
+
+    /* Tall bands in PSRAM; the internal buffers become the sender's DMA pieces. */
+    void *lv_buf1 = buf1, *lv_buf2 = s_rotation ? NULL : buf2;
+    size_t lv_bytes = buffer_bytes;
+#if CONFIG_WATCH_LV_BAND_LINES > 0
+    if (!headless && !board_info()->draw_buffers_in_psram &&
+        CONFIG_WATCH_LV_BAND_LINES > CONFIG_BOARD_DRAW_BUFFER_LINES)
+    {
+        int lines = CONFIG_WATCH_LV_BAND_LINES < height ? CONFIG_WATCH_LV_BAND_LINES : height;
+        size_t band_bytes = (size_t)width * (size_t)lines * sizeof(uint16_t);
+        void *band1 = heap_caps_aligned_alloc(64, band_bytes, MALLOC_CAP_SPIRAM);
+        void *band2 = heap_caps_aligned_alloc(64, band_bytes, MALLOC_CAP_SPIRAM);
+        s_bands = xQueueCreate(2, sizeof(band_t));
+        s_chunk_free = xSemaphoreCreateCounting(2, 2);
+        s_chunk[0] = buf1;
+        s_chunk[1] = buf2;
+        s_chunk_bytes = buffer_bytes;
+        if (band1 != NULL && band2 != NULL && s_bands != NULL && s_chunk_free != NULL &&
+            xTaskCreatePinnedToCore(band_sender_task, "lcd_send", 3072, NULL, TASK_PRIORITY + 1, NULL, TASK_CORE) ==
+                pdPASS)
+        {
+            s_band_mode = true;
+            lv_buf1 = band1;
+            lv_buf2 = band2;
+            lv_bytes = band_bytes;
+            ESP_LOGI(TAG, "Band mode: 2 x %u KB PSRAM bands (%d lines)", (unsigned)(band_bytes / 1024), lines);
+        }
+        else
+        {
+            heap_caps_free(band1);
+            heap_caps_free(band2);
+            if (s_bands != NULL) vQueueDelete(s_bands);
+            if (s_chunk_free != NULL) vSemaphoreDelete(s_chunk_free);
+            s_bands = NULL;
+            s_chunk_free = NULL;
+            ESP_LOGW(TAG, "Band mode unavailable: drawing straight into the DMA buffers");
+        }
+    }
+#endif
     s_disp = lv_display_create((s_rotation&1)?height:width, (s_rotation&1)?width:height);
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565_SWAPPED);   /* panel wants big endian */
-    lv_display_set_buffers(s_disp, buf1, s_rotation?NULL:buf2, buffer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_buffers(s_disp, lv_buf1, lv_buf2, lv_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(s_disp, flush_cb);
     if (!headless)
     {
         lv_display_set_flush_wait_cb(s_disp, flush_wait_cb);
         lv_display_add_event_cb(s_disp, rounder_cb, LV_EVENT_INVALIDATE_AREA, NULL);
     }
+    lv_display_add_event_cb(s_disp, frame_timing_cb, LV_EVENT_RENDER_START, NULL);
+    lv_display_add_event_cb(s_disp, frame_timing_cb, LV_EVENT_REFR_READY, NULL);
 
     s_indev = lv_indev_create();
     lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
@@ -1215,7 +1428,7 @@ static esp_err_t init_port(bool headless)
         lv_indev_set_display(s_encoder, s_disp);
         lv_indev_set_group(s_encoder, s_group);
         lv_timer_pause(lv_indev_get_read_timer(s_encoder));
-        s_focus_color = lv_color_hex(0x3D8BFF);
+        s_focus_color = lv_color_hex(TK_CYAN);
         /* Without touch the focus is the only way to pick anything. */
         s_focus_mode = settings_get()->knob_focus || !board_info()->has_touch;
 

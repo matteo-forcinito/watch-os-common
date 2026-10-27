@@ -22,4 +22,17 @@ menu "Watch OS"
             testing from the PC (tools/devcon.py in the firmware repos). Anyone
             with a USB cable could use it: never enable it in a release.
 
+    config WATCH_LV_BAND_LINES
+        int "LVGL bands drawn in PSRAM (lines, 0 = off)"
+        default 0
+        range 0 480
+        help
+            LVGL walks every widget once per band it draws, so many short bands
+            (BOARD_DRAW_BUFFER_LINES) make swipes slow. With a value here LVGL draws
+            two bands this tall in PSRAM and a sender task copies them through the
+            internal DMA buffers to the panel: same internal RAM, far fewer passes.
+            Only for panels fed by DMA (SPI/QSPI); with a rotated screen the
+            sender also rotates each piece.
+            Pick about a quarter of the panel height, rounded to an even number.
+
 endmenu

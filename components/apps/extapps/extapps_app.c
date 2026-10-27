@@ -35,6 +35,8 @@ typedef struct
     lv_obj_t *status;
     lv_obj_t *button;
     bool installing;
+    bool cached;       /* read once in create(): it touches the SD card and NVS */
+    bool auto_start;   /* start once the page is on screen (only the first time) */
 } run_t;
 
 typedef struct
@@ -120,7 +122,7 @@ static void start(void)
 
     lv_obj_set_hidden(s_run->button, true);
     lv_obj_set_style_text_color(s_run->status, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
-    lv_label_set_text(s_run->status, extapp_is_cached(&s_run->app) ? "Avvio..." : "Preparazione...");
+    lv_label_set_text(s_run->status, s_run->cached ? "Avvio..." : "Preparazione...");
 
     if (!sys_task_create(launch_task, "extapp", 6144, job, 4, 0))
     {
@@ -135,6 +137,26 @@ static void on_start(lv_event_t *e)
 {
     (void)e;
     start();
+}
+
+/*
+ * The market's "Apri" starts at once, but only after the page is fully on
+ * screen: the copy task competes for the CPU and the flash (writes stall the
+ * cache), so starting it inside create() delays the first frame and the slide.
+ */
+static void start_async(void *arg)
+{
+    if ((int)(intptr_t)arg == s_generation && s_run != NULL && s_run->auto_start)
+    {
+        s_run->auto_start = false;
+        start();
+    }
+}
+
+static void start_after_load(lv_event_t *e)
+{
+    (void)e;
+    lv_async_call(start_async, (void *)(intptr_t)s_generation);
 }
 
 static void run_create_impl(lv_obj_t *screen, void *arg, bool auto_start)
@@ -164,6 +186,7 @@ static void run_create_impl(lv_obj_t *screen, void *arg, bool auto_start)
     lv_obj_set_style_text_font(name, ui_font_headline, 0);
 
     bool cached = extapp_is_cached(&s_run->app);
+    s_run->cached = cached;
     char info[96];
     if (s_run->app.in_slot)
     {
@@ -210,7 +233,9 @@ static void run_create_impl(lv_obj_t *screen, void *arg, bool auto_start)
 
     if (auto_start)
     {
-        start();   /* the market's "Apri": the user already chose */
+        /* The market's "Apri": the user already chose. Show the page first. */
+        s_run->auto_start = true;
+        lv_obj_add_event_cb(screen, start_after_load, LV_EVENT_SCREEN_LOADED, NULL);
     }
 }
 

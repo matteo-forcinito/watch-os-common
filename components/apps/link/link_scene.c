@@ -171,12 +171,15 @@ static lv_obj_t *dot(lv_obj_t *parent, int size, uint32_t color)
     return o;
 }
 
+/*
+ * NEON NOIR glow: a ring of the colour mixed over black (G1) just outside
+ * the object. A shadow would be blurred again on every frame the object moves.
+ */
 static void glow(lv_obj_t *o, uint32_t color, int width)
 {
-    lv_obj_set_style_shadow_color(o, lv_color_hex(color), 0);
-    lv_obj_set_style_shadow_width(o, width, 0);
-    lv_obj_set_style_shadow_spread(o, width / 6, 0);
-    lv_obj_set_style_shadow_opa(o, LV_OPA_80, 0);
+    lv_obj_set_style_outline_color(o, ui_glow(color, TK_GLOW_G1), 0);
+    lv_obj_set_style_outline_width(o, width >= 36 ? TK_LW_RING : TK_LW_ACCENT, 0);
+    lv_obj_set_style_outline_pad(o, TK_LW, 0);
 }
 
 static void anim(void *var, lv_anim_exec_xcb_t exec, int from, int to, uint32_t ms, uint32_t delay,
@@ -247,20 +250,25 @@ static void scene_aura(const job_t *j)
     lv_obj_set_size(o, screen_w(), screen_h());
     lv_obj_set_style_radius(o, ui_board_info()->round ? LV_RADIUS_CIRCLE : 48, 0);
     lv_obj_set_style_border_color(o, lv_color_hex(j->color), 0);
-    lv_obj_set_style_border_width(o, 16, 0);
-    lv_obj_set_style_shadow_color(o, lv_color_hex(j->color), 0);
-    lv_obj_set_style_shadow_width(o, 60, 0);
+    lv_obj_set_style_border_width(o, TK_LW_RING, 0);
     lv_obj_set_clickable(o, false);
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, o);
-    lv_anim_set_exec_cb(&a, set_opa);
-    lv_anim_set_values(&a, 90, 255);
-    lv_anim_set_duration(&a, 1100);
-    lv_anim_set_reverse_duration(&a, 1100);
-    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
-    lv_anim_start(&a);
+
+    /*
+     * Static stepped glow (neon, G1, G2 rings): drawn once. The old aura
+     * animated the opacity of a full-screen 60 px shadow, a complete redraw
+     * on every frame for as long as it was shown.
+     */
+    for (int i = 1; i <= 2; i++)
+    {
+        lv_obj_t *ring = lv_obj_create(root);
+        lv_obj_remove_style_all(ring);
+        lv_obj_set_size(ring, screen_w() - 2 * i * TK_LW_RING, screen_h() - 2 * i * TK_LW_RING);
+        lv_obj_center(ring);
+        lv_obj_set_style_radius(ring, ui_board_info()->round ? LV_RADIUS_CIRCLE : 48 - i * TK_LW_RING, 0);
+        lv_obj_set_style_border_color(ring, ui_glow(j->color, i == 1 ? TK_GLOW_G1 : TK_GLOW_G2), 0);
+        lv_obj_set_style_border_width(ring, TK_LW_RING, 0);
+        lv_obj_set_clickable(ring, false);
+    }
     hold_for(j->hold_ms > 0 ? j->hold_ms : 6000);
 }
 

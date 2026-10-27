@@ -77,7 +77,7 @@ const app_t settings_app = {
 /* ============================================================= display */
 
 static const uint8_t s_timeouts[] = {10, 15, 30, 60, 120};
-static const uint32_t s_accents[] = {0x3D8BFF, 0xFF375F, 0x30D158, 0xFF9F0A, 0xBF5AF2, 0x40C8E0, 0xFFD60A};
+static const uint32_t s_accents[] = {TK_CYAN, TK_MAGENTA, TK_AMBER, TK_LIME, TK_VIOLET, TK_RED};
 
 static void set_brightness(lv_event_t *e)
 {
@@ -129,7 +129,7 @@ static void cycle_accent(lv_event_t *e)
     EDIT_SETTINGS(s->accent_color = s_accents[next]);
     lv_port_set_focus_color(lv_color_hex(s_accents[next]));
     lv_obj_t *row = lv_event_get_current_target_obj(e);
-    lv_obj_set_style_bg_color(lv_obj_get_child(row, 0), lv_color_hex(s_accents[next]), 0);
+    ui_icon_bubble_set_color(lv_obj_get_child(row, 0), s_accents[next]);
     ui_toast("Colore applicato alle schermate che apri");
 }
 
@@ -211,7 +211,7 @@ static void display_create(lv_obj_t *screen, void *arg)
     ui_switch_row(page, LV_SYMBOL_UP, UI_COLOR_BLUE, "Tocca per accendere", st->tap_to_wake, set_tap, NULL);
     ui_switch_row(page, LV_SYMBOL_BELL, UI_COLOR_ORANGE, "Accendi con notifiche", st->wake_on_notification,
                   set_wake_notify, NULL);
-    ui_row(page, " ", st->accent_color, "Colore principale", NULL, cycle_accent, NULL);
+    ui_row(page, " ", ui_accent_hex(), "Colore principale", NULL, cycle_accent, NULL);
     snprintf(value, sizeof(value), "%u", st->launcher_cards);
     ui_row(page, LV_SYMBOL_LIST, UI_COLOR_BLUE, "App per pagina", value, cycle_cards, NULL);
 

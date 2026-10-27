@@ -85,6 +85,13 @@ esp_err_t settings_init(void);
 /* Current settings (read only). */
 const settings_t *settings_get(void);
 
+/*
+ * The accent as a NEON NOIR colour (0xRRGGBB). Values saved by older
+ * versions (iOS-like palette) are mapped onto the nearest neon when read;
+ * NVS is shared with external apps and is never rewritten for this.
+ */
+uint32_t settings_accent_hex(void);
+
 /* Replace the settings: applied at once, saved to flash shortly after. */
 void settings_save(const settings_t *settings);
 

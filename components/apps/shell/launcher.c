@@ -105,10 +105,10 @@ static const struct
     uint32_t color;
     const char *name;
 } MENU[MENU_COUNT] = {
-    {LV_SYMBOL_IMAGE, 0x34C6F4, "Il tuo child"},
+    {LV_SYMBOL_IMAGE, TK_CYAN, "Il tuo child"},
     {LV_SYMBOL_LIST, UI_COLOR_BLUE, "App"},
     {LV_SYMBOL_DIRECTORY, UI_COLOR_PURPLE, "App esterne"},
-    {LV_SYMBOL_DOWNLOAD, 0x8C7EFF, "Market"},
+    {LV_SYMBOL_DOWNLOAD, TK_VIOLET, "Market"},
     {LV_SYMBOL_WIFI, UI_COLOR_TEAL, "Web server"},
     {LV_SYMBOL_SETTINGS, UI_COLOR_GRAY, "Impostazioni"},
     {LV_SYMBOL_EYE_OPEN, UI_COLOR_INDIGO, "Info"},
@@ -539,15 +539,15 @@ static void ring_build(void)
         lv_obj_set_clickable(icon, true);
         lv_obj_set_ext_click_area(icon, 6);
         lv_port_set_focusable(icon);
-        lv_obj_set_style_transform_pivot_x(icon, RING_ICON / 2, 0);
-        lv_obj_set_style_transform_pivot_y(icon, RING_ICON / 2, 0);
-        lv_obj_set_style_transform_scale(icon, 280, LV_STATE_PRESSED);
+        /* Press feedback by colour, not scale: scaling allocates a layer on every touch. */
+        lv_obj_set_style_border_color(icon, lv_color_hex(slot_color(i)), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(icon, ui_glow(slot_color(i), TK_GLOW_G2), LV_STATE_PRESSED);
         if (!s_slots[i].menu)
         {
             /* Favourites wear a thin ring so they read apart from the menu entries. */
-            lv_obj_set_style_outline_width(icon, 2, 0);
-            lv_obj_set_style_outline_color(icon, lv_color_hex(UI_COLOR_YELLOW), 0);
-            lv_obj_set_style_outline_pad(icon, 2, 0);
+            lv_obj_set_style_outline_width(icon, TK_LW, 0);
+            lv_obj_set_style_outline_color(icon, lv_color_hex(TK_AMBER), 0);
+            lv_obj_set_style_outline_pad(icon, TK_LW, 0);
         }
         lv_obj_add_event_cb(icon, on_ring_icon, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);
         lv_obj_add_event_cb(icon, on_ring_icon, LV_EVENT_LONG_PRESSED, (void *)(intptr_t)i);
@@ -721,7 +721,7 @@ static void on_pages_scroll(lv_event_t *e)
     pages_window(p, page);
     for (int i = 0; i < (int)lv_obj_get_child_count(p->dots); i++)
     {
-        lv_obj_set_style_bg_opa(lv_obj_get_child(p->dots, i), i == page ? LV_OPA_COVER : LV_OPA_30, 0);
+        lv_obj_set_style_bg_color(lv_obj_get_child(p->dots, i), i == page ? ui_accent() : lv_color_hex(TK_LINE_HI), 0);
     }
 }
 
@@ -788,7 +788,7 @@ static void pages_create(lv_obj_t *screen, void *arg)
         lv_obj_set_style_pad_row(col, 12, 0);
         lv_obj_t *t = ui_text(col, "Nessuna app esterna. Le trovi nel Market.", true);
         lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_t *m = ui_button(col, LV_SYMBOL_DOWNLOAD "  Market", 0x8C7EFF, open_market, NULL);
+        lv_obj_t *m = ui_button(col, LV_SYMBOL_DOWNLOAD "  Market", TK_VIOLET, open_market, NULL);
         lv_port_set_focusable(m);
         return;
     }
@@ -834,8 +834,8 @@ static void pages_create(lv_obj_t *screen, void *arg)
         lv_obj_remove_style_all(dot);
         lv_obj_set_size(dot, 8, 8);
         lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(dot, lv_color_white(), 0);
-        lv_obj_set_style_bg_opa(dot, i == 0 ? LV_OPA_COVER : LV_OPA_30, 0);
+        lv_obj_set_style_bg_color(dot, i == 0 ? ui_accent() : lv_color_hex(TK_LINE_HI), 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
     }
 }
 
@@ -1016,10 +1016,10 @@ static void sheet_create(lv_obj_t *screen, void *arg)
 
     lv_obj_t *b = ui_button(page, LV_SYMBOL_PLAY "  Apri", UI_COLOR_BLUE, sheet_open, NULL);
     lv_port_set_focusable(b);
-    b = ui_button(page, LV_SYMBOL_EYE_OPEN "  Dettagli", 0x2C2C2E, sheet_details, NULL);
+    b = ui_button(page, LV_SYMBOL_EYE_OPEN "  Dettagli", TK_SURFACE_2, sheet_details, NULL);
     lv_port_set_focusable(b);
     b = ui_button(page, is_favorite(item) ? LV_SYMBOL_MINUS "  Togli dalle preferite" : LV_SYMBOL_PLUS "  Aggiungi alle preferite",
-                  0x2C2C2E, sheet_favorite, NULL);
+                  TK_SURFACE_2, sheet_favorite, NULL);
     lv_port_set_focusable(b);
     if (item->external)
     {
@@ -1032,7 +1032,7 @@ static void sheet_create(lv_obj_t *screen, void *arg)
             lv_port_set_focusable(b);
         }
         free(m);
-        b = ui_button(page, LV_SYMBOL_TRASH "  Disinstalla", 0x3A2228, sheet_uninstall, NULL);
+        b = ui_button(page, LV_SYMBOL_TRASH "  Disinstalla", TK_RED, sheet_uninstall, NULL);
         lv_port_set_focusable(b);
     }
     lv_obj_t *hint = ui_text(page, "Tieni premuta un'app per aprirla subito.", true);

@@ -6,6 +6,7 @@
 #include "core/settings.h"
 #include "hardware/board.h"
 #include "core/state.h"
+#include "core/ui_tokens.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -18,7 +19,8 @@ static const char *TAG = "apps";
 #define MAX_STACK       8
 #define MAX_RETIRED     16
 #define MAX_OPS         4
-#define ANIM_MS         220
+#define ANIM_MS         TK_T_PAGE
+#define EDGE_WIDTH      TK_LW
 #define AUTO_HOME_MS    (2 * 60 * 1000)
 #define JANITOR_MS      300
 
@@ -237,6 +239,89 @@ static lv_obj_t *new_screen(const app_t *app)
     return screen;
 }
 
+/*
+ * Light edge: a thin neon line rides the leading edge of the incoming
+ * screen ("portal"). It lives on lv_layer_top and only adds a 2 px column
+ * to a slide that already redraws everything.
+ */
+static lv_obj_t *s_edge = NULL;
+
+static void edge_set_x(void *obj, int32_t x)
+{
+    lv_obj_set_x(obj, x);
+}
+
+static void edge_done(lv_anim_t *a)
+{
+    if (a->var == s_edge)
+    {
+        s_edge = NULL;
+    }
+
+    lv_obj_delete(a->var);
+}
+
+static void edge_start(lv_screen_load_anim_t anim)
+{
+    lv_display_t *disp = lv_display_get_default();
+    int32_t width = lv_display_get_horizontal_resolution(disp);
+    int32_t from;
+    int32_t to;
+
+    if (anim == LV_SCREEN_LOAD_ANIM_MOVE_LEFT)
+    {
+        from = width - EDGE_WIDTH;   /* new screen enters from the right: its left edge */
+        to = 0;
+    }
+    else if (anim == LV_SCREEN_LOAD_ANIM_MOVE_RIGHT)
+    {
+        from = 0;                    /* new screen enters from the left: its right edge */
+        to = width - EDGE_WIDTH;
+    }
+    else
+    {
+        return;
+    }
+
+    if (s_edge != NULL)
+    {
+        lv_anim_delete(s_edge, NULL);
+        lv_obj_delete(s_edge);
+        s_edge = NULL;
+    }
+
+    lv_obj_t *edge = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(edge);
+    lv_obj_set_size(edge, EDGE_WIDTH, LV_PCT(100));
+    lv_obj_set_style_bg_color(edge, lv_color_hex(settings_accent_hex()), 0);
+    lv_obj_set_style_bg_opa(edge, LV_OPA_COVER, 0);
+    lv_obj_set_clickable(edge, false);
+    lv_obj_set_pos(edge, from, 0);
+    s_edge = edge;
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, edge);
+    lv_anim_set_exec_cb(&a, edge_set_x);
+    lv_anim_set_values(&a, from, to);
+    lv_anim_set_duration(&a, ANIM_MS);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_completed_cb(&a, edge_done);
+    lv_anim_start(&a);
+}
+
+/* lv_screen_load_anim() moves both screens linearly: ease them out instead
+ * (same duration, but the motion lands softly and feels faster). */
+static void ease_screen_anim(lv_obj_t *screen)
+{
+    lv_anim_t *a = screen != NULL ? lv_anim_get(screen, NULL) : NULL;
+
+    if (a != NULL)
+    {
+        lv_anim_set_path_cb(a, lv_anim_path_ease_out);
+    }
+}
+
 static void show(lv_obj_t *screen, lv_screen_load_anim_t anim)
 {
     if (s_aod_screen != NULL)
@@ -250,7 +335,11 @@ static void show(lv_obj_t *screen, lv_screen_load_anim_t anim)
     }
     else
     {
+        lv_obj_t *previous = lv_screen_active();
         lv_screen_load_anim(screen, anim, ANIM_MS, 0, false);
+        ease_screen_anim(screen);
+        ease_screen_anim(previous);
+        edge_start(anim);
     }
 
     kick();
