@@ -486,9 +486,15 @@ def apply_owned_terminal_states(agents, directory):
 
 def agent_groups(sessions):
     """One provider agent, with separate sessions retained for history/metrics."""
-    groups={}
-    for item in sessions:groups.setdefault(item.get('agent') or item.get('id'),[]).append(item)
-    result=[];rank={'needs_input':0,'working':1,'error':2,'unknown':3}
+    groups={};result=[]
+    for item in sessions:
+        if item.get('source')=='claude_subagent':
+            # A subagent is its own worker: own card, named by its role, while active or just finished.
+            if item.get('status') in ('working','needs_input') or (item.get('last_event_age') or 0)<1800:
+                result.append(dict(item,name=clean(item.get('name') or item.get('agent_type'),100),activity=clean((item.get('agent_type') or 'subagent')+' | '+(item.get('activity') or ''),220)))
+            continue
+        groups.setdefault(item.get('agent') or item.get('id'),[]).append(item)
+    rank={'needs_input':0,'working':1,'error':2,'unknown':3}
     for provider,items in groups.items():
         ordered=sorted(items,key=lambda x:(rank.get(x.get('status'),4),-x.get('observed_at',0)))
         selected=ordered[0];active=sum(x.get('status') in ('working','needs_input') for x in items)

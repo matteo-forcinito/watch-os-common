@@ -117,6 +117,16 @@ class MonitorTests(unittest.TestCase):
         self.assertIn('Current task',groups[0]['activity'])
         self.assertEqual(len(sessions),2)
 
+    def test_active_subagents_get_their_own_card_named_by_role(self):
+        sessions=[dict(id='claude:s',agent='claude',session_id='s',status='working',observed_at=5,activity='main'),
+                  dict(id='claude:s:a1',agent='claude',source='claude_subagent',session_id='s',agent_type='ingegnere-embedded',name='Fluidita',status='working',last_event_age=3,activity='Strumento: Bash',observed_at=4),
+                  dict(id='claude:s:a2',agent='claude',source='claude_subagent',session_id='s',agent_type='revisore',name='Old review',status='done',last_event_age=7200,observed_at=1)]
+        groups={g['id']:g for g in m.agent_groups(sessions)}
+        self.assertEqual(set(groups),{'agent:claude','claude:s:a1'})
+        self.assertEqual(groups['agent:claude']['session_count'],1)
+        self.assertEqual(groups['claude:s:a1']['name'],'Fluidita')
+        self.assertTrue(groups['claude:s:a1']['activity'].startswith('ingegnere-embedded | '))
+
     def test_owner_terminal_state_overrides_unfinished_rollout_only_for_exact_session(self):
         db=sqlite3.connect(self.root/'control.sqlite')
         db.execute('CREATE TABLE entities(kind TEXT,body TEXT)')
