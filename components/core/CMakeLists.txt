@@ -20,6 +20,7 @@ idf_component_register(
         lvgl
         esp_timer
     PRIV_REQUIRES
+        esp_app_format
         nvs_flash
         espcoredump
         esp_pm

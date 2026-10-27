@@ -10,6 +10,10 @@ from test_panel import NativePanelTests
 from pathlib import Path
 from types import SimpleNamespace
 
+qa_spec = importlib.util.spec_from_file_location('test_device_qa', Path(__file__).resolve().parents[1]/'dev/test_device_qa.py')
+qa_tests = importlib.util.module_from_spec(qa_spec);qa_spec.loader.exec_module(qa_tests)
+DeviceQATests = qa_tests.DeviceQATests
+
 spec = importlib.util.spec_from_file_location('monitor', Path(__file__).with_name('monitor.py'))
 m = importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 

@@ -42,6 +42,8 @@ extern void wifi_diagnostic_drop(void) __attribute__((weak));
 #if CONFIG_WATCH_DEV_CONSOLE
 
 #include "driver/gpio.h"
+#include "esp_heap_caps.h"
+#include "esp_app_desc.h"
 #if CONFIG_HEAP_TRACING_STANDALONE
 #include "esp_heap_trace.h"
 #include "esp_heap_caps.h"
@@ -613,6 +615,18 @@ static void handle(char *line)
                    tasks[i].state, (unsigned long)tasks[i].stack_bytes,
                    (unsigned long)tasks[i].stack_free_min, sys_task_purpose(tasks[i].name));
         free(tasks);
+    }
+    else if (strcmp(cmd, "qa-memory") == 0)
+    {
+        /* Diagnostic builds only. Bounded integrity walk, no destructive RAM writes. */
+        bool ok = heap_caps_check_integrity_all(true);
+        const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+        const esp_app_desc_t *app = esp_app_get_description();
+        printf("@QA version=%s free=%u largest=%u minimum=%u psram=%u integrity=%d\n",
+               app->version, (unsigned)heap_caps_get_free_size(caps),
+               (unsigned)heap_caps_get_largest_free_block(caps),
+               (unsigned)heap_caps_get_minimum_free_size(caps),
+               (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), ok);
     }
     else if (strcmp(cmd, "health") == 0)
     {
