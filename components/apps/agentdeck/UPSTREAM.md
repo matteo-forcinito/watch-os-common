@@ -30,3 +30,9 @@ rasterization to conservative sector bounds while retaining upstream angle and
 coverage tests. A saved baseline rasterizer is used only in host regression tests;
 48 cases cover clipping, wrap-around, large/full arcs and thin notice dashes.
 The empty Connecting screen is exercised explicitly. No watchdog extension.
+
+Landscape adaptation (27 October 2026): Watch OS uses a separate landscape.h
+specification with the upstream SquarePanel renderer, fonts, sprites and touch
+handling. Wide rectangular panels reflow tiles into three columns at >=420px.
+No upstream renderer file is modified for this adaptation. Host previews cover
+list, card, touch/back and logical-to-native quarter-turn geometry.

@@ -21,6 +21,7 @@
 #include <stdint.h>
 
 #include "lvgl.h"
+#include "hardware/board.h"
 
 /* ---- palette (iOS / watchOS-like system colors, readable on black) */
 #define UI_COLOR_BG          0x000000
@@ -39,6 +40,9 @@
 #define UI_COLOR_PURPLE      0xBF5AF2
 #define UI_COLOR_PINK        0xFF375F
 #define UI_COLOR_GRAY        0x636366
+
+/* UI dimensions follow the logical display; hardware/board.h stays native. */
+const board_info_t *ui_board_info(void);
 
 /* ---- fonts */
 extern const lv_font_t *ui_font_clock;      /* huge light digits (watch face) */

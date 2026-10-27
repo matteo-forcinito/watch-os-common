@@ -273,7 +273,7 @@ static void deleted(lv_event_t *e)
 }
 lv_obj_t *mg_screen_open(lv_obj_t *parent, const mg_game_t *game, const mg_screen_config_t *config)
 {
-    int W = board_info()->width, H = board_info()->height;
+    int W = ui_board_info()->width, H = ui_board_info()->height;
     if (!parent || !game || !config || !config->owner || !config->exit || W <= 0 || W > 512 || H <= 0 || H > 512) return NULL;
     mg_screen_t *s = heap_caps_calloc(1, sizeof(*s), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s) return NULL;

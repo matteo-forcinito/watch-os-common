@@ -1069,7 +1069,7 @@ static void create(lv_obj_t *screen, void *arg)
     if (!pet_init())
         ui_toast("Archivio child non disponibile: riprova");
     memset(&S, 0, sizeof(S));
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     S.screen = screen;
     s_game = NULL;
     S.W = b->width;
@@ -1282,7 +1282,7 @@ static void ambient(lv_timer_t *timer)
     if (lv_anim_count_running() != 0) return;
     for (lv_indev_t *input = lv_indev_get_next(NULL); input != NULL; input = lv_indev_get_next(input))
         if (lv_indev_get_state(input) == LV_INDEV_STATE_PRESSED || lv_indev_get_scroll_obj(input) != NULL) return;
-    int k = board_info()->width >= 400 ? 2 : 1;
+    int k = ui_board_info()->width >= 400 ? 2 : 1;
     if (!s_ambient || strcmp(s_ambient_seed, p.seed))
     {
         if (s_ambient)
@@ -1294,7 +1294,7 @@ static void ambient(lv_timer_t *timer)
         if (!s_ambient)
             return;
         lv_obj_set_clickable(s_ambient, false);
-        int inset = board_info()->round ? board_info()->width / 7 : 4;
+        int inset = ui_board_info()->round ? ui_board_info()->width / 7 : 4;
         lv_obj_align(s_ambient, LV_ALIGN_BOTTOM_RIGHT, -inset, -inset);
     }
     lv_obj_set_hidden(s_ambient, false);

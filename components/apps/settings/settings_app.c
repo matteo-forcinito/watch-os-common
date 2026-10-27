@@ -1,3 +1,4 @@
+#include "esp_system.h"
 #include "apps_internal.h"
 
 #include "core/clock.h"
@@ -178,6 +179,16 @@ static void cycle_homepage(lv_event_t *event)
     ui_toast("Homepage salvata: torna a Home per aprirla");
 }
 
+static void rotation_restart(lv_event_t *e) {
+    (void)e;settings_flush();esp_restart();
+}
+static void cycle_rotation(lv_event_t *e) {
+    uint8_t next=(settings_get()->screen_rotation+1)%4;
+    EDIT_SETTINGS(s->screen_rotation=next);
+    lv_label_set_text_fmt(ui_row_value(lv_event_get_current_target_obj(e)),"%u gradi",next*90);
+    ui_toast("Rotazione salvata: premi Riavvia per applicarla");
+}
+
 static void display_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
@@ -187,6 +198,11 @@ static void display_create(lv_obj_t *screen, void *arg)
 
     lv_obj_t *page = ui_page(screen, "Display");
     ui_row(page, LV_SYMBOL_HOME, UI_COLOR_ORANGE, "Homepage", homepage_name(st->homepage), cycle_homepage, NULL);
+    if(!ui_board_info()->round && ui_board_info()->width!=ui_board_info()->height) {
+        snprintf(value,sizeof(value),"%u gradi",st->screen_rotation*90);
+        ui_row(page,LV_SYMBOL_REFRESH,UI_COLOR_BLUE,"Rotazione",value,cycle_rotation,NULL);
+        ui_row(page,LV_SYMBOL_POWER,UI_COLOR_ORANGE,"Riavvia e applica",NULL,rotation_restart,NULL);
+    }
     ui_slider_row(page, LV_SYMBOL_IMAGE, "Luminosità", 10, 255, st->brightness, set_brightness, NULL);
     snprintf(value, sizeof(value), "%u s", st->screen_timeout_s);
     ui_row(page, LV_SYMBOL_EYE_CLOSE, UI_COLOR_INDIGO, "Spegnimento", value, cycle_timeout, NULL);
@@ -199,14 +215,14 @@ static void display_create(lv_obj_t *screen, void *arg)
     snprintf(value, sizeof(value), "%u", st->launcher_cards);
     ui_row(page, LV_SYMBOL_LIST, UI_COLOR_BLUE, "App per pagina", value, cycle_cards, NULL);
 
-    if (board_info()->has_knob && board_info()->has_touch)
+    if (ui_board_info()->has_knob && ui_board_info()->has_touch)
     {
         ui_switch_row(page, LV_SYMBOL_SHUFFLE, UI_COLOR_TEAL, "Rotella: focus", st->knob_focus, set_knob_focus, NULL);
     }
 
     ui_text(page, "Always on: l'ora resta visibile, attenuata (consuma un po' di più).", true);
 
-    if (board_info()->has_knob)
+    if (ui_board_info()->has_knob)
     {
         ui_text(page, "Rotella: gira per scorrere, con focus scegli le voci. Tocca per aprire; "
                       "scorri dal bordo sinistro per tornare. Sulle rotelle con click puoi anche "
@@ -484,7 +500,7 @@ static void wifi_create(lv_obj_t *screen, void *arg)
         }
     }
 
-    ui_text(s_wifi->page, board_info()->has_sdcard
+    ui_text(s_wifi->page, ui_board_info()->has_sdcard
                 ? "Le reti si possono aggiungere anche dalla pagina web o in /config/wifi.txt sulla SD."
                 : "Le reti vengono salvate nella memoria interna. Puoi aggiungerle anche dalla pagina web.", true);
 
@@ -793,7 +809,7 @@ static void about_update(lv_timer_t *timer)
 
     char ip[20] = "-";
     char sd[40] = "assente";
-    if (!board_info()->has_sdcard)
+    if (!ui_board_info()->has_sdcard)
     {
         snprintf(sd, sizeof(sd), "non supportata");
     }
@@ -820,9 +836,9 @@ static void about_update(lv_timer_t *timer)
                           "IP: %s\n"
                           "Acceso da: %lldh %02lldm\n"
                           "Ultimo avvio: %s",
-                          board_info()->name, board_info()->product, board_info()->width, board_info()->height,
-                          board_info()->round ? "rotondo" : "rettangolare",
-                          board_info()->has_knob ? "touch + rotella" : "touch",
+                          ui_board_info()->name, ui_board_info()->product, ui_board_info()->width, ui_board_info()->height,
+                          ui_board_info()->round ? "rotondo" : "rettangolare",
+                          ui_board_info()->has_knob ? "touch + rotella" : "touch",
                           esp_app_get_description()->version, esp_app_get_description()->project_name,
                           esp_get_idf_version(),
                           pmu_battery_percent(), pmu_battery_mv(), pmu_is_charging() ? " (in carica)" : "",

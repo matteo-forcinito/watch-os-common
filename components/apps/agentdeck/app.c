@@ -314,7 +314,7 @@ static void render(void)
             sprite_count=0;header=NULL;lv_obj_clean(root);
             lv_obj_set_style_pad_all(root,0,0);lv_obj_set_style_pad_row(root,0,0);
             lv_obj_remove_flag(root,LV_OBJ_FLAG_SCROLLABLE);
-            native_panel=agentdeck_panel_create(root,board_info()->width,board_info()->height,board_info()->round);
+            native_panel=agentdeck_panel_create(root,ui_board_info()->width,ui_board_info()->height,ui_board_info()->round);
             if(native_panel)lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_SHORT_CLICKED,NULL);
             if(native_panel)lv_obj_add_event_cb(native_panel,panel_menu,LV_EVENT_LONG_PRESSED,NULL);
             else label(root,"Memoria PSRAM insufficiente per il deck",0xFF4D00);
@@ -410,7 +410,7 @@ static void render(void)
         if(offset>=visible)offset=0;
         lv_obj_t *grid=lv_obj_create(root);lv_obj_remove_style_all(grid);lv_obj_set_width(grid,LV_PCT(100));lv_obj_set_height(grid,LV_SIZE_CONTENT);
         lv_obj_set_flex_flow(grid,LV_FLEX_FLOW_ROW_WRAP);lv_obj_set_style_pad_column(grid,8,0);lv_obj_set_style_pad_row(grid,8,0);
-        int width=board_info()->width;int tile_height=board_info()->height/2-85;
+        int width=ui_board_info()->width;int tile_height=ui_board_info()->height/2-85;
         if(tile_height<126)tile_height=126;
         for(int position=offset;position<visible&&position<offset+4;position++){
             int i=indices[position];
@@ -458,8 +458,8 @@ static void create(lv_obj_t *screen,void *arg)
     active=true;native_panel=NULL;offset=0;selected=-1;selected_id[0]=0;dashboard=false;show_all=false;sort_recent=false;controls=false;assistant_view=false;confirmation=NULL;
     root=ui_page(screen,NULL);
     lv_obj_set_style_bg_color(root,ui_color(0x0A0A0A),0);lv_obj_set_style_bg_opa(root,LV_OPA_COVER,0);
-    lv_obj_set_style_pad_top(root,board_info()->round?36:12,0);
-    lv_obj_set_style_pad_bottom(root,board_info()->round?30:20,0);
+    lv_obj_set_style_pad_top(root,ui_board_info()->round?36:12,0);
+    lv_obj_set_style_pad_bottom(root,ui_board_info()->round?30:20,0);
     render();
     lv_obj_add_event_cb(screen,gesture,LV_EVENT_GESTURE,NULL);
     lv_subject_add_observer_obj(state_subject(STATE_AGENTDECK_VERSION),changed,root,NULL);

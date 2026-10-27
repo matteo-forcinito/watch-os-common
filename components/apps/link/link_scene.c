@@ -245,7 +245,7 @@ static void scene_aura(const job_t *j)
     lv_obj_t *o = lv_obj_create(root);
     lv_obj_remove_style_all(o);
     lv_obj_set_size(o, screen_w(), screen_h());
-    lv_obj_set_style_radius(o, board_info()->round ? LV_RADIUS_CIRCLE : 48, 0);
+    lv_obj_set_style_radius(o, ui_board_info()->round ? LV_RADIUS_CIRCLE : 48, 0);
     lv_obj_set_style_border_color(o, lv_color_hex(j->color), 0);
     lv_obj_set_style_border_width(o, 16, 0);
     lv_obj_set_style_shadow_color(o, lv_color_hex(j->color), 0);

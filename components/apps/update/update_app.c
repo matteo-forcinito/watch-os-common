@@ -390,7 +390,7 @@ static void show_versions(void *arg)
     add_channel_folders(FOLDER_STABLE, "STABILI");
     add_channel_folders(FOLDER_DEV, "DEV (VERSIONI DI PROVA)");
 
-    if (board_info()->has_sdcard)
+    if (ui_board_info()->has_sdcard)
     {
         ui_section(s_list, "SCHEDA SD");
 

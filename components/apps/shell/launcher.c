@@ -526,7 +526,7 @@ static void ring_build(void)
     {
         return;
     }
-    const int32_t size = board_info()->width;
+    const int32_t size = ui_board_info()->width;
     const int32_t radius = size / 2 - RING_MARGIN - RING_ICON / 2;
     const int step = s_slot_count > 0 ? 360 / s_slot_count : 30;
     for (int i = 0; i < s_slot_count; i++)
@@ -598,7 +598,7 @@ void launcher_create(lv_obj_t *parent)
 #if CONFIG_APPKIT_HOSTED
     lv_subject_add_observer_obj(state_subject(STATE_MINUTE), hint_changed, parent, NULL);
 #endif
-    if (board_info()->round)
+    if (ui_board_info()->round)
     {
         s_ring = lv_obj_create(parent);
         lv_obj_remove_style_all(s_ring);
@@ -739,7 +739,7 @@ static void pages_create(lv_obj_t *screen, void *arg)
         return;
     }
     p->external = arg != NULL;
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     lv_obj_add_event_cb(screen, pages_delete, LV_EVENT_DELETE, p);
 
     if (p->external)

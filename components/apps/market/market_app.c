@@ -92,7 +92,7 @@ static void animate(lv_timer_t *timer)
     market_ui_t *ui = lv_timer_get_user_data(timer);
     if (ui->page != 0 || lv_screen_active() != ui->screen || power_screen() >= POWER_SCREEN_AOD) return;
     ui->angle = (ui->angle + 2) % 360;
-    int radius = board_info()->width / 3;
+    int radius = ui_board_info()->width / 3;
     for (int i = 0; i < 3; i++)
     {
         int angle = (ui->angle + i * 120) % 360;
@@ -316,7 +316,7 @@ static void show_hero(market_ui_t *ui)
     lv_obj_add_event_cb(scene, scene_touch, LV_EVENT_PRESSED, ui);
     lv_obj_add_event_cb(scene, scene_touch, LV_EVENT_PRESSING, ui);
 
-    int diameter = board_info()->width * 58 / 100;
+    int diameter = ui_board_info()->width * 58 / 100;
     ui->orb = lv_obj_create(scene);
     lv_obj_remove_style_all(ui->orb);
     lv_obj_set_size(ui->orb, diameter, diameter);
@@ -594,7 +594,7 @@ static void show_details(market_ui_t *ui)
 {
     market_entry_t *entry = &ui->selected;
     lv_obj_t *scene = ui->content;
-    int width = board_info()->width;
+    int width = ui_board_info()->width;
     lv_obj_set_style_bg_color(scene, lv_color_mix(lv_color_hex(entry->color), lv_color_hex(0x050710), 20), 0);
     lv_obj_set_style_bg_grad_color(scene, lv_color_mix(lv_color_hex(entry->color), lv_color_hex(0x050710), 65), 0);
     lv_obj_set_style_bg_grad_dir(scene, LV_GRAD_DIR_VER, 0);
@@ -623,7 +623,7 @@ static void show_details(market_ui_t *ui)
     lv_obj_t *dock = lv_obj_create(scene);
     lv_obj_remove_style_all(dock);
     lv_obj_set_size(dock, width * 70 / 100, width >= 300 ? 46 : 36);
-    lv_obj_align(dock, LV_ALIGN_CENTER, 0, width * (board_info()->round ? 29 : 32) / 100);
+    lv_obj_align(dock, LV_ALIGN_CENTER, 0, width * (ui_board_info()->round ? 29 : 32) / 100);
     lv_obj_set_scrollable(dock, false);
     lv_obj_set_flex_flow(dock, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(dock, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -639,8 +639,8 @@ static void show_details(market_ui_t *ui)
     lv_obj_set_size(ui->action, LV_PCT(48), LV_PCT(100));
     lv_obj_set_style_text_font(lv_obj_get_child(ui->action, 0), UI_FONT_SMALL, 0);
     lv_obj_t *hint = label(scene, "Scorri in alto · dettagli", UI_FONT_SMALL, 0x939BAD);
-    lv_obj_align(hint, LV_ALIGN_CENTER, 0, width * (board_info()->round ? -47 : 43) / 100);
-    if (board_info()->round) lv_obj_set_hidden(hint, true);
+    lv_obj_align(hint, LV_ALIGN_CENTER, 0, width * (ui_board_info()->round ? -47 : 43) / 100);
+    if (ui_board_info()->round) lv_obj_set_hidden(hint, true);
     ui_border_progress_color(ui->border, entry->color);
     if (ui->border != NULL) lv_obj_set_hidden(ui->border, false);
     if (!market_busy()) ui_border_progress_set(ui->border, 100, 100);

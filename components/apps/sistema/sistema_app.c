@@ -132,7 +132,7 @@ static void overlay_show(bool on)
     lv_obj_set_style_pad_ver(s_overlay, 3, 0);
     lv_obj_set_clickable(s_overlay, false);   /* touches go to the app below */
     lv_obj_set_scrollable(s_overlay, false);
-    lv_obj_align(s_overlay, LV_ALIGN_TOP_MID, 0, board_info()->round ? 34 : 4);
+    lv_obj_align(s_overlay, LV_ALIGN_TOP_MID, 0, ui_board_info()->round ? 34 : 4);
     s_overlay_text = lv_label_create(s_overlay);
     lv_obj_set_style_text_font(s_overlay_text, UI_FONT_SMALL, 0);
     lv_obj_set_style_text_align(s_overlay_text, LV_TEXT_ALIGN_CENTER, 0);
@@ -325,7 +325,7 @@ static void open_activities(lv_event_t *e)
 
 static void home(sistema_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int size = b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
     int width = size / 16;
     ui->ram_arc = gauge(ui->content, size, width);

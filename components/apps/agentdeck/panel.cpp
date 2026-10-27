@@ -1,5 +1,6 @@
 /* Watch OS adapter. Renderer, fonts and interaction are upstream panel-core. */
 #include "panel.h"
+#include "landscape.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include <initializer_list>
 #include "upstream/layout_square.h"
@@ -52,6 +53,7 @@ extern "C" lv_obj_t *agentdeck_panel_create(lv_obj_t *parent,int width,int heigh
     auto p=new(std::nothrow) NativePanel;if(!p)return nullptr;
     p->physical_w=width;p->physical_h=height;
     if(round)p->round=new(std::nothrow) SpringPanel(layoutSpring21());
+    else if(width>height)p->layout=new(std::nothrow) SquarePanel(specLandscape(width,height));
     else if(width==height)p->layout=new(std::nothrow) BigPanel(specBig480());
     else p->layout=new(std::nothrow) SquarePanel(width>=450&&height>=600?specT4S3():specAmoled18());
     if(!p->round&&!p->layout){delete p;return nullptr;}

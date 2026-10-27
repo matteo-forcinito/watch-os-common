@@ -228,7 +228,7 @@ static void keyboard_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
 
-    if (board_info()->round)
+    if (ui_board_info()->round)
     {
         lv_obj_set_scrollable(screen, false);
         s_textarea = lv_textarea_create(screen);

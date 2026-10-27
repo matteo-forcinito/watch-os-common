@@ -176,8 +176,8 @@ bool ui_round_keyboard_create(lv_obj_t *screen, lv_obj_t *textarea, const char *
     kb->screen = screen;
     kb->textarea = textarea;
     lv_obj_add_event_cb(screen, deleted, LV_EVENT_DELETE, kb);
-    int32_t width = board_info()->width;
-    int32_t height = board_info()->height;
+    int32_t width = ui_board_info()->width;
+    int32_t height = ui_board_info()->height;
     ui_keyboard_layout_t layout;
     ui_keyboard_layout_init(&layout, width, height, true);
     lv_obj_t *heading = lv_label_create(screen);

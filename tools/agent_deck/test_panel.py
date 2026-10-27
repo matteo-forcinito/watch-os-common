@@ -21,6 +21,8 @@ class NativePanelTests(unittest.TestCase):
 #include <chrono>
 #include <cstdio>
 #include "layout_square.h"
+#include "landscape.h"
+#include "core/orientation.h"
 #include "layout_big.h"
 #include "layout_spring.h"
 #include "round_arc_reference.h"
@@ -52,11 +54,19 @@ int main(){
  square.touch(ui,f,true,90,130,DeckScope::View,1300);square.touch(ui,f,false,90,130,DeckScope::View,1350);assert(ui.screen==Screen::Card);square.draw(c,in);image("amoled-card.ppm",c);
  square.button(ui,f);assert(ui.screen==Screen::Home);
  square.touch(ui,f,true,90,350,DeckScope::View,1400);square.touch(ui,f,true,90,100,DeckScope::View,1550);square.touch(ui,f,false,90,100,DeckScope::View,1600);assert(ui.scroll>0||ui.animating);
+ for(int r=0;r<4;r++) for(int y=0;y<((r&1)?368:448);y++) for(int x=0;x<((r&1)?448:368);x++) {
+   int nx,ny,lx,ly;orientation_native(r,368,448,x,y,&nx,&ny);
+   orientation_logical(r,368,448,nx,ny,&lx,&ly);assert(lx==x&&ly==y);assert(nx>=0&&nx<368&&ny>=0&&ny<448);
+ }
+ {int nx,ny;orientation_native(1,368,448,0,0,&nx,&ny);assert(nx==0&&ny==447);}
+ c.w=448;c.h=368;ui=PanelUi{};SquarePanel wide(specLandscape(448,368));wide.draw(c,in);image("amoled-landscape.ppm",c);
+ wide.touch(ui,f,true,75,100,DeckScope::View,1700);wide.touch(ui,f,false,75,100,DeckScope::View,1750);assert(ui.screen==Screen::Card);
+ wide.draw(c,in);image("amoled-landscape-card.ppm",c);wide.button(ui,f);assert(ui.screen==Screen::Home);
  c.w=c.h=480;ui=PanelUi{};BigPanel big(specBig480());big.draw(c,in);image("square-home.ppm",c);
  for(int pass=0;pass<2;pass++){SpringPanel spring(layoutSpring21());RoundUi rui{};RoundInput ri{&f,LinkState::Live,"Aetherion",DeckScope::View,1234,1000,&rui,0};roundTick(rui,spring,f,1234);spring.draw(c,ri);if(!pass)image("round-home.ppm",c);spring_draw::releaseStamps();}
 }
 ''',encoding='utf-8')
-            vswhere=Path(os.environ['ProgramFiles(x86)'])/'Microsoft Visual Studio/Installer/vswhere.exe'
+            vswhere=Path(os.environ.get('ProgramFiles(x86)', os.environ.get('PROGRAMFILES(X86)', r'C:\Program Files (x86)')))/'Microsoft Visual Studio/Installer/vswhere.exe'
             vs=Path(subprocess.check_output([str(vswhere),'-latest','-products','*','-property','installationPath'],text=True).strip())
             raw=subprocess.check_output(f'cmd.exe /d /s /c ""{vs/"Common7/Tools/VsDevCmd.bat"}" -arch=x64 >nul && set"',text=True)
             env=dict(os.environ)
@@ -64,7 +74,7 @@ int main(){
                 if '=' in line and not line.startswith('='):
                     k,v=line.split('=',1);env[k.upper()]=v
             compiler=sorted((vs/'VC/Tools/MSVC').glob('*/bin/Hostx64/x64/cl.exe'))[-1]
-            result=subprocess.run([str(compiler),'/nologo','/std:c++17','/EHsc','/W3','/D_CRT_SECURE_NO_WARNINGS','/I'+str(ROOT/'components/apps/agentdeck/upstream'),'/I'+str(ROOT/'tools/agent_deck/fixtures'),str(work/'test.cpp'),'/Fe:'+str(work/'test.exe')],cwd=work,env=env,capture_output=True,text=True)
+            result=subprocess.run([str(compiler),'/nologo','/std:c++17','/EHsc','/W3','/D_CRT_SECURE_NO_WARNINGS','/I'+str(ROOT/'components/apps/agentdeck/upstream'),'/I'+str(ROOT/'components/apps/agentdeck'),'/I'+str(ROOT/'components/core/include'),'/I'+str(ROOT/'tools/agent_deck/fixtures'),str(work/'test.cpp'),'/Fe:'+str(work/'test.exe')],cwd=work,env=env,capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             result=subprocess.run([str(work/'test.exe')],cwd=work,capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)

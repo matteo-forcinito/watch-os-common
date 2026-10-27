@@ -1,4 +1,5 @@
 #include "core/lv_port.h"
+#include "core/orientation.h"
 
 #include "core/power.h"
 #include "core/settings.h"
@@ -53,6 +54,9 @@ typedef struct
 static lv_display_t *s_disp = NULL;
 static lv_indev_t *s_indev = NULL;
 static TaskHandle_t s_task = NULL;
+static int s_rotation;
+static uint16_t *s_rotated;
+static size_t s_rotate_bytes;
 static SemaphoreHandle_t s_flush_done = NULL;
 /* LVGL uses notification slot 0 for its draw worker. Never share it for UI wakeups. */
 static SemaphoreHandle_t s_wake = NULL;
@@ -418,7 +422,23 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *pixels)
         lv_display_flush_ready(disp);
         return;
     }
-    display_draw(area->x1, area->y1, area->x2, area->y2, pixels);
+    if(s_rotation) {
+        int ax,ay,bx,by;
+        int w=board_info()->width,h=board_info()->height;
+        orientation_native(s_rotation,w,h,area->x1,area->y1,&ax,&ay);
+        orientation_native(s_rotation,w,h,area->x2,area->y2,&bx,&by);
+        int x1=ax<bx?ax:bx,y1=ay<by?ay:by;
+        int x2=ax>bx?ax:bx,y2=ay>by?ay:by;
+        int stride=area->x2-area->x1+1;
+        size_t count=(size_t)stride*(area->y2-area->y1+1);
+        if(count*2>s_rotate_bytes) {lv_display_flush_ready(disp);return;}
+        const uint16_t *src=(const uint16_t *)pixels;
+        for(int y=area->y1;y<=area->y2;y++) for(int x=area->x1;x<=area->x2;x++) {
+            int nx,ny;orientation_native(s_rotation,w,h,x,y,&nx,&ny);
+            s_rotated[(ny-y1)*(x2-x1+1)+nx-x1]=src[(y-area->y1)*stride+x-area->x1];
+        }
+        display_draw(x1,y1,x2,y2,s_rotated);
+    } else display_draw(area->x1, area->y1, area->x2, area->y2, pixels);
 }
 
 /* Instead of spinning while the DMA works, sleep until its interrupt. */
@@ -441,7 +461,16 @@ static void rounder_cb(lv_event_t *e)
     int x2 = area->x2;
     int y2 = area->y2;
 
-    display_round_area(&x1, &y1, &x2, &y2);
+    if(s_rotation) {
+        int ax,ay,bx,by,w=board_info()->width,h=board_info()->height;
+        orientation_native(s_rotation,w,h,x1,y1,&ax,&ay);
+        orientation_native(s_rotation,w,h,x2,y2,&bx,&by);
+        x1=ax<bx?ax:bx;y1=ay<by?ay:by;x2=ax>bx?ax:bx;y2=ay>by?ay:by;
+        display_round_area(&x1,&y1,&x2,&y2);
+        orientation_logical(s_rotation,w,h,x1,y1,&ax,&ay);
+        orientation_logical(s_rotation,w,h,x2,y2,&bx,&by);
+        x1=ax<bx?ax:bx;y1=ay<by?ay:by;x2=ax>bx?ax:bx;y2=ay>by?ay:by;
+    } else display_round_area(&x1, &y1, &x2, &y2);
 
     area->x1 = (int32_t)x1;
     area->y1 = (int32_t)y1;
@@ -499,6 +528,10 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     else
     {
         pressed = !s_headless && touch_read(&x, &y);
+        if(pressed && s_rotation) {
+            int lx,ly;orientation_logical(s_rotation,board_info()->width,board_info()->height,x,y,&lx,&ly);
+            x=(uint16_t)lx;y=(uint16_t)ly;
+        }
 
         if (pressed && s_mirror != NULL)
         {
@@ -1097,7 +1130,16 @@ static esp_err_t init_port(bool headless)
         return ESP_ERR_NO_MEM;
     }
 
-    s_disp = lv_display_create(width, height);
+    s_rotation=(!board_info()->round && width!=height)?settings_get()->screen_rotation:0;
+    if(s_rotation) {
+        s_rotate_bytes=buffer_bytes;
+        s_rotated=heap_caps_malloc(buffer_bytes,caps);
+        if(!s_rotated) {
+            ESP_LOGE(TAG,"No RAM for rotated draw buffer; using native orientation");
+            s_rotation=0;s_rotate_bytes=0;
+        }
+    }
+    s_disp = lv_display_create((s_rotation&1)?height:width, (s_rotation&1)?width:height);
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565_SWAPPED);   /* panel wants big endian */
     lv_display_set_buffers(s_disp, buf1, buf2, buffer_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(s_disp, flush_cb);

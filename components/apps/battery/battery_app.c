@@ -139,7 +139,7 @@ static void face_create(face_t *f, lv_obj_t *parent)
     lv_obj_remove_style_all(f->box);
     lv_obj_set_size(f->box, s, s);
     /* The face has the shape of the screen. */
-    lv_obj_set_style_radius(f->box, board_info()->round ? LV_RADIUS_CIRCLE : s / 4, 0);
+    lv_obj_set_style_radius(f->box, ui_board_info()->round ? LV_RADIUS_CIRCLE : s / 4, 0);
     lv_obj_set_style_bg_opa(f->box, LV_OPA_COVER, 0);
     lv_obj_set_scrollable(f->box, false);
     lv_obj_set_clickable(f->box, false);

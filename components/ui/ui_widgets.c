@@ -5,6 +5,17 @@
 
 #include <string.h>
 
+const board_info_t *ui_board_info(void) {
+    static board_info_t view;
+    view=*board_info();
+    lv_display_t *display=lv_display_get_default();
+    if(display) {
+        view.width=lv_display_get_horizontal_resolution(display);
+        view.height=lv_display_get_vertical_resolution(display);
+    }
+    return &view;
+}
+
 #define ROW_HEIGHT      72
 #define CARD_RADIUS     22
 #define BUBBLE_SIZE     40
@@ -102,7 +113,7 @@ static void scroll_arc_update(lv_event_t *e)
 static void add_scroll_arc(lv_obj_t *page)
 {
     lv_obj_t *arc = lv_arc_create(lv_obj_get_parent(page));
-    int32_t size = board_info()->width - 8;
+    int32_t size = ui_board_info()->width - 8;
 
     lv_obj_set_floating(arc, true);   /* outside any flex layout of the parent */
     lv_obj_set_size(arc, size, size);
@@ -123,7 +134,7 @@ static void add_scroll_arc(lv_obj_t *page)
 
 lv_obj_t *ui_page(lv_obj_t *screen, const char *title)
 {
-    const board_info_t *board = board_info();
+    const board_info_t *board = ui_board_info();
 
     lv_obj_t *page = lv_obj_create(screen);
     lv_obj_remove_style_all(page);
@@ -164,7 +175,7 @@ lv_obj_t *ui_title(lv_obj_t *page, const char *text)
     lv_obj_set_style_text_color(label, lv_color_white(), 0);
     lv_obj_set_style_pad_bottom(label, 6, 0);
 
-    if (board_info()->round)
+    if (ui_board_info()->round)
     {
         /* The top of a round panel is narrow: centred, and "..." rather than cut by the glass. */
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -187,7 +198,7 @@ lv_obj_t *ui_section(lv_obj_t *page, const char *text)
     lv_obj_set_style_text_color(label, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
     lv_obj_set_style_pad_top(label, 10, 0);
 
-    if (board_info()->round)
+    if (ui_board_info()->round)
     {
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);   /* near the top the edge is close */
     }
@@ -209,7 +220,7 @@ lv_obj_t *ui_text(lv_obj_t *page, const char *text, bool dim)
     lv_obj_set_style_text_color(label, lv_color_hex(dim ? UI_COLOR_TEXT_DIM : UI_COLOR_TEXT), 0);
     lv_obj_set_style_text_font(label, dim ? UI_FONT_SMALL : UI_FONT_BODY, 0);
 
-    if (board_info()->round)
+    if (ui_board_info()->round)
     {
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);   /* reads better inside a circle */
     }

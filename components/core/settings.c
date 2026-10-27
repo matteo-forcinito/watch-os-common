@@ -58,6 +58,10 @@ static void set_defaults(settings_t *s)
 
 static void sanitize(settings_t *s)
 {
+    if(s->orientation_preferences_version!=1 || s->screen_rotation>3) {
+        s->orientation_preferences_version=1;s->screen_rotation=0;
+    }
+    if(board_info()->round || board_info()->width==board_info()->height) s->screen_rotation=0;
     if (s->energy_preferences_version != 1) {
         s->energy_preferences_version = 1;
         s->energy_saver = false;

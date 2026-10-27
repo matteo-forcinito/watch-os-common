@@ -451,9 +451,9 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_set_style_bg_color(screen, lv_color_hex(0x8D100B), 0);
     s_button = lv_button_create(screen);
     lv_obj_remove_style_all(s_button);
-    lv_obj_set_size(s_button, board_info()->width - 12, board_info()->height - 20);
+    lv_obj_set_size(s_button, ui_board_info()->width - 12, ui_board_info()->height - 20);
     lv_obj_set_pos(s_button, 6, 4);
-    lv_obj_set_style_radius(s_button, board_info()->round ? LV_RADIUS_CIRCLE : board_info()->display_corner_radius, 0);
+    lv_obj_set_style_radius(s_button, ui_board_info()->round ? LV_RADIUS_CIRCLE : ui_board_info()->display_corner_radius, 0);
     lv_obj_set_style_bg_opa(s_button, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_grad_dir(s_button, LV_GRAD_DIR_VER, 0);
     lv_obj_set_style_border_width(s_button, 6, 0);
@@ -492,7 +492,7 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_t *menu = ui_button(screen, "Memo", 0x890D09, menu_event, NULL);
     lv_obj_set_size(menu, 104, 42);
     lv_obj_align(menu, LV_ALIGN_BOTTOM_MID, 0, -20);
-    lv_obj_set_hidden(menu, board_info()->has_buttons || board_info()->has_knob);
+    lv_obj_set_hidden(menu, ui_board_info()->has_buttons || ui_board_info()->has_knob);
     s_border = settings_get()->border_progress ? ui_border_progress_create(screen, 0xFFEADB) : NULL;
     voice_memo_scan();
     s_tick = lv_timer_create(tick, 100, NULL);

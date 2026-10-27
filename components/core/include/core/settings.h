@@ -76,6 +76,8 @@ typedef struct
     uint8_t homepage; /* 0 watch face, 1 Casa, 2 app list */
     uint32_t energy_preferences_version;
     bool energy_saver; /* cap display power; preserve user brightness/timeout */
+    uint32_t orientation_preferences_version;
+    uint8_t screen_rotation; /* clockwise quarter turns; rectangular panels only */
 } settings_t;
 
 esp_err_t settings_init(void);

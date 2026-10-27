@@ -109,7 +109,7 @@ static void update_battery(lv_observer_t *observer, lv_subject_t *subject)
     bool charging = state_get(STATE_CHARGING) != 0;
     uint32_t color = charging ? UI_COLOR_GREEN : (percent >= 0 && percent < 20 ? UI_COLOR_RED : UI_COLOR_GREEN);
 
-    if (!board_info()->round && settings_get()->border_progress && !s_face.battery_border && s_face.root)
+    if (!ui_board_info()->round && settings_get()->border_progress && !s_face.battery_border && s_face.root)
         s_face.battery_border = ui_border_progress_create(s_face.root, color);
 
     if (s_face.battery_border != NULL)
@@ -339,7 +339,7 @@ static const round_layout_t s_round_small = {20, 54, 72, 84, 200, 208, 298, 150}
 
 static void build_round(lv_obj_t *root)
 {
-    const int32_t size = board_info()->width;
+    const int32_t size = ui_board_info()->width;
     const bool small = size < 400;
     const round_layout_t *l = small ? &s_round_small : &s_round_large;
 
@@ -400,7 +400,7 @@ void watchface_create(lv_obj_t *parent)
     lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
     lv_obj_set_scrollable(root, false);
 
-    if (board_info()->round)
+    if (ui_board_info()->round)
     {
         build_round(root);
         watchface_observe(root);

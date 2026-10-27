@@ -66,16 +66,16 @@ lv_obj_t *ui_border_progress_create(lv_obj_t *screen, uint32_t color)
     lv_obj_remove_style_all(root);
     lv_obj_set_user_data(root, state);
     lv_obj_add_event_cb(root, deleted, LV_EVENT_DELETE, state);
-    lv_obj_set_size(root, board_info()->width, board_info()->height);
+    lv_obj_set_size(root, ui_board_info()->width, ui_board_info()->height);
     lv_obj_set_ignore_layout(root, true);
     lv_obj_center(root);
     lv_obj_set_clickable(root, false);
     lv_obj_set_scrollable(root, false);
 
     /* Coordinates address pixel centres: the last pixel is size - 1. */
-    float width = board_info()->width - 1, height = board_info()->height - 1;
+    float width = ui_board_info()->width - 1, height = ui_board_info()->height - 1;
     const float inset = 5;
-    if (board_info()->round)
+    if (ui_board_info()->round)
     {
         float radius = fminf(width, height) / 2 - inset;
         for (int i = 0; i <= 96; i++)
@@ -86,7 +86,7 @@ lv_obj_t *ui_border_progress_create(lv_obj_t *screen, uint32_t color)
     }
     else
     {
-        float radius = fmaxf(0, board_info()->display_corner_radius - inset);
+        float radius = fmaxf(0, ui_board_info()->display_corner_radius - inset);
         radius = fminf(radius, fminf(width, height) / 2 - inset);
         float left = inset, top = inset, right = width - inset, bottom = height - inset;
         point(state, width / 2, top);
