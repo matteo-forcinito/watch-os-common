@@ -290,6 +290,12 @@ static void sync_worker(void *arg) {
 }
 static void net_clock_boot(uint16_t *fb) {  /* before the tank exists: the radio has the internal heap to itself */
     if (!s_pmic || !net_saved()) return;
+#ifdef PT_WATCH_OS
+    if (s_rtc && clock_port_now_unix() != 0) {   /* Watch OS keeps the RTC on real time: no wait on a dark glass */
+        snprintf(s_boot_sync, sizeof s_boot_sync, "not asked: the Watch OS clock");
+        return;
+    }
+#endif
     bool real = nvs_u8("netclk", 0), set = clock_port_now_unix() != 0, ok_before = nvs_u8("netok", 0);
     if (real && set && ok_before) return;    /* a deep-sleep wake on a good clock, or a chip that ran all night */
     if (s_rtc && set && !real) {             /* THE STOPPED CLOCK: a chip-board's one-time move onto real time, a few tries */
@@ -420,6 +426,9 @@ static void enter_sleep_for(int wake_after_s) {
         batlog_add(battery_pct(), battery_port_vbat_mv(), 0, true, "off");   /* mirrored to NVS: the morning reads it back */
         ESP_LOGI(TAG, "grace over: PMIC power-off (the PWR key or USB boots the tank; the night is lived through at that boot)");
         vTaskDelay(pdMS_TO_TICKS(20));
+#ifdef PT_WATCH_OS
+        pt_watch_os_before_deep_sleep();     /* the morning's power-on wakes the tank, not the launcher */
+#endif
         if (battery_port_poweroff()) vTaskDelay(pdMS_TO_TICKS(1000));      /* the rails drop here */
         ESP_LOGW(TAG, "still powered after the soft cut: deep sleep instead");
     }
@@ -1033,7 +1042,7 @@ void app_main(void) {
     /* model: mmap the raw partition; weights are read through the flash cache */
 #ifdef PT_WATCH_OS
     { const void *map; size_t len;
-      if (pt_watch_os_model_map(&map, &len))
+      if (pt_watch_os_model_map(&map, &len) || (pt_watch_os_model_install(fb[0]) && pt_watch_os_model_map(&map, &len)))
           llm_ok = advisor_llm_esp_init(map, len, tokenizer_bin_start, tokenizer_bin_end - tokenizer_bin_start);
       ESP_LOGI(TAG, "advisor %s", llm_ok ? "LLM" : "rules (model missing)"); }
 #else

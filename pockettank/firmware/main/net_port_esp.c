@@ -74,8 +74,34 @@ static bool nvs_get_str_ns(const char *key, char *out, size_t cap) {
     if (e != ESP_OK) { out[0] = 0; return false; }
     return true;
 }
+#ifdef PT_WATCH_OS
+/* Watch OS keeps its networks in "wifi" (services/wifi.c): a "known" blob of
+ * { ssid[33], password[65] } and the "preferred" SSID. Read only, never written. */
+typedef struct { char ssid[33]; char password[65]; } os_known_t;
+static bool os_creds_get(char *ssid, char *pass) {
+    nvs_handle_t h; if (nvs_open("wifi", NVS_READONLY, &h) != ESP_OK) return false;
+    char pref[33] = ""; size_t n = sizeof pref; nvs_get_str(h, "preferred", pref, &n);
+    os_known_t *k = NULL; size_t size = 0; bool ok = false;
+    if (nvs_get_blob(h, "known", NULL, &size) == ESP_OK && size && size % sizeof *k == 0 && (k = malloc(size))
+        && nvs_get_blob(h, "known", k, &size) == ESP_OK) {
+        int count = (int)(size / sizeof *k), pick = 0;
+        for (int i = 0; i < count; i++) { k[i].ssid[32] = 0; k[i].password[64] = 0; if (pref[0] && !strcmp(k[i].ssid, pref)) pick = i; }
+        if (k[pick].ssid[0]) {
+            strncpy(ssid, k[pick].ssid, NET_SSID_MAX); ssid[NET_SSID_MAX] = 0;
+            strncpy(pass, k[pick].password, NET_PASS_MAX); pass[NET_PASS_MAX] = 0;   /* WPA passwords are 63 at most */
+            ok = true;
+        }
+    }
+    free(k); nvs_close(h);
+    return ok;
+}
+#endif
 bool net_port_creds_get(char *ssid, char *pass) {
+#ifdef PT_WATCH_OS
+    if (!nvs_get_str_ns("ssid", ssid, NET_SSID_MAX + 1) || !ssid[0]) return os_creds_get(ssid, pass);
+#else
     if (!nvs_get_str_ns("ssid", ssid, NET_SSID_MAX + 1) || !ssid[0]) return false;
+#endif
     if (!nvs_get_str_ns("pass", pass, NET_PASS_MAX + 1)) pass[0] = 0;
     return true;
 }
@@ -473,6 +499,55 @@ void net_port_install_start(void) { s_percent = 0; begin(OP_INSTALL); }
 int  net_port_install_state(int *percent) { if (s_op != OP_INSTALL) return NET_IDLE; *percent = s_percent; return s_state; }
 void net_port_abort(void) { s_abort = true; if (s_op == OP_CONNECT) esp_wifi_disconnect(); }
 int  net_port_fail_reason(void) { return s_err; }
+#ifdef PT_WATCH_OS
+/* One HTTPS download straight into a sink (the model installer, pt_watch_os.c).
+ * The sink returns false to stop. */
+bool net_port_download(const char *url, bool (*sink)(const uint8_t *p, size_t n, size_t total, void *arg), void *arg) {
+    char ssid[NET_SSID_MAX + 1], pass[NET_PASS_MAX + 1];
+    if (!net_port_creds_get(ssid, pass)) { snprintf(s_why, sizeof s_why, "no network saved"); return false; }
+    if (!s_ev) s_ev = xEventGroupCreate();
+    snprintf(s_ssid, sizeof s_ssid, "%s", ssid); snprintf(s_pass, sizeof s_pass, "%s", pass);
+    s_abort = false; s_state = NET_BUSY;
+    bool ok = false;
+    if (!radio_up()) snprintf(s_why, sizeof s_why, "the radio would not start");
+    else {
+        do_connect_n(3, 15000, 0, false);
+        if (s_state != NET_DONE) why_connect_failed();
+        else {
+            esp_http_client_config_t hc = { .url = url, .crt_bundle_attach = esp_crt_bundle_attach, .timeout_ms = 20000,
+                                            .buffer_size = 4096, .buffer_size_tx = 2048, .max_redirection_count = 8 };
+            esp_http_client_handle_t c = esp_http_client_init(&hc);
+            uint8_t *buf = heap_caps_malloc(16384, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (c && buf) {
+                esp_err_t e;
+                int status = 0; int64_t total = 0;
+                for (int hop = 0; hop < 8; hop++) {      /* GitHub release assets redirect to their storage host */
+                    if ((e = esp_http_client_open(c, 0)) != ESP_OK) break;
+                    total = esp_http_client_fetch_headers(c);
+                    status = esp_http_client_get_status_code(c);
+                    if (status < 300 || status >= 400) break;
+                    esp_http_client_set_redirection(c);
+                    esp_http_client_close(c);
+                }
+                if (status == 200 && total > 0) {
+                    size_t got = 0; ok = true;
+                    while (got < (size_t)total) {
+                        int r = esp_http_client_read(c, (char *)buf, 16384);
+                        if (r <= 0) { ok = false; snprintf(s_why, sizeof s_why, "the download stopped at %u bytes", (unsigned)got); break; }
+                        got += r;
+                        if (!sink(buf, r, (size_t)total, arg)) { ok = false; snprintf(s_why, sizeof s_why, "stopped"); break; }
+                    }
+                } else snprintf(s_why, sizeof s_why, "HTTP %d", status);
+            } else snprintf(s_why, sizeof s_why, "no memory for the download");
+            if (c) { esp_http_client_close(c); esp_http_client_cleanup(c); }
+            free(buf);
+        }
+    }
+    net_port_off();
+    ESP_LOGI(TAG, "download %s: %s", url, ok ? "done" : s_why);
+    return ok;
+}
+#endif
 void net_port_off(void) {
     s_abort = true;
     if (s_task) {                                            /* let a download notice the abort before the driver goes */

@@ -5,6 +5,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 /* true: *unix_out is the time (seconds) the answer came at, *at_us the
  * esp_timer reading then (add what has passed since). false: no network
  * saved, no signal, or no answer - the radio is off either way. Three tries
@@ -14,3 +15,6 @@ bool net_time_sync(int64_t *unix_out, int64_t *at_us);
  * why it failed (the router not seen / refused / silent, the driver's reason
  * number) - for the director's `clock` (0.3.9) */
 const char *net_time_why(void);
+#ifdef PT_WATCH_OS
+bool net_port_download(const char *url, bool (*sink)(const uint8_t *p, size_t n, size_t total, void *arg), void *arg);
+#endif
