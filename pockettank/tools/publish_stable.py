@@ -13,6 +13,7 @@ TAG = f"pockettank-v{VERSION}"
 MODEL_TAG = "pockettank-model-v4"
 MODEL_SHA256 = "50bed3e16a6b11f3496dde21d8784da9067f40ec9f0a77cf97f60a95acb80f6b"
 REPO = "matteo-forcinito/watch-firmware-releases"
+# Publish only boards whose LLM is verified on hardware: today amoled_watch (README "Board").
 BOARDS = {  # Market board id -> (board repo, project)
     "amoled_watch": ("ESP32-S3-Amoled-Touch-1.8", "pockettank_amoled"),
     "amoled175c_watch": ("ESP32-S3-Touch-AMOLED-1.75C", "pockettank_amoled175c"),

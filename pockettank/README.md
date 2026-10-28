@@ -36,3 +36,11 @@ python ..\..\watch-os-common\pockettank\tools\install_usb.py COM3 --app build\po
 Lo script scarica il modello dal commit upstream fissato (o `--model file`), ne verifica lo
 SHA-256, fa il backup di `0x0-0x21000`, scrive app + modello + trailer e seleziona ota_1.
 `--skip-model` aggiorna solo l'app.
+
+## Board
+
+- **AMOLED 1.8**: stabile sul Market (0.3.10), modello scaricato dall'app al primo avvio.
+- **AMOLED 1.75C**: il modello sta sopra i 16 MB (`storage` occupa la coda), ma il bootloader dell'OS non ha
+  `CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH`: la mappatura fallisce e i pesci vanno a regole. Non pubblicata.
+- **AMOLED 1.75**: 16 MB con `storage`, nessuno spazio per il modello.
+- **Knob, Watcher, Guition**: display e touch non supportati da pocket-tank.
