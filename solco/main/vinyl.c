@@ -50,6 +50,19 @@ bool solco_vinyl_loop(solco_vinyl_t *v, int action, uint32_t length)
     if (v->loop_out <= v->loop_in)
         return false;
     uint32_t span = v->loop_out - v->loop_in;
+    v->shift_delta = 0;
+    if (action >= SOLCO_LOOP_SHIFT_FWD && action <= SOLCO_LOOP_SHIFT_HALF_BACK)
+    {
+        uint32_t step = action >= SOLCO_LOOP_SHIFT_HALF_FWD ? span / 2 : span;
+        bool forward = action == SOLCO_LOOP_SHIFT_FWD || action == SOLCO_LOOP_SHIFT_HALF_FWD;
+        if (!v->loop_enabled || step < 256 ||
+            (forward ? v->loop_out + step > length : v->loop_in < step))
+            return false;
+        v->loop_in = forward ? v->loop_in + step : v->loop_in - step;
+        v->loop_out = v->loop_in + span;
+        v->shift_delta = forward ? (int32_t)step : -(int32_t)step;
+        return true; /* the cursor is moved by solco_vinyl_arm_shift at the edge */
+    }
     if (action == 2)
         v->loop_enabled = !v->loop_enabled;
     else if (action == 3 && span >= 512)
@@ -60,6 +73,13 @@ bool solco_vinyl_loop(solco_vinyl_t *v, int action, uint32_t length)
         return false;
     land_loop(v);
     return true;
+}
+
+void solco_vinyl_arm_shift(solco_vinyl_t *v, uint32_t loop_in, uint32_t loop_out)
+{
+    v->pending_in = loop_in;
+    v->pending_out = loop_out;
+    v->pending_shift = loop_out > loop_in;
 }
 
 void solco_vinyl_touch(solco_vinyl_t *v, int phase, int32_t frames, uint32_t length, bool loop)
@@ -163,6 +183,17 @@ bool solco_vinyl_render(solco_vinyl_t *v, int16_t *out, size_t frames, bool play
         bool region = v->loop_enabled && !v->held && v->loop_out > v->loop_in;
         int64_t low = (int64_t)v->loop_in * SOLCO_SAMPLE_ONE;
         int64_t high = (int64_t)v->loop_out * SOLCO_SAMPLE_ONE;
+        if (region && v->pending_shift && (v->cursor >= high || v->cursor < low))
+        {
+            /* Edge reached: switch to the shifted window. Forward: the playhead is
+             * already inside it (no jump). Backward: the wrap below lands at the
+             * same phase of the new window. */
+            v->loop_in = v->pending_in;
+            v->loop_out = v->pending_out;
+            v->pending_shift = false;
+            low = (int64_t)v->loop_in * SOLCO_SAMPLE_ONE;
+            high = (int64_t)v->loop_out * SOLCO_SAMPLE_ONE;
+        }
         if (region && (v->cursor >= high || v->cursor < low))
         {
             int64_t span = high - low;

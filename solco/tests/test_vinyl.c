@@ -225,5 +225,33 @@ int main(void)
                                &missing);
         assert(!missing && v.cursor == before + fine[r] * 25600);
     }
+    /* Loop shift: forward continues across the old OUT, backward keeps the phase. */
+    v = (solco_vinyl_t){.cursor = 13000 * SOLCO_SAMPLE_ONE, .speed = SOLCO_SAMPLE_ONE,
+                        .transport_rate = SOLCO_SAMPLE_ONE, .rate_initialized = true,
+                        .loop_in = 10000, .loop_out = 14000, .loop_enabled = true,
+                        .loop_marked = true, .gate = 1.f};
+    solco_vinyl_t proposal = v;
+    assert(solco_vinyl_loop(&proposal, SOLCO_LOOP_SHIFT_FWD, length));
+    assert(proposal.loop_in == 14000 && proposal.loop_out == 18000 && proposal.shift_delta == 4000);
+    solco_vinyl_arm_shift(&v, proposal.loop_in, proposal.loop_out);
+    int64_t previous = v.cursor;
+    for (int i = 0; i < 12; ++i)
+    {
+        solco_vinyl_render(&v, pcm, 256, true, length, false, bounded_source, &length, &missing);
+        assert(!missing && v.cursor > previous); /* never wraps back to 10000 */
+        previous = v.cursor;
+    }
+    assert(!v.pending_shift && v.loop_in == 14000 && v.cursor >= 14000 * SOLCO_SAMPLE_ONE);
+    proposal = v;
+    assert(solco_vinyl_loop(&proposal, SOLCO_LOOP_SHIFT_BACK, length) && proposal.loop_in == 10000);
+    v.cursor = 17900 * SOLCO_SAMPLE_ONE;
+    solco_vinyl_arm_shift(&v, proposal.loop_in, proposal.loop_out);
+    solco_vinyl_render(&v, pcm, 256, true, length, false, bounded_source, &length, &missing);
+    /* 100 frames before OUT + 256 played: 156 frames into the new window. */
+    assert(v.loop_in == 10000 && llabs(v.cursor - 10156 * SOLCO_SAMPLE_ONE) < SOLCO_SAMPLE_ONE);
+    proposal = v;
+    proposal.loop_in = 2000;
+    proposal.loop_out = 6000;
+    assert(!solco_vinyl_loop(&proposal, SOLCO_LOOP_SHIFT_BACK, length)); /* would go below 0 */
     puts("Vinyl behavioral, encoder jog and reverse-from-EOF tests passed");
 }

@@ -129,10 +129,23 @@ o la latenza analogica: occorre acquisizione audio esterna per verificarli.
 
 ## Profilo audio e diagnostica
 
-Solco compila il driver di uscita con 6 buffer DMA da 128 frame: circa
-17,4 ms di capacita a 44.100 Hz, rispetto ai precedenti 65,3 ms. Il valore
-predefinito del firmware principale resta invariato. Non e una misura
-della latenza complessiva del gesto: vedere TEST-REPORT.md.
+Fino alla dev.10 la coda di uscita reale era quella predefinita della scheda,
+6 buffer DMA da 480 frame (65,3 ms a 44.100 Hz; 4 x 128 sul Guition): la
+definizione `WATCH_AUDIO_TX_DMA_FRAMES=128` passata dagli script non era letta
+da nessun driver e la console stampava un valore fisso. Ora Solco sceglie la
+coda all'avvio con `audio_start_ex` (HAL di ogni scheda) secondo un profilo di
+latenza; il firmware principale continua a usare `audio_start` con la coda
+predefinita.
+
+| Profilo | Blocco motore | Coda DMA | Coda in ms | Predefinito su |
+|---|---|---|---|---|
+| `safe` (0) | 256 frame | 4 x 256 | 23,2 | schede con altoparlante |
+| `live` (1) | 128 frame | 4 x 128 | 11,6 | Knob (uscita di linea, hub) |
+
+`solco-profile N` cambia profilo a caldo (riapertura dell'uscita con
+dissolvenza); `@TIMING` riporta profilo, blocco e coda effettiva letta dal
+driver. La coda non e la latenza complessiva del gesto (touch, UI, filtri
+del codec, amplificatore): quella va misurata con acquisizione esterna.
 
 I log periodici sono eseguiti dal worker, fuori dal task audio: stdout USB
 puo attendere fino a 50 ms se il computer non legge.

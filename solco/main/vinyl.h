@@ -26,10 +26,22 @@ typedef struct
     uint32_t loop_in, loop_out;
     bool loop_enabled, loop_marked;
     int direction;
+    /* Loop shift (M10b): the next window replaces the current one when the
+     * playhead crosses a loop edge, so forward shifts continue without a jump. */
+    uint32_t pending_in, pending_out;
+    bool pending_shift;
+    int32_t shift_delta; /* set by actions 5-8 on a proposal, frames */
 } solco_vinyl_t;
 
 typedef bool (*solco_sample_fn)(void *source, int64_t frame, int16_t stereo[2]);
-/* IN, OUT+enable, toggle, half, double. Returns false for invalid ranges. */
+/* 0 IN, 1 OUT+enable, 2 toggle, 3 half, 4 double, 5/6 shift forward/back by the loop
+ * length, 7/8 shift by half the length. Returns false for invalid ranges. */
+#define SOLCO_LOOP_SHIFT_FWD 5
+#define SOLCO_LOOP_SHIFT_BACK 6
+#define SOLCO_LOOP_SHIFT_HALF_FWD 7
+#define SOLCO_LOOP_SHIFT_HALF_BACK 8
+/* Arm a shift on the live transport: applied at the next loop edge. */
+void solco_vinyl_arm_shift(solco_vinyl_t *vinyl, uint32_t loop_in, uint32_t loop_out);
 bool solco_vinyl_loop(solco_vinyl_t *vinyl, int action, uint32_t length);
 void solco_vinyl_touch(solco_vinyl_t *vinyl, int phase, int32_t frames, uint32_t length, bool loop);
 /* Encoder: 50 ms of source per detent; automatic release after 120 ms idle. */

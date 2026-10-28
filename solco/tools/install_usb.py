@@ -17,7 +17,7 @@ parser.add_argument("port")
 parser.add_argument("image", type=Path)
 parser.add_argument("metadata_backup", type=Path)
 parser.add_argument("slot_backup", type=Path)
-parser.add_argument("--board", choices=("amoled", "knob", "watcher"), required=True)
+parser.add_argument("--board", choices=("amoled", "knob", "watcher", "amoled175", "amoled175c", "guition"), required=True)
 parser.add_argument("--expected-mac", help="Pin the physical board MAC before reading/writing")
 parser.add_argument("--update", action="store_true", help="Replace an already installed Solco in the secondary slot")
 args = parser.parse_args()
@@ -28,6 +28,9 @@ expected_base, base_offset, app_offset, slot_size, ota_offset = {
     "amoled":("amoled_watch",0x20000,0x620000,6*1024*1024,0xf000),
     "knob":("knob_os",0x20000,0x620000,6*1024*1024,0xf000),
     "watcher":("watcher_os",0x100000,0x800000,7*1024*1024,0x7b000),
+    "amoled175":("amoled175_watch",0x20000,0x620000,6*1024*1024,0xf000),
+    "amoled175c":("amoled175c_watch",0x20000,0x620000,6*1024*1024,0xf000),
+    "guition":("guition4848_panel",0x20000,0x620000,6*1024*1024,0xf000),
 }[args.board]
 expected_app = "solco_" + args.board
 name = lambda data, offset: data[offset:offset + 32].split(b"\0", 1)[0].decode("ascii")

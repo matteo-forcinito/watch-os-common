@@ -61,9 +61,10 @@ for folder, board in (("ESP32-S3-Amoled-Touch-1.8", "amoled"), ("ESP32-S3-Knob-T
     rates = root / "progress-files" / f"solco-{board}-dev9-rates.png"
     if rates.exists(): shutil.copyfile(rates,target / "rates.png")
     commands = json.loads((app / "build/compile_commands.json").read_text(encoding="utf-8"))
-    audio = next(item["command"] for item in commands if item["file"].replace("\\", "/").endswith("/hardware/audio.c"))
-    if "-DWATCH_AUDIO_TX_DMA_FRAMES=128" not in audio:
-        raise SystemExit("Solco low-latency audio profile missing")
+    audio = next(item["file"] for item in commands if item["file"].replace("\\", "/").endswith("/hardware/audio.c"))
+    # Solco chooses its DMA queue at run time (latency profiles): the HAL must offer it.
+    if "audio_start_ex" not in Path(audio).read_text(encoding="utf-8"):
+        raise SystemExit("Board HAL without audio_start_ex: Solco latency profiles unavailable")
     volume = root / "progress-files" / f"solco-{board}-dev6-volume.png"
     if volume.exists():
         shutil.copyfile(volume, target / "volume.png")

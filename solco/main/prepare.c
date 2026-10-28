@@ -4,6 +4,7 @@
 #include "wav.h"
 #include "core/sys.h"
 #include "esp_heap_caps.h"
+#include "freertos/idf_additions.h"
 #include "freertos/queue.h"
 #include "psa/crypto.h"
 #include <stdio.h>
@@ -185,7 +186,13 @@ bool solco_prepare_request(int deck, uint32_t generation, const char *source)
         }
         s_jobs = xQueueCreate(4, sizeof(job_t));
         s_results = xQueueCreate(4, sizeof(solco_prepared_t));
-        if (!s_jobs || !s_results || !sys_task_create(worker, "solco_mp3", 32768, NULL, 2, 0))
+        /* With the kit radio up, internal RAM rarely has a free 32 KB block:
+         * fall back to a PSRAM stack (the worker only touches SD and PSRAM). */
+        bool started = s_jobs && s_results &&
+                       (sys_task_create(worker, "solco_mp3", 32768, NULL, 2, 0) ||
+                        xTaskCreatePinnedToCoreWithCaps(worker, "solco_mp3", 32768, NULL, 2, NULL, 0,
+                                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS);
+        if (!started)
         {
             if (s_jobs)
             {

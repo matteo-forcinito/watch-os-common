@@ -50,16 +50,14 @@ project(solco_''' + board + ''')
 ''', encoding="utf-8")
     (app / "main" / "CMakeLists.txt").write_text('''set(SOLCO_SHARED "${WATCH_OS_COMMON}/solco/main")
 idf_component_register(
-    SRCS "${SOLCO_SHARED}/main.c" "${SOLCO_SHARED}/install.c" "${SOLCO_SHARED}/engine.c" "${SOLCO_SHARED}/mix.c" "${SOLCO_SHARED}/vinyl.c" "${SOLCO_SHARED}/keylock.c" "${SOLCO_SHARED}/mp3.c" "${SOLCO_SHARED}/prepare.c" "${SOLCO_SHARED}/wav.c" "${SOLCO_SHARED}/studio.c" "${SOLCO_SHARED}/studio_motion.c" "${SOLCO_SHARED}/studio_clock.c"
+    SRCS "${SOLCO_SHARED}/main.c" "${SOLCO_SHARED}/install.c" "${SOLCO_SHARED}/engine.c" "${SOLCO_SHARED}/mix.c" "${SOLCO_SHARED}/vinyl.c" "${SOLCO_SHARED}/keylock.c" "${SOLCO_SHARED}/mp3.c" "${SOLCO_SHARED}/prepare.c" "${SOLCO_SHARED}/wav.c" "${SOLCO_SHARED}/studio.c" "${SOLCO_SHARED}/studio_motion.c" "${SOLCO_SHARED}/studio_clock.c" "${SOLCO_SHARED}/ui_kit.c" "${SOLCO_SHARED}/ui_decks.c" "${SOLCO_SHARED}/ui_master.c" "${SOLCO_SHARED}/ui_studio.c" "${SOLCO_SHARED}/link.c"
     INCLUDE_DIRS "${SOLCO_SHARED}"
-    PRIV_REQUIRES hardware core ui extapp_sdk esp_timer nvs_flash app_update bootloader_support mbedtls fatfs
+    PRIV_REQUIRES hardware core ui extapp_sdk esp_timer nvs_flash app_update bootloader_support mbedtls fatfs esp_wifi esp_event
     EMBED_FILES "${SOLCO_SHARED}/../assets/pulse.pcm" "${SOLCO_SHARED}/../assets/chord.pcm" "${SOLCO_SHARED}/../assets/import-test.mp3"
 )
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror -O2)
-# This override applies only to Solco's hardware component, never the base OS.
-idf_component_get_property(SOLCO_HARDWARE_LIB hardware COMPONENT_LIB)
-target_compile_definitions(${SOLCO_HARDWARE_LIB} PRIVATE WATCH_AUDIO_TX_DMA_FRAMES=128)
-''' + f'\ntarget_compile_definitions(${{COMPONENT_LIB}} PRIVATE SOLCO_OUTPUT_CHANNELS={2 if board == "knob" else 1})\n', encoding="utf-8")
+# The DMA queue is chosen at run time through audio_start_ex (latency profiles).
+''' + f'\ntarget_compile_definitions(${{COMPONENT_LIB}} PRIVATE SOLCO_OUTPUT_CHANNELS={2 if board == "knob" else 1} SOLCO_LINK=1)\n', encoding="utf-8")
     if board in ("amoled", "amoled175", "amoled175c"):
         with (app / "main" / "CMakeLists.txt").open("a", encoding="utf-8") as file:
             file.write("\nidf_component_get_property(SOLCO_SENSOR_LIB board_drivers COMPONENT_LIB)\ntarget_compile_definitions(${SOLCO_SENSOR_LIB} PRIVATE WATCH_QMI8658_ODR=6 WATCH_QMI8658_RECOVER_SAME_PROFILE=1)\n")
@@ -80,7 +78,12 @@ target_compile_definitions(${SOLCO_HARDWARE_LIB} PRIVATE WATCH_AUDIO_TX_DMA_FRAM
     text = "\n".join(line for line in text.splitlines()
                      if not line.startswith("CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=")
                      and not line.startswith("CONFIG_WATCH_DEV_CONSOLE="))
-    (app / "sdkconfig.defaults").write_text(text + '\nCONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y\nCONFIG_WATCH_DEV_CONSOLE=y\n', encoding="utf-8")
+    # PSRAM bands as in the board OS (AMOLED 1.8: 112 lines, frees ~33 KB internal RAM).
+    band = next((line for line in (base / "sdkconfig.defaults").read_text(encoding="utf-8").splitlines()
+                 if line.startswith("CONFIG_WATCH_LV_BAND_LINES=")), None)
+    if band and board == "amoled" and band not in text:
+        text += "\n" + band
+    (app / "sdkconfig.defaults").write_text(text + '\nCONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y\nCONFIG_WATCH_DEV_CONSOLE=y\nCONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6\nCONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16\nCONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER=y\nCONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16\nCONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n\nCONFIG_ESP_WIFI_AMPDU_RX_ENABLED=n\nCONFIG_ESP_WIFI_MGMT_SBUF_NUM=8\nCONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n\n', encoding="utf-8")
     (app / "partitions.csv").write_bytes((base / "partitions.csv").read_bytes())
     (app / "manifest.json").write_text('{"name":"Solco","bin":"Solco.bin","version":"0.1.0-dev.10"}\n', encoding="utf-8")
     print(app)
