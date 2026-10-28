@@ -18,7 +18,15 @@ BOARDS = {  # Market board id -> (board repo, project)
     "amoled175c_watch": ("ESP32-S3-Touch-AMOLED-1.75C", "pockettank_amoled175c"),
     "amoled175_watch": ("ESP32-S3-Touch-AMOLED-1.75", "pockettank_amoled175"),
 }
-SUMMARY = "Acquario con pesci guidati da un'AI locale."  # the catalogue stays under 48 KB for older firmware
+SUMMARY = "Acquario con pesci guidati da AI locale."  # the catalogue stays under 48 KB for older firmware
+# Older firmware rejects a catalogue over 48 KB: the longest summaries, repeated per board, are cut to make room.
+SHORTER = {
+    "Motore": "Diagnosi OBD-II: contagiri, dati live, errori e consumi (ELM327).",
+    "WatchLite": "Versione leggera senza LVGL: sveglie, agenda, always-on.",
+    "Giornata": "Calendari, attività, focus e promemoria a colpo d'occhio.",
+    "Pieno": "Il carburante più conveniente vicino a te (dati MIMIT).",
+    "Copertura": "Il Wi-Fi stanza per stanza, con mappa di calore.",
+}
 NOTES = ("Pocket Tank 0.3.8 (github.com/mediacutlet/pocket-tank, MIT) come app esterna: un modello da 14M "
          "parametri gira sull'orologio e decide cosa fanno i pesci, senza cloud. Al primo avvio scarica il "
          "modello (7,5 MB) con il Wi-Fi salvato nell'OS. BOOT torna al launcher.")
@@ -47,7 +55,7 @@ for board in ([] if a.model_only else a.boards):
     assets[names[0]], assets[names[1]] = binary, icon
     item = lambda data, name: {"size": len(data), "sha256": hashlib.sha256(data).hexdigest(), "url": prefix + name}
     entries.append({"id": "PocketTank", "name": "Pocket Tank", "version": VERSION, "board": board, "project": project,
-                    "summary": SUMMARY, "channel": "stable", "color": "46C8D8",
+                    "summary": SUMMARY, "channel": "stable",
                     "binary": item(binary, names[0]), "icon": item(icon, names[1])})
     print("Verified", board, project, len(binary), flush=True)
 if not a.publish:
@@ -99,6 +107,8 @@ for attempt in range(5):
     old = req(path + "?ref=main")
     previous = json.loads(base64.b64decode(old["content"]))
     preserved = [x for x in previous["apps"] if x["id"] != "PocketTank"]
+    for x in preserved:
+        x["summary"] = SHORTER.get(x["id"], x["summary"])
     merged = {"schema": 2, "apps": preserved + entries}
     encoded = json.dumps(merged, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
     assert len(encoded) <= 48 * 1024
