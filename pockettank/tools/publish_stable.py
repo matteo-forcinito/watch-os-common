@@ -8,7 +8,7 @@ of market/catalog.json. Dry run by default; --model-only uploads just the model.
 import argparse, base64, hashlib, json, subprocess, urllib.error, urllib.request
 from pathlib import Path
 
-VERSION = "0.3.8"
+VERSION = "0.3.10"
 TAG = f"pockettank-v{VERSION}"
 MODEL_TAG = "pockettank-model-v4"
 MODEL_SHA256 = "50bed3e16a6b11f3496dde21d8784da9067f40ec9f0a77cf97f60a95acb80f6b"
@@ -27,7 +27,7 @@ SHORTER = {
     "Pieno": "Il carburante più conveniente vicino a te (dati MIMIT).",
     "Copertura": "Il Wi-Fi stanza per stanza, con mappa di calore.",
 }
-NOTES = ("Pocket Tank 0.3.8 (github.com/mediacutlet/pocket-tank, MIT) come app esterna: un modello da 14M "
+NOTES = ("Pocket Tank 0.3.10 (github.com/mediacutlet/pocket-tank, MIT) come app esterna: un modello da 14M "
          "parametri gira sull'orologio e decide cosa fanno i pesci, senza cloud. Al primo avvio scarica il "
          "modello (7,5 MB) con il Wi-Fi salvato nell'OS. BOOT torna al launcher.")
 

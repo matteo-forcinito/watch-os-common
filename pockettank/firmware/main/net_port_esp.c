@@ -78,7 +78,8 @@ static bool nvs_get_str_ns(const char *key, char *out, size_t cap) {
 /* Watch OS keeps its networks in "wifi" (services/wifi.c): a "known" blob of
  * { ssid[33], password[65] } and the "preferred" SSID. Read only, never written. */
 typedef struct { char ssid[33]; char password[65]; } os_known_t;
-static bool os_creds_get(char *ssid, char *pass) {
+/* nth: 0 = the preferred network (or the first), then the others in their saved order */
+static bool os_creds_nth(int nth, char *ssid, char *pass) {
     nvs_handle_t h; if (nvs_open("wifi", NVS_READONLY, &h) != ESP_OK) return false;
     char pref[33] = ""; size_t n = sizeof pref; nvs_get_str(h, "preferred", pref, &n);
     os_known_t *k = NULL; size_t size = 0; bool ok = false;
@@ -86,7 +87,9 @@ static bool os_creds_get(char *ssid, char *pass) {
         && nvs_get_blob(h, "known", k, &size) == ESP_OK) {
         int count = (int)(size / sizeof *k), pick = 0;
         for (int i = 0; i < count; i++) { k[i].ssid[32] = 0; k[i].password[64] = 0; if (pref[0] && !strcmp(k[i].ssid, pref)) pick = i; }
-        if (k[pick].ssid[0]) {
+        int idx = nth == 0 ? pick : nth <= pick ? nth - 1 : nth;   /* the preferred first, then the rest */
+        if (idx < count && k[idx].ssid[0]) {
+            pick = idx;
             strncpy(ssid, k[pick].ssid, NET_SSID_MAX); ssid[NET_SSID_MAX] = 0;
             strncpy(pass, k[pick].password, NET_PASS_MAX); pass[NET_PASS_MAX] = 0;   /* WPA passwords are 63 at most */
             ok = true;
@@ -95,6 +98,7 @@ static bool os_creds_get(char *ssid, char *pass) {
     free(k); nvs_close(h);
     return ok;
 }
+static bool os_creds_get(char *ssid, char *pass) { return os_creds_nth(0, ssid, pass); }
 #endif
 bool net_port_creds_get(char *ssid, char *pass) {
 #ifdef PT_WATCH_OS
@@ -506,12 +510,18 @@ bool net_port_download(const char *url, bool (*sink)(const uint8_t *p, size_t n,
     char ssid[NET_SSID_MAX + 1], pass[NET_PASS_MAX + 1];
     if (!net_port_creds_get(ssid, pass)) { snprintf(s_why, sizeof s_why, "no network saved"); return false; }
     if (!s_ev) s_ev = xEventGroupCreate();
-    snprintf(s_ssid, sizeof s_ssid, "%s", ssid); snprintf(s_pass, sizeof s_pass, "%s", pass);
-    s_abort = false; s_state = NET_BUSY;
     bool ok = false;
     if (!radio_up()) snprintf(s_why, sizeof s_why, "the radio would not start");
     else {
-        do_connect_n(3, 15000, 0, false);
+        /* every network Watch OS knows, the preferred first: a phone hotspot that is off must not stop it */
+        for (int nth = 0; nth == 0 || os_creds_nth(nth, ssid, pass); nth++) {
+            snprintf(s_ssid, sizeof s_ssid, "%s", ssid); snprintf(s_pass, sizeof s_pass, "%s", pass);
+            s_abort = false; s_state = NET_BUSY;
+            ESP_LOGI(TAG, "download: trying %s", s_ssid);
+            do_connect_n(2, 15000, 0, false);
+            if (s_state == NET_DONE) break;
+            if (nth >= 15) break;
+        }
         if (s_state != NET_DONE) why_connect_failed();
         else {
             esp_http_client_config_t hc = { .url = url, .crt_bundle_attach = esp_crt_bundle_attach, .timeout_ms = 20000,
