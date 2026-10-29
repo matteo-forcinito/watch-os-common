@@ -185,13 +185,28 @@ attiva; otto celle configurabili + «Altro»; swipe dall'alto torna all'hub; fon
 Punti aperti: nome definitivo (Deck o Remote); agente dentro Orbit Companion o processo in tray;
 supporto macOS dell'agente; quali 15 app nei profili iniziali.
 
-## Stato implementazione v0
+## Stato implementazione (Remote 1.2.0)
 
-- `components/hid_link/hid_deck.c`: servizio GATT accanto a HID, caratteristiche cifrate.
-  Con un host collegato il watch fa advertising lento non connettibile finché l'agente non si
-  iscrive: serve all'agente per trovare il dispositivo che Windows tiene già collegato.
-- `remote/main/remote_deck.c`: pagina «PC (Deck)», prima voce di Remote. Touchbar a 4 tasti per
-  VS Code, browser, file manager, Office, terminale, musica, chiamate; generica senza agente.
-  Media HID, Mic (agente), Blocca PC, Schermo off; stato CPU/RAM e brano.
-- `tools/deck_agent/deck_agent.py`: agente Windows/Linux. `pip install bleak psutil`; su Windows
-  anche `pycaw winrt-Windows.Media.Control winrt-Windows.Foundation`. Avvio: `python deck_agent.py`.
+Verificato su AMOLED 1.8 il 29/10/2026: associazione Bluetooth con Windows 11, agente collegato,
+selftest 11/11 (il watch conferma il profilo scelto per VS Code, Chrome, YouTube, Esplora file, Word,
+Terminale, Spotify, Teams, Zoom, Discord e Blocco note).
+
+- **Firmware** `components/hid_link/hid_deck.c`: servizio GATT Deck accanto a HID, caratteristiche
+  cifrate. Con un host collegato il watch fa advertising lento non connettibile finché l'agente non si
+  iscrive (serve su Linux; su Windows l'agente apre direttamente il dispositivo associato).
+- **Pagina «PC (Deck)»** `remote/main/remote_deck.c`, prima voce di Remote:
+  - senza agente è una guida: Remote su USB (con «Passa a Bluetooth»), PC da associare, agente da avviare;
+  - con l'agente: app attiva con icona e colore del profilo, titolo finestra, 6 tasti del profilo,
+    brano in riproduzione, media, microfono con stato reale, Blocca, Schermo off, CPU/RAM.
+  - Profili: VS Code, Browser, YouTube (dal titolo), File, Office, Terminale, Spotify, Teams, Zoom,
+    Discord, Generale. Ctrl diventa Cmd con l'opzione macOS.
+- **Agente** `tools/deck_agent/`:
+  - Windows: `powershell -ExecutionPolicy Bypass -File install_windows.ps1` installa le dipendenze e
+    l'avvio automatico senza finestra (log in `%LOCALAPPDATA%\DeckAgent\agent.log`); `-Remove` lo toglie.
+  - Manuale: `pip install -r requirements.txt` e `python deck_agent.py`; `--selftest` verifica i profili.
+  - Linux: bleak + xdotool, playerctl, pactl, loginctl (X11; Wayland da fare).
+  - Una sola istanza; riconnessione automatica.
+
+Limiti noti: canale dati solo Bluetooth (con USB i tasti funzionano ma senza contesto); azioni
+Blocca/Schermo/Microfono provate lato PC, non ancora con un tocco sul watch in questo collaudo;
+le altre board sono compilate ma provate solo su AMOLED 1.8.

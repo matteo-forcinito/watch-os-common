@@ -69,6 +69,8 @@ void remote_air_register(void);
 /* Deck (remote_deck.c): PC page fed by the PC agent over hid_link's data channel. */
 extern const app_t remote_deck_app;
 void remote_deck_init(void);
+/* Ask to restart Remote on the other transport (USB <-> Bluetooth). */
+void remote_change_transport(lv_event_t *e);
 
 /* Remote Hub (remote_hub_ui.c): several watches as one HID set. */
 extern const app_t remote_hub_app;

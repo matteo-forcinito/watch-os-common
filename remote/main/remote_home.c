@@ -86,7 +86,7 @@ static void transport_confirmed(bool confirmed, void *user_data)
     extapp_restart_self();
 }
 
-static void change_transport(lv_event_t *e)
+void remote_change_transport(lv_event_t *e)
 {
     (void)e;
     bool to_usb = remote_settings()->transport != HID_LINK_USB;
@@ -139,7 +139,7 @@ void remote_home_create(lv_obj_t *screen)
     if (board_info()->has_usb_otg)
     {
         ui_row(page, LV_SYMBOL_BLUETOOTH, UI_COLOR_INDIGO, "Via",
-               remote_settings()->transport == HID_LINK_USB ? "USB" : "Bluetooth", change_transport, NULL);
+               remote_settings()->transport == HID_LINK_USB ? "USB" : "Bluetooth", remote_change_transport, NULL);
     }
     else
     {

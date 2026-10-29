@@ -1,4 +1,4 @@
-# Remote 1.0.1
+# Remote 1.2.0
 
 App esterna condivisa da Watcher W1-A, AMOLED 1.8, AMOLED 1.75 e Knob 1.8.
 Ogni modello richiede il proprio binario: i pacchetti non sono intercambiabili.
@@ -33,7 +33,7 @@ intercettare le scorciatoie; i comandi riunione sono predisposti per le app desk
 
 | Modalità | Comandi |
 |---|---|
-| PC (Deck) | Touchbar che cambia con l'app in primo piano (VS Code, browser, file, Office, terminale, musica, chiamate), media, microfono, blocco PC, schermo spento, CPU/RAM e brano. Contesto e stato richiedono l'agente `tools/deck_agent` sul PC (solo Bluetooth); senza agente restano i tasti generici. Vedi `docs/DECK.md` |
+| PC (Deck) | Touchbar che cambia con l'app in primo piano (VS Code, browser, file, Office, terminale, musica, chiamate), media, microfono, blocco PC, schermo spento, CPU/RAM e brano. Contesto e stato richiedono l'agente `tools/deck_agent` sul PC (solo Bluetooth; su Windows `install_windows.ps1`). Senza agente la pagina guida al collegamento. Vedi `docs/DECK.md` |
 | Tastiera swipe | Lettere, numeri, simboli, accenti, maiuscole, suggerimenti IT/EN, spazio, cancellazione, Invio |
 | Tastiera PC | QWERTY, numeri/simboli, Ctrl, Alt, AltGr, Shift, Win/Cmd, Tab, Esc, Invio e spazio; pagina Fn con F1–F12, frecce, Home/End, Ins/Del, PgUp/PgDn, Caps, Print, Scroll, Pause e Menu |
 | Mouse | Touchpad relativo, tap per click, sinistro/destro/centrale, doppio click, trascinamento con rilascio esplicito, avanti/indietro, frecce di scroll verticali/orizzontali ai lati del touchpad con ripetizione, pad in modalità scorrimento |
@@ -74,6 +74,7 @@ Dal progetto di qualsiasi modello:
 tools/build_remote.ps1 -Board watcher
 tools/build_remote.ps1 -Board amoled
 tools/build_remote.ps1 -Board amoled175
+tools/build_remote.ps1 -Board amoled175c
 tools/build_remote.ps1 -Board knob
 ```
 
