@@ -7,6 +7,7 @@
  *   remote_home.c     home screen: connection, control modes, options
  *   keyboard_app.c    the swipe keyboard
  *   swipe.c           swipe decoder (pure C, host-tested)
+ *   remote_deck.c     PC page: contextual touchbar and state from the PC agent
  *   remote_air.c      air mouse (gyroscope), boards with an IMU
  *   remote_hub_ui.c   Remote Hub role and pairing (radio in hid_link/hid_hub.c)
  *   main.c            start-up
@@ -64,6 +65,10 @@ extern const app_t remote_shortcuts_app;
 extern const app_t remote_air_app; /* only on boards with an IMU */
 void remote_modes_register(void);
 void remote_air_register(void);
+
+/* Deck (remote_deck.c): PC page fed by the PC agent over hid_link's data channel. */
+extern const app_t remote_deck_app;
+void remote_deck_init(void);
 
 /* Remote Hub (remote_hub_ui.c): several watches as one HID set. */
 extern const app_t remote_hub_app;

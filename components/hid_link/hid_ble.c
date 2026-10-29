@@ -30,6 +30,7 @@ static esp_hidd_dev_t *s_dev = NULL;
 static char s_name[32] = "AMOLED Remote";
 static uint8_t s_own_addr_type = 0;
 static bool s_running = false;
+static bool s_connected = false;
 
 static esp_hid_raw_report_map_t s_maps[1];
 
@@ -94,6 +95,28 @@ static void advertise(void)
     }
 }
 
+/*
+ * While a host is connected: slow, non-connectable advertising with the same
+ * address, so the PC agent can find the watch Windows already holds and open
+ * the Deck service over that link. Stops once the agent subscribes.
+ */
+static void advertise_beacon(void)
+{
+    struct ble_gap_adv_params params = {
+        .conn_mode = BLE_GAP_CONN_MODE_NON,
+        .disc_mode = BLE_GAP_DISC_MODE_GEN,
+        .itvl_min = BLE_GAP_ADV_ITVL_MS(1000),
+        .itvl_max = BLE_GAP_ADV_ITVL_MS(1200),
+    };
+
+    ble_gap_adv_stop();
+    int rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER, &params, gap_event, NULL);
+    if (rc != 0 && rc != BLE_HS_EALREADY)
+    {
+        ESP_LOGW(TAG, "Beacon advertising: %d", rc);
+    }
+}
+
 /* Our own GAP events (esp_hidd has its own listener for the HID side). */
 static int gap_event(struct ble_gap_event *event, void *arg)
 {
@@ -106,10 +129,30 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         {
             advertise();
         }
+        else
+        {
+            s_connected = true;
+            advertise_beacon(); /* lets the PC agent find the connected watch */
+        }
+        break;
+
+    case BLE_GAP_EVENT_SUBSCRIBE:
+        hid_deck_subscribe(event->subscribe.conn_handle, event->subscribe.attr_handle, event->subscribe.cur_notify);
+        if (event->subscribe.cur_notify)
+        {
+            ble_gap_adv_stop();
+        }
+        else if (s_connected)
+        {
+            advertise_beacon();
+        }
         break;
 
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "Disconnected (reason %d)", event->disconnect.reason);
+        s_connected = false;
+        hid_deck_disconnected();
+        ble_gap_adv_stop();
         if (s_running)
         {
             advertise();
@@ -117,7 +160,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         break;
 
     case BLE_GAP_EVENT_ADV_COMPLETE:
-        if (s_running)
+        if (s_running && !s_connected)
         {
             advertise();
         }
@@ -232,6 +275,7 @@ esp_err_t hid_ble_start(const char *name)
         return err;
     }
 
+    hid_deck_register();
     ble_svc_gap_device_name_set(s_name);
     ble_svc_gap_device_appearance_set(ESP_HID_APPEARANCE_KEYBOARD);
     esp_hidd_dev_battery_set(s_dev, 100);

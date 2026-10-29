@@ -135,4 +135,16 @@ esp_err_t hid_link_transport_send(uint8_t report_id, const uint8_t *data, uint16
 /* Satellite transport: connection state is driven by the hub link. */
 void hid_link_satellite_state(hid_link_state_t state);
 
+/*
+ * Deck data channel (Bluetooth only): a GATT service beside HID on the same
+ * bond, for the PC agent in tools/deck_agent. One JSON message per write or
+ * notification, at most HID_DECK_MAX bytes. The receiver runs in the Bluetooth
+ * host task: copy what it needs and return.
+ */
+#define HID_DECK_MAX 240
+typedef void (*hid_deck_rx_t)(const char *message, size_t length);
+void hid_deck_set_receiver(hid_deck_rx_t receiver);
+bool hid_deck_connected(void); /* the agent is subscribed */
+bool hid_deck_send(const char *message);
+
 #endif

@@ -6,6 +6,7 @@ idf_component_register(
         "hid_link.c"
         "hid_keymap.c"
         "hid_ble.c"
+        "hid_deck.c"
         "hid_usb.c"
         "hid_hub.c"
         "${CMAKE_CURRENT_LIST_DIR}/../../remote/hub/hub_state.c"

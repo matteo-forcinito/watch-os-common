@@ -27,6 +27,7 @@ typedef struct
 } remote_mode_t;
 
 static const remote_mode_t s_modes[] = {
+    {"PC (Deck)", LV_SYMBOL_HOME, UI_COLOR_GREEN, &remote_deck_app},
     {"Tastiera", LV_SYMBOL_KEYBOARD, UI_COLOR_BLUE, &keyboard_app},
     {"Tastiera PC", LV_SYMBOL_KEYBOARD, UI_COLOR_TEAL, &remote_pc_keyboard_app},
     {"Mouse / touchpad", LV_SYMBOL_GPS, UI_COLOR_TEAL, &remote_mouse_app},

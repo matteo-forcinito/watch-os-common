@@ -33,6 +33,7 @@ intercettare le scorciatoie; i comandi riunione sono predisposti per le app desk
 
 | Modalità | Comandi |
 |---|---|
+| PC (Deck) | Touchbar che cambia con l'app in primo piano (VS Code, browser, file, Office, terminale, musica, chiamate), media, microfono, blocco PC, schermo spento, CPU/RAM e brano. Contesto e stato richiedono l'agente `tools/deck_agent` sul PC (solo Bluetooth); senza agente restano i tasti generici. Vedi `docs/DECK.md` |
 | Tastiera swipe | Lettere, numeri, simboli, accenti, maiuscole, suggerimenti IT/EN, spazio, cancellazione, Invio |
 | Tastiera PC | QWERTY, numeri/simboli, Ctrl, Alt, AltGr, Shift, Win/Cmd, Tab, Esc, Invio e spazio; pagina Fn con F1–F12, frecce, Home/End, Ins/Del, PgUp/PgDn, Caps, Print, Scroll, Pause e Menu |
 | Mouse | Touchpad relativo, tap per click, sinistro/destro/centrale, doppio click, trascinamento con rilascio esplicito, avanti/indietro, frecce di scroll verticali/orizzontali ai lati del touchpad con ripetizione, pad in modalità scorrimento |

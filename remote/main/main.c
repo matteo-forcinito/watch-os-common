@@ -45,6 +45,7 @@ void app_main(void)
     remote_alarm_prepare();
     remote_settings_load();
     remote_dictionary(); /* index the words now (~0.2 s), not at the first swipe */
+    remote_deck_init();
     remote_connect();
     sys_heap_log("hid");
 
@@ -54,6 +55,7 @@ void app_main(void)
     app_register(&remote_pc_keyboard_app);
     app_register(&remote_options_app);
     remote_modes_register();
+    app_register(&remote_deck_app);
     remote_air_register();
     remote_hub_register();
 

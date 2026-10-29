@@ -5,6 +5,7 @@
 
 #include "hid_link/hid_link.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #define HID_REPORT_KEYBOARD 1
@@ -31,6 +32,11 @@ esp_err_t hid_ble_start(const char *name);
 void hid_ble_stop(void);
 esp_err_t hid_ble_send(uint8_t report_id, const uint8_t *data, uint16_t length);
 void hid_ble_forget(void);
+
+/* Deck data channel (hid_deck.c), driven by hid_ble.c. */
+esp_err_t hid_deck_register(void);
+void hid_deck_subscribe(uint16_t conn, uint16_t attr, bool notify);
+void hid_deck_disconnected(void);
 
 esp_err_t hid_usb_start(const char *name);
 esp_err_t hid_usb_send(uint8_t report_id, const uint8_t *data, uint16_t length);
