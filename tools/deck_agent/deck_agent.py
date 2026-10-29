@@ -295,7 +295,9 @@ SELFTEST = [
     ("chrome", "Gmail - Google Chrome", "Browser"),
     ("msedge", "Lofi beats - YouTube - Microsoft Edge", "YouTube"),
     ("explorer", "Documenti", "File"),
-    ("winword", "Relazione.docx - Word", "Office"),
+    ("winword", "Relazione.docx - Word", "Word"),
+    ("excel", "Budget.xlsx - Excel", "Excel"),
+    ("powerpnt", "Pitch.pptx - PowerPoint", "PowerPoint"),
     ("windowsterminal", "PowerShell", "Terminale"),
     ("spotify", "Spotify Premium", "Spotify"),
     ("ms-teams", "Riunione | Microsoft Teams", "Teams"),
@@ -305,10 +307,14 @@ SELFTEST = [
 ]
 
 
+FIXED: tuple[str, str] | None = None  # --fixed: pretend this app is focused (tests, screenshots)
+
+
 async def session(name: str, selftest: bool = False) -> bool:
     loop = asyncio.get_running_loop()
     disconnected = asyncio.Event()
     profiles: asyncio.Queue[str] = asyncio.Queue()
+    done: dict = {}
     link = None
 
     def received(data: bytes) -> None:
@@ -321,8 +327,11 @@ async def session(name: str, selftest: bool = False) -> bool:
         elif message.get("t") == "prof":
             profiles.put_nowait(message.get("n", ""))
         elif message.get("t") == "act" and message.get("a") in ACTIONS:
+            if message.get("id") is not None and message.get("id") == done.get("id"):
+                return  # the same tap delivered again
+            done["id"] = message.get("id")
             action = ACTIONS[message["a"]]
-            print(f"Azione: {message['a']}")
+            print(f"Azione: {message['a']} ({message.get('id')})")
 
             async def run() -> None:
                 try:
@@ -360,13 +369,14 @@ async def session(name: str, selftest: bool = False) -> bool:
         last_ctx = last_media = last_sys = None
         tick = 0
         while not disconnected.is_set():
-            app, title = foreground()
+            app, title = FIXED or foreground()
             ctx = {"t": "ctx", "app": clean(app, 23), "title": clean(title, 63)}
             if ctx != last_ctx and app:
                 await send(ctx)
                 last_ctx = ctx
                 print(f"Contesto: {app} | {title[:50]}")
             if tick % 4 == 0:
+                await send({"t": "ping"})  # the watch shows the touchbar only while it hears the agent
                 media = await now_playing()
                 if media is not None:
                     media = {"t": "media", **media, "title": clean(media["title"], 63), "artist": clean(media["artist"], 47)}
@@ -385,6 +395,10 @@ async def session(name: str, selftest: bool = False) -> bool:
             except asyncio.TimeoutError:
                 pass
     finally:
+        try:
+            await send({"t": "bye"})
+        except Exception:  # link already gone
+            pass
         await link.close()
     print("Scollegato")
     return True
@@ -394,7 +408,10 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", default="Remote", help="part of the watch's Bluetooth name")
     parser.add_argument("--selftest", action="store_true", help="check the touchbar chosen for known apps, then exit")
+    parser.add_argument("--fixed", nargs=2, metavar=("APP", "TITLE"), help="report this app instead of the focused one")
     args = parser.parse_args()
+    global FIXED
+    FIXED = tuple(args.fixed) if args.fixed else None
     if sys.stdout is None:  # pythonw (Startup shortcut): log to a file instead of a console
         folder = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "DeckAgent")
         os.makedirs(folder, exist_ok=True)

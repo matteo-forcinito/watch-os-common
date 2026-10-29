@@ -187,26 +187,38 @@ supporto macOS dell'agente; quali 15 app nei profili iniziali.
 
 ## Stato implementazione (Remote 1.2.0)
 
-Verificato su AMOLED 1.8 il 29/10/2026: associazione Bluetooth con Windows 11, agente collegato,
-selftest 11/11 (il watch conferma il profilo scelto per VS Code, Chrome, YouTube, Esplora file, Word,
-Terminale, Spotify, Teams, Zoom, Discord e Blocco note).
+Verificato su AMOLED 1.8 (schermo ruotato, 448x368) il 29/10/2026 con screenshot dalla console di
+sviluppo e agente reale su Windows 11:
+
+- cambio app VS Code -> YouTube -> Teams: intestazione, colori e tasti cambiano;
+- pagine con swipe e tocco sul contatore (1/4 ... Sistema); niente testo fuori dai tasti;
+- tasto microfono: un tocco = un'azione, il PC va in muto e torna attivo, stato e avviso sul watch;
+- agente chiuso: dopo 6 s la pagina torna alla guida;
+- `deck_agent.py --selftest`: 13/13 profili confermati dal watch.
+
+Componenti:
 
 - **Firmware** `components/hid_link/hid_deck.c`: servizio GATT Deck accanto a HID, caratteristiche
-  cifrate. Con un host collegato il watch fa advertising lento non connettibile finché l'agente non si
-  iscrive (serve su Linux; su Windows l'agente apre direttamente il dispositivo associato).
+  cifrate. Windows ripristina da solo l'iscrizione alle notifiche di un host associato: il watch
+  considera attivo l'agente solo se riceve un suo messaggio (ping ogni 2 s) negli ultimi 6 s.
 - **Pagina «PC (Deck)»** `remote/main/remote_deck.c`, prima voce di Remote:
   - senza agente è una guida: Remote su USB (con «Passa a Bluetooth»), PC da associare, agente da avviare;
-  - con l'agente: app attiva con icona e colore del profilo, titolo finestra, 6 tasti del profilo,
-    brano in riproduzione, media, microfono con stato reale, Blocca, Schermo off, CPU/RAM.
-  - Profili: VS Code, Browser, YouTube (dal titolo), File, Office, Terminale, Spotify, Teams, Zoom,
-    Discord, Generale. Ctrl diventa Cmd con l'opzione macOS.
+  - con l'agente: app attiva (icona e colore del profilo), titolo finestra, tasti a pagine
+    (3x3 in orizzontale, 2x4 in verticale e sui rotondi), swipe o rotella o tocco su n/m per
+    cambiare pagina; ultime pagine sempre «Sistema»; brano o CPU/RAM; media; microfono reale.
+  - Profili (12–16 comandi): VS Code, Browser, YouTube (dal titolo), File, Word, Excel, PowerPoint,
+    LibreOffice, Terminale, Spotify, Teams, Zoom, Discord, Generale. Sistema: blocca, schermo off,
+    microfono, task manager, screenshot, desktop, esplora file, impostazioni, appunti, proietta,
+    affianca, massimizza, riduci, desktop virtuali. Ctrl diventa Cmd con l'opzione macOS.
 - **Agente** `tools/deck_agent/`:
-  - Windows: `powershell -ExecutionPolicy Bypass -File install_windows.ps1` installa le dipendenze e
-    l'avvio automatico senza finestra (log in `%LOCALAPPDATA%\DeckAgent\agent.log`); `-Remove` lo toglie.
-  - Manuale: `pip install -r requirements.txt` e `python deck_agent.py`; `--selftest` verifica i profili.
+  - Windows: `powershell -ExecutionPolicy Bypass -File install_windows.ps1` installa dipendenze e
+    avvio automatico senza finestra (log `%LOCALAPPDATA%\DeckAgent\agent.log`); `-Remove` lo toglie.
+  - Manuale: `pip install -r requirements.txt`, `python deck_agent.py`; `--selftest`; `--fixed APP TITOLO`
+    per prove e screenshot.
   - Linux: bleak + xdotool, playerctl, pactl, loginctl (X11; Wayland da fare).
-  - Una sola istanza; riconnessione automatica.
+- **Installazione su USB** `remote/tools/install_usb.py PORT MAC IMAGE`: legge entrambi gli slot e
+  scrive Remote solo in quello che NON contiene Watch OS (dopo un OTA il sistema può stare in ota_1).
 
-Limiti noti: canale dati solo Bluetooth (con USB i tasti funzionano ma senza contesto); azioni
-Blocca/Schermo/Microfono provate lato PC, non ancora con un tocco sul watch in questo collaudo;
-le altre board sono compilate ma provate solo su AMOLED 1.8.
+Limiti noti: canale dati solo Bluetooth (con USB i tasti funzionano, senza contesto); layout
+verticale e rotondo compilato ma non ancora fotografato su un dispositivo; pacchetti delle altre
+board da generare con `tools/build_remote.ps1`.
