@@ -177,6 +177,11 @@ class Tray:
 
     def quit(self) -> None:
         self.icon.stop()
+        if self.loop is not None:  # give the watches' Deck service back to Windows first
+            try:
+                asyncio.run_coroutine_threadsafe(deck_agent.shutdown(), self.loop).result(timeout=4)
+            except Exception:
+                pass
         os._exit(0)  # the agent loop and radio threads end with the process
 
     def run(self) -> None:

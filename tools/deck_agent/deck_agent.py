@@ -351,7 +351,21 @@ class WinLink:
                 raise OSError(f"{name} non risponde")
 
     async def close(self) -> None:
-        for _, device, _, _, _ in self.watches.values():
+        """Hand the Deck service back to Windows: a session left open keeps it busy for every app."""
+        from winrt.windows.devices.bluetooth.genericattributeprofile import (
+            GattClientCharacteristicConfigurationDescriptorValue as Cccd,
+        )
+
+        for _, device, rx, tx, _ in self.watches.values():
+            try:
+                await asyncio.wait_for(
+                    tx.write_client_characteristic_configuration_descriptor_with_result_async(Cccd.NONE), 2)
+            except Exception:  # the watch may be gone already
+                pass
+            try:
+                tx.service.close()
+            except Exception:
+                pass
             device.close()
         self.watches.clear()
 
@@ -482,6 +496,13 @@ SWITCH: str | None = None  # --watch-transport: ask the watch to move to usb/ble
 # Shared with the tray (deck_tray.py): what the agent is doing, and commands for the watch.
 STATUS = {"connected": False, "device": "", "via": "", "app": ""}
 COMMANDS: "asyncio.Queue[dict] | None" = None
+LINK = None  # the open link, closed by shutdown() before the process quits
+
+
+async def shutdown() -> None:
+    """Close the link cleanly: Windows keeps a killed agent's GATT session busy."""
+    if LINK is not None:
+        await LINK.close()
 
 
 async def open_link(name: str, loop, received, lost):
@@ -544,7 +565,9 @@ async def session(name: str, selftest: bool = False) -> bool:
     async def send(message: dict) -> None:
         await link.send(encode(message))
 
+    global LINK
     link, found, via = await open_link(name, loop, received, disconnected.set)
+    LINK = link
     if link is None:
         return False
     print(f"Collegato a {found} via {via}")
