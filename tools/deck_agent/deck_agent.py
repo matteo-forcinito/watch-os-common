@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import os
+import platform
 import shutil
 import threading
 import subprocess
@@ -450,6 +451,7 @@ async def session(name: str, selftest: bool = False) -> bool:
         return False
     print(f"Collegato a {found} via {via}")
     STATUS.update(connected=True, device=found, via=via)
+    await send({"t": "host", "name": clean(platform.node(), 23)})  # the watch lists hosts by name
     if SWITCH:
         await send({"t": "cmd", "c": SWITCH})
         await asyncio.sleep(1.5)  # the watch answers, then restarts on the other transport

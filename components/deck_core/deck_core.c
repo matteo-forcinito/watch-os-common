@@ -92,6 +92,13 @@ static void receive(const char *json, size_t length)
             s_command(json);
         return;
     }
+    if (strcmp(type, "host") == 0)
+    {
+        char name[24];
+        deck_json_text(json, "name", name, sizeof(name));
+        hid_link_name_host(name); /* shown in the host list of the watch */
+        return;
+    }
 
     taskENTER_CRITICAL(&s_lock);
     next = s_state;

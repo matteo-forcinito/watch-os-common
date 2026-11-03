@@ -34,6 +34,12 @@ esp_err_t hid_ble_start(const char *name);
 void hid_ble_stop(void);
 esp_err_t hid_ble_send(uint8_t report_id, const uint8_t *data, uint16_t length);
 void hid_ble_forget(void);
+int hid_ble_hosts(hid_link_host_t *hosts, int max);
+void hid_ble_choose_host(const hid_link_host_t *host);
+void hid_ble_pair_host(bool open);
+bool hid_ble_pairing(void);
+void hid_ble_forget_host(const hid_link_host_t *host);
+void hid_ble_name_host(const char *name);
 
 /* Deck data channel (hid_deck.c), driven by hid_ble.c. */
 esp_err_t hid_deck_register(void);

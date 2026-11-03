@@ -125,6 +125,26 @@ bool hid_link_click(uint8_t buttons, int count);
 void hid_link_forget_hosts(void);
 
 /*
+ * Paired Bluetooth hosts. With one chosen, the watch connects only to it and
+ * turns the others away; choosing another while connected switches at once.
+ * Names come from the Deck agent (hid_link_name_host), else "Computer XXXX".
+ */
+#define HID_LINK_HOSTS_MAX 8
+typedef struct
+{
+    uint8_t id[7]; /* address type + address, opaque */
+    char name[24];
+    bool connected;
+    bool chosen;
+} hid_link_host_t;
+int hid_link_hosts(hid_link_host_t *hosts, int max); /* 0 when not on Bluetooth */
+void hid_link_choose_host(const hid_link_host_t *host); /* NULL: any paired host */
+void hid_link_pair_host(bool open); /* open: the next new host pairs and is chosen */
+bool hid_link_pairing(void);
+void hid_link_forget_host(const hid_link_host_t *host);
+void hid_link_name_host(const char *name); /* the connected host's name */
+
+/*
  * Remote Hub hooks. A router receives every report the "hid_tx" task would send
  * (on a hub: merged with the satellites; on a satellite: sent by radio).
  * hid_link_transport_send() writes one report directly to Bluetooth / USB.

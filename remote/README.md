@@ -21,6 +21,14 @@ Associare **Watcher Remote**, **AMOLED Remote**, **Round Remote** oppure **Knob 
 nelle impostazioni Bluetooth del computer. Rimuovere e rifare una precedente associazione
 dopo questo aggiornamento: il profilo HID ora comprende mouse e gamepad.
 
+**Più computer.** Remote ricorda fino a 3 dispositivi associati. In Remote > Computer si
+sceglie quello da usare: Remote si collega solo a quello e, se ne era collegato un altro, lo
+lascia subito (cambio a caldo, senza toccare i PC). «Qualsiasi» torna al comportamento
+precedente (vince il primo che si collega). «Aggiungi computer» accetta un solo computer nuovo,
+che diventa quello scelto; tenere premuto un computer per dimenticarlo. I nomi arrivano
+dall'agente Watch Deck sul PC; senza agente compare «Computer» con le ultime cifre
+dell'indirizzo.
+
 Sui tre modelli Waveshare è disponibile anche USB HID: scegliere USB in Remote e collegare
 il cavo alla porta USB nativa. Il Watcher usa Bluetooth; la sua USB-C è una porta seriale.
 Il cambio collegamento riavvia l'app. La console USB ritorna uscendo nel sistema principale.

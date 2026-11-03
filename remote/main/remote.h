@@ -57,6 +57,8 @@ const char *remote_status_text(void);
 extern const app_t keyboard_app;
 extern const app_t remote_pc_keyboard_app;
 extern const app_t remote_options_app;
+extern const app_t remote_hosts_app; /* paired computers: choose, add, forget */
+const char *remote_host_text(void);
 extern const app_t remote_mouse_app;
 extern const app_t remote_media_app;
 extern const app_t remote_presenter_app;

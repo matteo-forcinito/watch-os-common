@@ -18,7 +18,10 @@
 #include "hardware/board.h"
 #include "ui/ui.h"
 
+#include "hid_link/hid_hub.h"
+
 #include <stdint.h>
+#include <string.h>
 
 typedef struct
 {
@@ -43,12 +46,21 @@ static const remote_mode_t s_modes[] = {
 };
 
 static lv_obj_t *s_status;
+static lv_obj_t *s_host; /* "Computer" row, Bluetooth only */
 static uint32_t s_seen_version = UINT32_MAX;
 static hid_link_state_t s_seen_state = HID_LINK_OFF;
 
 static void refresh_status(lv_timer_t *timer)
 {
-    (void)timer;
+    static uint8_t ticks;
+
+    /* Host names arrive from the PC agent without a state change: look again now and then. */
+    if (s_host != NULL && (timer == NULL || ++ticks % 4 == 0))
+    {
+        const char *name = remote_host_text();
+        if (strcmp(lv_label_get_text(ui_row_value(s_host)), name) != 0)
+            lv_label_set_text(ui_row_value(s_host), name);
+    }
 
     if (hid_link_version() == s_seen_version && hid_link_state() == s_seen_state)
     {
@@ -107,6 +119,12 @@ static void open_hub(lv_event_t *e)
     app_open_app(&remote_hub_app, NULL);
 }
 
+static void open_hosts(lv_event_t *e)
+{
+    (void)e;
+    app_open_app(&remote_hosts_app, NULL);
+}
+
 static void open_options(lv_event_t *e)
 {
     (void)e;
@@ -148,6 +166,9 @@ void remote_home_create(lv_obj_t *screen)
     {
         ui_text(page, remote_device_name(), true);
     }
+
+    if (remote_settings()->transport == HID_LINK_BLE && hid_hub_role() != HID_HUB_SATELLITE)
+        s_host = ui_row(page, LV_SYMBOL_BLUETOOTH, UI_COLOR_BLUE, "Computer", remote_host_text(), open_hosts, NULL);
 
     ui_row(page, LV_SYMBOL_SHUFFLE, UI_COLOR_PURPLE, "Hub multi-orologio", remote_hub_role_text(), open_hub, NULL);
     ui_row(page, LV_SYMBOL_SETTINGS, UI_COLOR_GRAY, "Opzioni", NULL, open_options, NULL);

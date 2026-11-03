@@ -640,3 +640,37 @@ void hid_link_forget_hosts(void)
 {
     hid_ble_forget();
 }
+
+int hid_link_hosts(hid_link_host_t *hosts, int max)
+{
+    return s_transport == HID_LINK_BLE ? hid_ble_hosts(hosts, max) : 0;
+}
+
+void hid_link_choose_host(const hid_link_host_t *host)
+{
+    if (s_transport == HID_LINK_BLE)
+        hid_ble_choose_host(host);
+}
+
+void hid_link_pair_host(bool open)
+{
+    if (s_transport == HID_LINK_BLE)
+        hid_ble_pair_host(open);
+}
+
+bool hid_link_pairing(void)
+{
+    return s_transport == HID_LINK_BLE && hid_ble_pairing();
+}
+
+void hid_link_forget_host(const hid_link_host_t *host)
+{
+    if (s_transport == HID_LINK_BLE)
+        hid_ble_forget_host(host);
+}
+
+void hid_link_name_host(const char *name)
+{
+    if (s_transport == HID_LINK_BLE)
+        hid_ble_name_host(name);
+}
