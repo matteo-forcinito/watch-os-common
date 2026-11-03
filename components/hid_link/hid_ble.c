@@ -55,6 +55,7 @@ static bool s_accepted;      /* the connected host passed the check: reports may
 static bool s_repaired;      /* the connected host paired again during this connection */
 static char s_peer_name[24]; /* from the Deck agent, saved off the host task */
 static esp_timer_handle_t s_name_timer;
+static uint8_t s_battery = 100; /* Battery Service level */
 
 static esp_hid_raw_report_map_t s_maps[1];
 
@@ -441,7 +442,7 @@ esp_err_t hid_ble_start(const char *name)
     hid_deck_register();
     ble_svc_gap_device_name_set(s_name);
     ble_svc_gap_device_appearance_set(ESP_HID_APPEARANCE_KEYBOARD);
-    esp_hidd_dev_battery_set(s_dev, 100);
+    esp_hidd_dev_battery_set(s_dev, s_battery);
     ble_store_config_init();
 
     s_running = true;
@@ -610,4 +611,13 @@ void hid_ble_name_host(const char *name)
     snprintf(s_peer_name, sizeof(s_peer_name), "%s", name);
     esp_timer_stop(s_name_timer);
     esp_timer_start_once(s_name_timer, 1000 * 1000);
+}
+
+void hid_ble_battery(int percent)
+{
+    if (percent == s_battery)
+        return;
+    s_battery = (uint8_t)percent;
+    if (s_running && s_dev != NULL)
+        esp_hidd_dev_battery_set(s_dev, s_battery);
 }

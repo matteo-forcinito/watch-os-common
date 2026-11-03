@@ -133,10 +133,23 @@ static void open_options(lv_event_t *e)
     app_open_app(&remote_options_app, NULL);
 }
 
+static void leave_confirmed(bool confirmed, void *user_data)
+{
+    (void)user_data;
+    if (confirmed)
+        extapp_return_to_launcher();
+}
+
+void remote_confirm_exit(void)
+{
+    ui_confirm("Esci da Remote", "Torni al launcher: il computer perde mouse e tastiera finché non riapri Remote.",
+               "Esci", UI_COLOR_RED, leave_confirmed, NULL);
+}
+
 static void leave(lv_event_t *e)
 {
     (void)e;
-    extapp_return_to_launcher();
+    remote_confirm_exit();
 }
 
 void remote_home_create(lv_obj_t *screen)
@@ -257,7 +270,7 @@ static void switcher_create(lv_obj_t *screen, void *arg)
     bool round = board_info()->round;
     int cols = remote_landscape() ? 4 : 3, rows = 12 / cols;
 
-    ui_key_rect_t head = ui_keyboard_band(w, h, round, round ? h * 9 / 100 : 8, 36, 8);
+    ui_key_rect_t head = ui_keyboard_band(w, h, round, round ? h * 9 / 100 : REMOTE_TOP, 36, 8);
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, "Modalità");
     lv_obj_set_style_text_font(title, UI_FONT_BODY, 0);
@@ -331,7 +344,8 @@ ui_key_rect_t remote_header_band(void)
 {
     int32_t h = remote_screen_h();
     bool round = board_info()->round;
-    return ui_keyboard_band(remote_screen_w(), h, round, round ? h * 9 / 100 : 6, 44, 8);
+    /* Square panels keep a strip on top for the battery pill. */
+    return ui_keyboard_band(remote_screen_w(), h, round, round ? h * 9 / 100 : REMOTE_TOP, 44, 8);
 }
 
 lv_obj_t *remote_switcher_button(lv_obj_t *screen)

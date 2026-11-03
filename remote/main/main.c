@@ -27,7 +27,7 @@ static const char *TAG = "remote_app";
 
 static bool home_back(void)
 {
-    extapp_return_to_launcher();
+    remote_confirm_exit(); /* leaving drops the computer link: ask first */
     return true;
 }
 
@@ -67,6 +67,7 @@ void app_main(void)
     lv_obj_set_style_bg_opa(home, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(home, lv_color_white(), 0);
     remote_home_create(home);
+    remote_battery_start();
 
     app_manager_set_home(home, home_back);
     lv_port_unlock();

@@ -101,6 +101,10 @@ bool hid_link_can_type(uint32_t codepoint);
 
 /* Press and release a key (with modifiers). */
 bool hid_link_key(uint8_t modifiers, uint8_t keycode);
+/* Keyboard state left as is (no release): hold Alt across several Tabs. hid_link_keyboard(0, 0) lets go. */
+bool hid_link_keyboard(uint8_t modifiers, uint8_t keycode);
+/* Battery level the hosts read (Bluetooth Battery Service), 0..100. */
+void hid_link_set_battery(int percent);
 bool hid_link_character(uint32_t codepoint, uint8_t extra_modifiers);
 
 /* `count` backspaces. */

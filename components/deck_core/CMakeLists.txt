@@ -3,5 +3,5 @@ idf_component_register(
     SRCS "deck_core.c"
     INCLUDE_DIRS "include"
     REQUIRES hid_link
-    PRIV_REQUIRES ui lvgl freertos
+    PRIV_REQUIRES ui lvgl freertos esp_timer
 )

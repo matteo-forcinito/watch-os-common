@@ -1,6 +1,7 @@
 #include "remote.h"
 #include "hid_link/hid_hub.h"
 
+#include "core/state.h"
 #include "esp_log.h"
 #include "hardware/board.h"
 #include "nvs.h"
@@ -185,4 +186,65 @@ const char *remote_status_text(void)
     }
 
     return state == HID_LINK_CONNECTED ? (hub ? "Hub USB: connesso" : "USB: connesso") : "USB: collega il cavo";
+}
+
+/* ---- battery ----
+ *
+ * A small pill at the top centre, above every screen of the app (LVGL's top
+ * layer, not clickable: touches go through). The same level goes to the
+ * computers through the Bluetooth Battery Service. Hidden without a battery. */
+
+static lv_obj_t *s_battery;
+
+static void battery_tick(lv_timer_t *timer)
+{
+    (void)timer;
+    static int shown = -2, shown_charging = -1;
+    int percent = (int)state_get(STATE_BATTERY);
+    int charging = state_get(STATE_CHARGING) != 0;
+    /* The text keyboard of square panels writes in the top strip. */
+    bool covered = !board_info()->round && app_current() == &keyboard_app;
+    if (covered != lv_obj_has_flag(s_battery, LV_OBJ_FLAG_HIDDEN) && percent >= 0)
+        shown = -2;
+    if (percent == shown && charging == shown_charging)
+        return;
+    shown = percent;
+    shown_charging = charging;
+    if (percent >= 0)
+        hid_link_set_battery(percent);
+    if (percent < 0 || covered)
+    {
+        lv_obj_add_flag(s_battery, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_t *label = lv_obj_get_child(s_battery, 0);
+    lv_label_set_text_fmt(label, "%s %d%%", charging ? LV_SYMBOL_CHARGE : ui_battery_symbol(percent), percent);
+    lv_obj_set_style_text_color(label,
+                                ui_color(charging        ? UI_COLOR_GREEN
+                                         : percent <= 15 ? UI_COLOR_RED
+                                                         : UI_COLOR_TEXT_DIM),
+                                0);
+    lv_obj_remove_flag(s_battery, LV_OBJ_FLAG_HIDDEN);
+}
+
+void remote_battery_start(void)
+{
+    int32_t h = remote_screen_h();
+    s_battery = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_battery);
+    lv_obj_set_size(s_battery, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(s_battery, 8, 0);
+    lv_obj_set_style_radius(s_battery, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_battery, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_battery, LV_OPA_70, 0);
+    lv_obj_remove_flag(s_battery, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_battery, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *label = lv_label_create(s_battery);
+    lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+    lv_label_set_text(label, "");
+    /* Above the header band: the round glass is wide enough there, square panels keep a strip. */
+    lv_obj_align(s_battery, LV_ALIGN_TOP_MID, 0, board_info()->round ? h * 3 / 100 : 1);
+    lv_obj_add_flag(s_battery, LV_OBJ_FLAG_HIDDEN);
+    battery_tick(NULL);
+    lv_timer_create(battery_tick, 500, NULL); /* cheap: redraws only on change */
 }

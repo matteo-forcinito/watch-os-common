@@ -50,6 +50,11 @@ void remote_dictionary_select(remote_dict_t dict);
 
 /* Start the saved transport (at boot and after a change). */
 void remote_connect(void);
+/* Battery pill over every screen, level also sent to the computers. LVGL lock held. */
+void remote_battery_start(void);
+/* Ask, then return to the launcher. */
+void remote_confirm_exit(void);
+#define REMOTE_TOP 22 /* first row of the header on square panels, below the battery pill */
 
 /* "Bluetooth: in attesa" ... for headers. */
 const char *remote_status_text(void);

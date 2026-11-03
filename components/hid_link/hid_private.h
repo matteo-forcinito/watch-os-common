@@ -40,6 +40,7 @@ void hid_ble_pair_host(bool open);
 bool hid_ble_pairing(void);
 void hid_ble_forget_host(const hid_link_host_t *host);
 void hid_ble_name_host(const char *name);
+void hid_ble_battery(int percent);
 
 /* Deck data channel (hid_deck.c), driven by hid_ble.c. */
 esp_err_t hid_deck_register(void);

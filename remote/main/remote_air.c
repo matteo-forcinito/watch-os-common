@@ -28,6 +28,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "nvs.h"
+
 #include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -83,6 +85,30 @@ static float dot3(const float a[3], const float b[3])
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
+/* Gyro bias learned once and kept ("remote" namespace): later starts are ready at once. */
+static bool bias_load(float bias[3])
+{
+    nvs_handle_t nvs;
+    size_t size = 3 * sizeof(float);
+    if (nvs_open("remote", NVS_READONLY, &nvs) != ESP_OK)
+        return false;
+    bool ok = nvs_get_blob(nvs, "air_bias", bias, &size) == ESP_OK && size == 3 * sizeof(float);
+    nvs_close(nvs);
+    for (int i = 0; ok && i < 3; i++)
+        ok = isfinite(bias[i]) && fabsf(bias[i]) < 30.0f;
+    return ok;
+}
+
+static void bias_save(const float bias[3])
+{
+    nvs_handle_t nvs;
+    if (nvs_open("remote", NVS_READWRITE, &nvs) != ESP_OK)
+        return;
+    nvs_set_blob(nvs, "air_bias", bias, 3 * sizeof(float));
+    nvs_commit(nvs);
+    nvs_close(nvs);
+}
+
 static float dead_zone(float rate, float zone)
 {
     return fabsf(rate) < zone ? 0 : rate - copysignf(zone, rate);
@@ -118,10 +144,10 @@ static void air_worker(void *arg)
                 continue;
             }
             started = true;
-            samples = 0;
             fx = fy = 0;
             last = esp_timer_get_time();
-            atomic_store(&s_calibrated, false);
+            samples = bias_load(bias) ? CALIBRATION_SAMPLES : 0;
+            atomic_store(&s_calibrated, samples == CALIBRATION_SAMPLES);
         }
         if (atomic_exchange(&s_recalibrate, false))
         {
@@ -154,7 +180,8 @@ static void air_worker(void *arg)
             float k = samples < CALIBRATION_SAMPLES ? 1.0f / (samples + 1) : 0.005f;
             for (int i = 0; i < 3; i++)
                 bias[i] += (sample.angular_dps[i] - bias[i]) * k;
-            samples++;
+            if (++samples == CALIBRATION_SAMPLES)
+                bias_save(bias); /* first calibration, or one asked from the options */
         }
         if (samples < CALIBRATION_SAMPLES)
         {

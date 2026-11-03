@@ -64,12 +64,7 @@ if WINDOWS:
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-    def foreground() -> tuple[str, str]:
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
-            return "", ""
-        title = ctypes.create_unicode_buffer(256)
-        user32.GetWindowTextW(hwnd, title, 256)
+    def _app_of(hwnd) -> str:
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         app = ""
@@ -80,7 +75,59 @@ if WINDOWS:
             if kernel32.QueryFullProcessImageNameW(process, 0, path, ctypes.byref(size)):
                 app = os.path.splitext(os.path.basename(path.value))[0].lower()
             kernel32.CloseHandle(process)
-        return app, title.value
+        return app
+
+    def foreground() -> tuple[str, str]:
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return "", ""
+        title = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title, 256)
+        return _app_of(hwnd), title.value
+
+    dwmapi = ctypes.WinDLL("dwmapi")
+    _windows: list = []  # handles of the last list sent, for "focus:N"
+
+    def windows(_: str = "") -> list:
+        """Top-level windows as the taskbar shows them (Alt+Tab order)."""
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def visit(hwnd, _param):
+            if not user32.IsWindowVisible(hwnd) or user32.GetWindow(hwnd, 4):  # GW_OWNER
+                return True
+            if user32.GetWindowLongW(hwnd, -20) & 0x80:  # WS_EX_TOOLWINDOW
+                return True
+            cloaked = wintypes.DWORD()
+            dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)  # DWMWA_CLOAKED
+            length = user32.GetWindowTextLengthW(hwnd)
+            if cloaked.value or length == 0:
+                return True
+            title = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, title, length + 1)
+            found.append((hwnd, _app_of(hwnd), title.value))
+            return len(found) < 12
+
+        user32.EnumWindows(visit, 0)
+        _windows[:] = [hwnd for hwnd, _, _ in found]
+        return [(app, title) for _, app, title in found]
+
+    def focus(index: str = "") -> str:
+        hwnd = _windows[int(index)]
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        # Windows lets a background process take the focus only through the foreground thread.
+        current = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+        mine = kernel32.GetCurrentThreadId()
+        user32.AttachThreadInput(mine, current, True)
+        user32.SetForegroundWindow(hwnd)
+        user32.BringWindowToTop(hwnd)
+        user32.AttachThreadInput(mine, current, False)
+        return "Finestra in primo piano"
+
+    def sleep(_: str = "") -> str:
+        ctypes.WinDLL("powrprof").SetSuspendState(False, False, False)
+        return "PC in sospensione"
 
     async def now_playing() -> dict | None:
         try:
@@ -186,6 +233,25 @@ else:
         _run("xset", "dpms", "force", "off")
         return "Schermo spento"
 
+    _windows: list = []
+
+    def windows(_: str = "") -> list:
+        found = []
+        for line in _run("wmctrl", "-lx").splitlines():
+            parts = line.split(None, 4)
+            if len(parts) == 5 and parts[1] != "-1":  # -1: sticky panels and docks
+                found.append((parts[0], parts[2].split(".")[-1].lower(), parts[4]))
+        _windows[:] = [wid for wid, _, _ in found[:12]]
+        return [(app, title) for _, app, title in found[:12]]
+
+    def focus(index: str = "") -> str:
+        _run("wmctrl", "-ia", _windows[int(index)])
+        return "Finestra in primo piano"
+
+    def sleep(_: str = "") -> str:
+        _run("systemctl", "suspend")
+        return "PC in sospensione"
+
     def taskmgr() -> str:
         for tool in ("gnome-system-monitor", "plasma-systemmonitor", "ksysguard"):
             if shutil.which(tool):
@@ -194,7 +260,8 @@ else:
         return "Nessun monitor di sistema"
 
 
-ACTIONS = {"lock": lock, "display_off": display_off, "mic": mic_toggle, "taskmgr": taskmgr}
+ACTIONS = {"lock": lock, "display_off": display_off, "mic": mic_toggle, "taskmgr": taskmgr,
+           "windows": windows, "focus": focus, "sleep": sleep}  # "name:arg" passes arg
 
 
 # ---------------------------------------------------------------- link
@@ -426,20 +493,27 @@ async def session(name: str, selftest: bool = False) -> bool:
             STATUS["app"] = message.get("n", "")
         elif message.get("t") == "res":
             print(f"Watch: {message.get('msg', '')}")
-        elif message.get("t") == "act" and message.get("a") in ACTIONS:
+        elif message.get("t") == "act" and str(message.get("a", "")).partition(":")[0] in ACTIONS:
             if message.get("id") is not None and message.get("id") == done.get("id"):
                 return  # the same tap delivered again
             done["id"] = message.get("id")
-            action = ACTIONS[message["a"]]
+            name, _, arg = message["a"].partition(":")
             print(f"Azione: {message['a']} ({message.get('id')})")
 
             async def run() -> None:
                 try:
-                    text = await asyncio.to_thread(action)
+                    result = await asyncio.to_thread(ACTIONS[name], *([arg] if arg else []))
                     ok = 1
                 except Exception as error:  # report, never crash the agent
-                    text, ok = f"Errore: {error}", 0
-                await send({"t": "res", "ok": ok, "msg": clean(text, 46)})
+                    result, ok = f"Errore: {error}", 0
+                if isinstance(result, list):  # window list: one message each, then the end mark
+                    for i, (app, title) in enumerate(result):
+                        # the watch keeps 15 and 47 bytes: cut on UTF-8 boundaries
+                        fit = lambda text, size: clean(text, size).encode()[:size].decode(errors="ignore")
+                        await send({"t": "win", "i": i, "a": fit(app, 15), "n": fit(title, 47)})
+                    await send({"t": "win", "i": -1})
+                    return
+                await send({"t": "res", "ok": ok, "msg": clean(result, 46)})
 
             loop.create_task(run())
 

@@ -21,6 +21,8 @@ Associare **Watcher Remote**, **AMOLED Remote**, **Round Remote** oppure **Knob 
 nelle impostazioni Bluetooth del computer. Rimuovere e rifare una precedente associazione
 dopo questo aggiornamento: il profilo HID ora comprende mouse e gamepad.
 
+**Batteria.** In alto su ogni schermata c'è la batteria dell'orologio; via Bluetooth il livello arriva anche al computer (servizio Batteria). Uscire da Remote chiede conferma.
+
 **Più computer.** Remote ricorda fino a 3 dispositivi associati. In Remote > Computer si
 sceglie quello da usare: Remote si collega solo a quello e, se ne era collegato un altro, lo
 lascia subito (cambio a caldo, senza toccare i PC). «Qualsiasi» torna al comportamento
@@ -41,11 +43,11 @@ intercettare le scorciatoie; i comandi riunione sono predisposti per le app desk
 
 | Modalità | Comandi |
 |---|---|
-| PC (Deck) | Touchbar che cambia con l'app in primo piano (VS Code, browser, file, Office, terminale, musica, chiamate), media, microfono, blocco PC, schermo spento, CPU/RAM e brano. Contesto e stato richiedono l'agente `tools/deck_agent` sul PC (Bluetooth o cavo USB; su Windows `install_windows.ps1`). Senza agente la pagina guida al collegamento. Vedi `docs/DECK.md` |
+| PC (Deck) | Touchbar che cambia con l'app in primo piano (VS Code, browser, file, Office, terminale, musica, chiamate), media, microfono, blocco PC, schermo spento, CPU/RAM e brano. Nelle pagine Sistema: «Cambia app» (Alt+Tab con Alt tenuto finché tocchi di seguito), «App aperte» (elenco delle finestre del PC, tocco = in primo piano), vista attività, desktop virtuali, Game bar, sospensione. Contesto e stato richiedono l'agente `tools/deck_agent` sul PC (Bluetooth o cavo USB; su Windows `install_windows.ps1`). Senza agente la pagina guida al collegamento. Vedi `docs/DECK.md` |
 | Tastiera swipe | Lettere, numeri, simboli, accenti, maiuscole, suggerimenti IT/EN, spazio, cancellazione, Invio |
 | Tastiera PC | QWERTY, numeri/simboli, Ctrl, Alt, AltGr, Shift, Win/Cmd, Tab, Esc, Invio e spazio; pagina Fn con F1–F12, frecce, Home/End, Ins/Del, PgUp/PgDn, Caps, Print, Scroll, Pause e Menu |
 | Mouse | Tutto lo schermo è il touchpad, senza pulsanti: tocco = clic, due tocchi = doppio clic, tieni premuto = destro, tocca e poi trascina = trascinamento. Lungo i bordi: destro scorre in verticale, inferiore in orizzontale, sinistro regola il volume, superiore la luminosità (portatili). Un bordo agisce solo se il dito parte lì e si muove lungo il bordo; sui rotondi conta la fascia esterna. ≡ in alto: clic centrale, avanti/indietro |
-| Air mouse | Il polso muove il puntatore mentre il dito resta sullo schermo (o sempre, con «Sempre attivo»). Tocco = clic, dito e polso fermi 0,6 s = destro, con «Sempre attivo» dito + polso = trascinamento. Bordi come nel mouse. ≡ in alto: opzioni e ricalibrazione. Solo sui modelli con giroscopio |
+| Air mouse | Il polso muove il puntatore mentre il dito resta sullo schermo (o sempre, con «Sempre attivo»). Tocco = clic, dito e polso fermi 0,6 s = destro, con «Sempre attivo» dito + polso = trascinamento. Bordi come nel mouse. La calibrazione si fa al primo avvio e resta salvata; ≡ in alto: opzioni e ricalibrazione. Solo sui modelli con giroscopio |
 | Media | Play/pausa, precedente/successivo, volume con ripetizione, mute, stop ed espulsione se supportata dal computer |
 | Presentazioni | Avvio PowerPoint, avvio dalla slide corrente, precedente/successiva, schermo nero/bianco, prima slide e termine |
 | Riunioni | Teams/Zoom: microfono, video, mano, condivisione, toolbar/chat e uscita |

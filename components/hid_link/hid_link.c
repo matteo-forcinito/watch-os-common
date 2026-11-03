@@ -587,6 +587,15 @@ bool hid_link_key(uint8_t modifiers, uint8_t keycode)
     uint8_t data[8] = {modifiers, 0, keycode};
     return push(HID_REPORT_KEYBOARD, data, 8, true);
 }
+bool hid_link_keyboard(uint8_t modifiers, uint8_t keycode)
+{
+    uint8_t data[8] = {modifiers, 0, keycode};
+    return push(HID_REPORT_KEYBOARD, data, 8, false);
+}
+void hid_link_set_battery(int percent)
+{
+    hid_ble_battery(percent < 0 ? 0 : percent > 100 ? 100 : percent);
+}
 bool hid_link_media(uint16_t usage)
 {
     uint8_t data[2] = {(uint8_t)usage, (uint8_t)(usage >> 8)};

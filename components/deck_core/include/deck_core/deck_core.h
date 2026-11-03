@@ -54,6 +54,22 @@ const char *deck_profile_name(const char *app, const char *title);
 const deck_key_t *deck_system_keys(int *count);
 
 bool deck_send_key(const deck_key_t *key, bool mac);
+/*
+ * Whatever a key does: a shortcut, an agent action, or a local one ("@switch":
+ * Alt+Tab with Alt held while taps follow, Cmd+Tab on macOS; "@windows": the
+ * task view, for devices without a window list page). False: nothing sent.
+ */
+bool deck_run_key(const deck_key_t *key, bool mac);
+
+/* Windows open on the PC, sent by the agent after the "windows" action. */
+#define DECK_WINDOWS_MAX 12
+typedef struct
+{
+    char app[16];
+    char title[48];
+} deck_window_t;
+/* Copies the list; returns its size. `version` grows with every new list. */
+int deck_windows(deck_window_t *out, int max, uint32_t *version);
 bool deck_send_action(const char *action); /* false: the agent is not listening */
 
 /* Flat JSON readers for the agent's messages. */

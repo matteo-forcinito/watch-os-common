@@ -17,6 +17,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +27,9 @@ static void (*s_command)(const char *json);
 
 static deck_state_t s_state = {.cpu = -1, .ram = -1, .mic = -1};
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+static deck_window_t s_windows[DECK_WINDOWS_MAX]; /* under s_lock */
+static int s_window_count;
+static uint32_t s_windows_version;
 /* Windows restores a bonded host's notification subscription by itself, so a
  * subscription alone does not mean the agent runs: it must also have spoken
  * (any message, or its 2 s ping) within the last few seconds. */
@@ -90,6 +94,23 @@ static void receive(const char *json, size_t length)
     {
         if (s_command != NULL)
             s_command(json);
+        return;
+    }
+    if (strcmp(type, "win") == 0)
+    {
+        /* One message per window, then i = -1: the list is complete. */
+        int i = deck_json_number(json, "i", -1);
+        deck_window_t window = {0};
+        deck_json_text(json, "a", window.app, sizeof(window.app));
+        deck_json_text(json, "n", window.title, sizeof(window.title));
+        taskENTER_CRITICAL(&s_lock);
+        if (i == 0)
+            s_window_count = 0;
+        if (i >= 0 && i < DECK_WINDOWS_MAX && i == s_window_count)
+            s_windows[s_window_count++] = window;
+        if (i < 0)
+            s_windows_version++;
+        taskEXIT_CRITICAL(&s_lock);
         return;
     }
     if (strcmp(type, "host") == 0)
@@ -382,12 +403,18 @@ static const deck_key_t k_generic[] = {
     {"Ripeti", C, K_Y},        {"Seleziona tutto", C, K_A}, {"Cambia app", A, K_TAB},  {"Chiudi finestra", A, K_F4},
 };
 static const deck_key_t k_system[] = {
-    {"Blocca PC", 0, 0, "lock"},     {"Schermo off", 0, 0, "display_off"}, {"Microfono", 0, 0, "mic"},
-    {"Task manager", C | S, K_ESC},  {"Screenshot", W | S, K_S},          {"Desktop", W, K_D},
-    {"Esplora file", W, K_E},        {"Impostazioni", W, K_I},            {"Appunti", W, K_V},
-    {"Proietta", W, K_P},            {"Affianca sx", W, K_LEFT},          {"Affianca dx", W, K_RIGHT},
-    {"Massimizza", W, K_UP},         {"Riduci", W, K_DOWN},               {"Desktop succ.", W | HIDL_MOD_CTRL, K_RIGHT},
+    {"Cambia app", 0, 0, "@switch"},       {"App aperte", 0, 0, "@windows"},     {"Vista attivita", W, K_TAB},
+    {"Blocca PC", 0, 0, "lock"},           {"Schermo off", 0, 0, "display_off"}, {"Microfono", 0, 0, "mic"},
+    {"Task manager", C | S, K_ESC},        {"Screenshot", W | S, K_S},           {"Desktop", W, K_D},
+    {"Esplora file", W, K_E},              {"Impostazioni", W, K_I},             {"Appunti", W, K_V},
+    {"Cerca", W, K_S},                     {"Esegui", W, K_R},                   {"Notifiche", W, K_N},
+    {"Azioni rapide", W, K_A},             {"Dettatura", W, K_H},                {"Proietta", W, K_P},
+    {"Affianca sx", W, K_LEFT},            {"Affianca dx", W, K_RIGHT},          {"Massimizza", W, K_UP},
+    {"Riduci", W, K_DOWN},                 {"Chiudi finestra", A, K_F4},         {"Game bar", W, K_G},
+    {"Registra clip", W | A, K_G},         {"Desktop succ.", W | HIDL_MOD_CTRL, K_RIGHT},
     {"Desktop prec.", W | HIDL_MOD_CTRL, K_LEFT},
+    {"Nuovo desktop", W | HIDL_MOD_CTRL, K_D}, {"Chiudi desktop", W | HIDL_MOD_CTRL, K_F4},
+    {"Sospendi PC", 0, 0, "sleep"},
 };
 
 #define BROWSERS "chrome,msedge,firefox,brave,opera,vivaldi,chromium"
@@ -471,4 +498,52 @@ const deck_key_t *deck_system_keys(int *count)
 {
     *count = (int)(sizeof(k_system) / sizeof(k_system[0]));
     return k_system;
+}
+
+int deck_windows(deck_window_t *out, int max, uint32_t *version)
+{
+    taskENTER_CRITICAL(&s_lock);
+    int count = s_window_count < max ? s_window_count : max;
+    memcpy(out, s_windows, (size_t)count * sizeof(*out));
+    *version = s_windows_version;
+    taskEXIT_CRITICAL(&s_lock);
+    return count;
+}
+
+/* "Cambia app": Alt (Cmd) stays down while taps follow each other, as on a
+ * keyboard; it lets go once the taps stop and the chosen window comes forward. */
+#define SWITCH_HOLD_US (1200 * 1000)
+
+static esp_timer_handle_t s_switch_timer;
+
+static void switch_release(void *arg)
+{
+    (void)arg;
+    hid_link_keyboard(0, 0);
+}
+
+static bool switch_app(bool mac)
+{
+    if (s_switch_timer == NULL)
+    {
+        const esp_timer_create_args_t args = {.callback = switch_release, .name = "deck_switch"};
+        if (esp_timer_create(&args, &s_switch_timer) != ESP_OK)
+            return false;
+    }
+    uint8_t hold = mac ? HIDL_MOD_GUI : HIDL_MOD_ALT;
+    bool ok = hid_link_keyboard(hold, K_TAB) && hid_link_keyboard(hold, 0);
+    esp_timer_stop(s_switch_timer);
+    esp_timer_start_once(s_switch_timer, SWITCH_HOLD_US);
+    return ok;
+}
+
+bool deck_run_key(const deck_key_t *key, bool mac)
+{
+    if (key->action == NULL)
+        return deck_send_key(key, mac);
+    if (strcmp(key->action, "@switch") == 0)
+        return switch_app(mac);
+    if (strcmp(key->action, "@windows") == 0) /* task view / Mission Control */
+        return mac ? hid_link_key(HIDL_MOD_CTRL, K_UP) : hid_link_key(HIDL_MOD_GUI, K_TAB);
+    return deck_send_action(key->action);
 }

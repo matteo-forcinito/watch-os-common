@@ -100,6 +100,78 @@ static void send_action(const char *action)
 }
 
 
+/* ---- open windows ----
+ *
+ * "App aperte": the agent lists the PC's windows, a tap brings one forward.
+ * The switch that needs no agent is "Cambia app" (Alt held across taps). */
+
+typedef struct
+{
+    lv_obj_t *status, *list;
+    lv_timer_t *timer;
+    uint32_t version;
+    deck_window_t windows[DECK_WINDOWS_MAX];
+} windows_ui_t;
+
+static void window_clicked(lv_event_t *e)
+{
+    char action[16];
+    snprintf(action, sizeof(action), "focus:%d", (int)(intptr_t)lv_event_get_user_data(e));
+    send_action(action);
+    app_back();
+}
+
+static void windows_tick(lv_timer_t *timer)
+{
+    windows_ui_t *ui = lv_timer_get_user_data(timer);
+    uint32_t version;
+    int count = deck_windows(ui->windows, DECK_WINDOWS_MAX, &version);
+    if (version == ui->version)
+        return;
+    ui->version = version;
+    lv_obj_clean(ui->list);
+    lv_label_set_text(ui->status, count ? "Tocca la finestra da portare davanti." : "Nessuna finestra aperta.");
+    for (int i = 0; i < count; i++)
+    {
+        const deck_window_t *w = &ui->windows[i];
+        const deck_profile_t *p = deck_profile_for(w->app, w->title);
+        ui_row(ui->list, p->icon, p->color, w->title[0] ? w->title : w->app, p->name[0] ? p->name : w->app,
+               window_clicked, (void *)(intptr_t)i);
+    }
+}
+
+static void windows_deleted(lv_event_t *e)
+{
+    windows_ui_t *ui = lv_event_get_user_data(e);
+    lv_timer_delete(ui->timer);
+    free(ui);
+}
+
+static void windows_create(lv_obj_t *screen, void *arg)
+{
+    (void)arg;
+    windows_ui_t *ui = calloc(1, sizeof(*ui));
+    if (ui == NULL)
+        return;
+    lv_obj_t *page = remote_page(screen, "App aperte");
+    ui->status = ui_text(page, "Chiedo l'elenco al PC...", true);
+    ui->list = lv_obj_create(page);
+    lv_obj_remove_style_all(ui->list);
+    lv_obj_set_size(ui->list, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(ui->list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(ui->list, 8, 0);
+    deck_windows(ui->windows, 0, &ui->version); /* only a list newer than now */
+    if (!deck_send_action("windows"))
+        lv_label_set_text(ui->status, "Avvia Watch Deck sul PC per vedere le finestre.");
+    ui->timer = lv_timer_create(windows_tick, 150, ui);
+    lv_obj_add_event_cb(screen, windows_deleted, LV_EVENT_DELETE, ui);
+}
+
+static const app_t s_windows_app = {.id = "remote.deck.windows",
+                                    .name = "App aperte",
+                                    .flags = APP_FLAG_HIDDEN | APP_FLAG_KEEP_SCREEN_ON,
+                                    .create = windows_create};
+
 /* ---- page ----
  *
  *   header      back, profile icon and name, page n/m (tap for the next page)
@@ -358,12 +430,17 @@ static void key_clicked(lv_event_t *e)
     const deck_key_t *key = key_at(s_page, (int)(intptr_t)lv_event_get_user_data(e));
     if (key == NULL)
         return;
-    if (key->action != NULL)
+    if (key->action != NULL && strcmp(key->action, "@windows") == 0)
+    {
+        app_open_app(&s_windows_app, NULL);
+        return;
+    }
+    if (key->action != NULL && key->action[0] != '@')
     {
         send_action(key->action);
         return;
     }
-    remote_send_ok(deck_send_key(key, remote_settings()->host_os == 1));
+    remote_send_ok(deck_run_key(key, remote_settings()->host_os == 1));
 }
 
 static void action_clicked(lv_event_t *e)
@@ -556,7 +633,7 @@ static void deck_create(lv_obj_t *screen, void *arg)
 
     /* Vertical budget: header, title, grid, media line, footer. Round panels
      * keep everything inside the central chords. */
-    int32_t top = round ? h * 9 / 100 : 6;
+    int32_t top = round ? h * 9 / 100 : REMOTE_TOP;
     int32_t bottom = round ? h * 91 / 100 : h - 6;
     int32_t head_h = 44, title_h = lv_font_get_line_height(UI_FONT_SMALL) + 4;
     int32_t foot_h = round ? 50 : 52, media_h = lv_font_get_line_height(UI_FONT_SMALL) + 4;
