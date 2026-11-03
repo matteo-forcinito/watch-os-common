@@ -17,6 +17,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 
 #include <stdio.h>
@@ -27,9 +28,14 @@ static void (*s_command)(const char *json);
 
 static deck_state_t s_state = {.cpu = -1, .ram = -1, .mic = -1};
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
-static deck_window_t s_windows[DECK_WINDOWS_MAX]; /* under s_lock */
-static int s_window_count;
-static uint32_t s_windows_version;
+/* Agent lists (deck_list_t), in PSRAM: internal RAM is short with Bluetooth on. Under s_lock. */
+typedef struct
+{
+    deck_item_t items[DECK_LIST_MAX];
+    int count;
+    uint32_t version;
+} list_t;
+static list_t *s_lists;
 /* Windows restores a bonded host's notification subscription by itself, so a
  * subscription alone does not mean the agent runs: it must also have spoken
  * (any message, or its 2 s ping) within the last few seconds. */
@@ -57,6 +63,28 @@ static const char *field(const char *json, const char *key)
     return p;
 }
 
+/* Keep only whole, valid UTF-8 sequences. A character cut by a length limit makes
+ * LVGL's label renderer loop forever (the watch then resets on the LVGL stall). */
+static void utf8_clean(char *text)
+{
+    unsigned char *r = (unsigned char *)text, *w = r;
+    while (*r)
+    {
+        int n = *r < 0x80 ? 1 : (*r & 0xE0) == 0xC0 ? 2 : (*r & 0xF0) == 0xE0 ? 3 : (*r & 0xF8) == 0xF0 ? 4 : 0;
+        int ok = n > 0 && !(n == 2 && *r < 0xC2);
+        for (int k = 1; ok && k < n; k++)
+            ok = (r[k] & 0xC0) == 0x80;
+        if (!ok)
+        {
+            r++; /* drop the stray byte, resync on the next one */
+            continue;
+        }
+        for (int k = 0; k < n; k++)
+            *w++ = *r++;
+    }
+    *w = '\0';
+}
+
 void deck_json_text(const char *json, const char *key, char *out, size_t size)
 {
     const char *p = field(json, key);
@@ -70,6 +98,7 @@ void deck_json_text(const char *json, const char *key, char *out, size_t size)
         out[n++] = *p;
     }
     out[n] = '\0';
+    utf8_clean(out);
 }
 
 int deck_json_number(const char *json, const char *key, int fallback)
@@ -96,20 +125,27 @@ static void receive(const char *json, size_t length)
             s_command(json);
         return;
     }
-    if (strcmp(type, "win") == 0)
+    int kind = strcmp(type, "win") == 0 ? DECK_LIST_WINDOWS
+               : strcmp(type, "app") == 0 ? DECK_LIST_APPS
+               : strcmp(type, "ck") == 0  ? DECK_LIST_KEYS
+                                          : -1;
+    if (kind >= 0)
     {
-        /* One message per window, then i = -1: the list is complete. */
+        /* One message per item, then i = -1: the list is complete (an empty list is just the end). */
         int i = deck_json_number(json, "i", -1);
-        deck_window_t window = {0};
-        deck_json_text(json, "a", window.app, sizeof(window.app));
-        deck_json_text(json, "n", window.title, sizeof(window.title));
+        deck_item_t item = {0};
+        deck_json_text(json, "a", item.app, sizeof(item.app));
+        deck_json_text(json, "n", item.title, sizeof(item.title));
+        if (s_lists == NULL)
+            return;
+        list_t *list = &s_lists[kind];
         taskENTER_CRITICAL(&s_lock);
         if (i == 0)
-            s_window_count = 0;
-        if (i >= 0 && i < DECK_WINDOWS_MAX && i == s_window_count)
-            s_windows[s_window_count++] = window;
+            list->count = 0;
+        if (i >= 0 && i < DECK_LIST_MAX && i == list->count)
+            list->items[list->count++] = item;
         if (i < 0)
-            s_windows_version++;
+            list->version++;
         taskEXIT_CRITICAL(&s_lock);
         return;
     }
@@ -167,6 +203,8 @@ static void receive(const char *json, size_t length)
 void deck_core_init(void (*command)(const char *json))
 {
     s_command = command;
+    if (s_lists == NULL)
+        s_lists = heap_caps_calloc(DECK_LIST_COUNT, sizeof(list_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     hid_deck_set_receiver(receive);
 }
 
@@ -500,12 +538,16 @@ const deck_key_t *deck_system_keys(int *count)
     return k_system;
 }
 
-int deck_windows(deck_window_t *out, int max, uint32_t *version)
+int deck_list(deck_list_t kind, deck_item_t *out, int max, uint32_t *version)
 {
+    *version = 0;
+    if (s_lists == NULL || kind >= DECK_LIST_COUNT)
+        return 0;
+    list_t *list = &s_lists[kind];
     taskENTER_CRITICAL(&s_lock);
-    int count = s_window_count < max ? s_window_count : max;
-    memcpy(out, s_windows, (size_t)count * sizeof(*out));
-    *version = s_windows_version;
+    int count = list->count < max ? list->count : max;
+    memcpy(out, list->items, (size_t)count * sizeof(*out));
+    *version = list->version;
     taskEXIT_CRITICAL(&s_lock);
     return count;
 }

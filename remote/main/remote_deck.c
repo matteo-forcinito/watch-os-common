@@ -25,6 +25,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "deck_core/deck_core.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "extapp_sdk.h"
 
@@ -110,12 +111,12 @@ typedef struct
     lv_obj_t *status, *list;
     lv_timer_t *timer;
     uint32_t version;
-    deck_window_t windows[DECK_WINDOWS_MAX];
+    deck_item_t windows[DECK_LIST_MAX];
 } windows_ui_t;
 
 static void window_clicked(lv_event_t *e)
 {
-    char action[16];
+    char action[24];
     snprintf(action, sizeof(action), "focus:%d", (int)(intptr_t)lv_event_get_user_data(e));
     send_action(action);
     app_back();
@@ -125,7 +126,7 @@ static void windows_tick(lv_timer_t *timer)
 {
     windows_ui_t *ui = lv_timer_get_user_data(timer);
     uint32_t version;
-    int count = deck_windows(ui->windows, DECK_WINDOWS_MAX, &version);
+    int count = deck_list(DECK_LIST_WINDOWS, ui->windows, DECK_LIST_MAX, &version);
     if (version == ui->version)
         return;
     ui->version = version;
@@ -133,7 +134,7 @@ static void windows_tick(lv_timer_t *timer)
     lv_label_set_text(ui->status, count ? "Tocca la finestra da portare davanti." : "Nessuna finestra aperta.");
     for (int i = 0; i < count; i++)
     {
-        const deck_window_t *w = &ui->windows[i];
+        const deck_item_t *w = &ui->windows[i];
         const deck_profile_t *p = deck_profile_for(w->app, w->title);
         ui_row(ui->list, p->icon, p->color, w->title[0] ? w->title : w->app, p->name[0] ? p->name : w->app,
                window_clicked, (void *)(intptr_t)i);
@@ -160,7 +161,7 @@ static void windows_create(lv_obj_t *screen, void *arg)
     lv_obj_set_size(ui->list, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(ui->list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(ui->list, 8, 0);
-    deck_windows(ui->windows, 0, &ui->version); /* only a list newer than now */
+    deck_list(DECK_LIST_WINDOWS, ui->windows, 0, &ui->version); /* only a list newer than now */
     if (!deck_send_action("windows"))
         lv_label_set_text(ui->status, "Avvia Watch Deck sul PC per vedere le finestre.");
     ui->timer = lv_timer_create(windows_tick, 150, ui);
@@ -206,7 +207,21 @@ typedef struct
     int page, per_page;
     deck_view_t view;
     uint32_t seen;
+    /* Agent lists, copied when they change (PSRAM): own shortcuts of the app in front, quick launch. */
+    deck_item_t *mine, *launch;
+    int mine_count, launch_count;
+    uint32_t mine_seen, launch_seen;
 } deck_page_t;
+
+/* Sections, in page order. Swipes run through all of them; a tap on the header opens the index. */
+typedef enum
+{
+    SEC_MINE,   /* the user's shortcuts for this app (agent UI) */
+    SEC_APP,    /* built-in profile of the app in front */
+    SEC_LAUNCH, /* quick launch: apps and sites */
+    SEC_SYSTEM, /* switch app, windows, desktops, lock... */
+    SEC_COUNT,
+} deck_section_t;
 
 static deck_page_t *s_page;
 
@@ -223,29 +238,94 @@ static int pages_of(int count, int per)
     return (count + per - 1) / per;
 }
 
+static int section_items(const deck_page_t *page, deck_section_t section)
+{
+    switch (section)
+    {
+    case SEC_MINE:
+        return page->mine_count;
+    case SEC_APP:
+        return page->profile->count;
+    case SEC_LAUNCH:
+        return page->launch_count;
+    default:
+        return system_count();
+    }
+}
+
+static int section_pages(const deck_page_t *page, deck_section_t section)
+{
+    return pages_of(section_items(page, section), page->per_page);
+}
+
 static int page_count(const deck_page_t *page)
 {
-    return pages_of(page->profile->count, page->per_page) + pages_of(system_count(), page->per_page);
+    int pages = 0;
+    for (int i = 0; i < SEC_COUNT; i++)
+        pages += section_pages(page, (deck_section_t)i);
+    return pages > 0 ? pages : 1;
 }
 
-static bool system_page(const deck_page_t *page)
+static int section_first_page(const deck_page_t *page, deck_section_t section)
 {
-    return page->page >= pages_of(page->profile->count, page->per_page);
+    int first = 0;
+    for (int i = 0; i < (int)section; i++)
+        first += section_pages(page, (deck_section_t)i);
+    return first;
 }
 
-/* The key in slot `slot` of the current page, or NULL for an empty slot. */
-static const deck_key_t *key_at(const deck_page_t *page, int slot)
+/* Section of the current page, and the page number inside it. */
+static deck_section_t current_section(const deck_page_t *page, int *local)
 {
-    const deck_profile_t *p = page->profile;
-    int own = pages_of(p->count, page->per_page);
-    if (page->page < own)
+    int p = page->page;
+    for (int i = 0; i < SEC_COUNT; i++)
     {
-        int i = page->page * page->per_page + slot;
-        return i < p->count ? &p->keys[i] : NULL;
+        int n = section_pages(page, (deck_section_t)i);
+        if (p < n)
+        {
+            if (local != NULL)
+                *local = p;
+            return (deck_section_t)i;
+        }
+        p -= n;
     }
-    int count, i = (page->page - own) * page->per_page + slot;
-    const deck_key_t *system = deck_system_keys(&count);
-    return i < count ? &system[i] : NULL;
+    if (local != NULL)
+        *local = 0;
+    return SEC_SYSTEM;
+}
+
+/* Item index (inside its section) in `slot` of the current page, or -1 for an empty slot. */
+static int item_at(const deck_page_t *page, int slot, deck_section_t *section)
+{
+    int local;
+    *section = current_section(page, &local);
+    int i = local * page->per_page + slot;
+    return i < section_items(page, *section) ? i : -1;
+}
+
+static const deck_key_t *key_of(const deck_page_t *page, deck_section_t section, int i)
+{
+    if (section == SEC_APP)
+        return &page->profile->keys[i];
+    int count;
+    return section == SEC_SYSTEM ? &deck_system_keys(&count)[i] : NULL;
+}
+
+static const char *label_of(const deck_page_t *page, deck_section_t section, int i)
+{
+    if (section == SEC_MINE)
+        return page->mine[i].title;
+    if (section == SEC_LAUNCH)
+        return page->launch[i].title;
+    return key_of(page, section, i)->label;
+}
+
+static const char *section_name(const deck_page_t *page, deck_section_t section)
+{
+    static const char *const names[] = {"Le mie", NULL, "Avvio", "Sistema"};
+    if (section == SEC_APP)
+        return page->profile->name[0] ? page->profile->name : page->app_name;
+    return names[section];
 }
 
 static int32_t screen_w(void)
@@ -346,25 +426,31 @@ static void fit_label(lv_obj_t *label, const char *text)
 static void show_page(deck_page_t *page)
 {
     const deck_profile_t *p = page->profile;
-    bool system = system_page(page);
+    page->page = LV_MIN(page->page, page_count(page) - 1);
+    deck_section_t section = current_section(page, NULL);
+    static const uint32_t colors[] = {UI_COLOR_PINK, 0, UI_COLOR_TEAL, UI_COLOR_SEPARATOR};
+    uint32_t color = section == SEC_APP ? p->color : colors[section];
 
     for (int i = 0; i < page->per_page; i++)
     {
-        const deck_key_t *key = key_at(page, i);
-        if (key == NULL)
+        deck_section_t at;
+        int item = item_at(page, i, &at);
+        if (item < 0)
         {
             lv_obj_add_flag(page->keys[i], LV_OBJ_FLAG_HIDDEN);
             continue;
         }
         lv_obj_remove_flag(page->keys[i], LV_OBJ_FLAG_HIDDEN);
-        fit_label(lv_obj_get_child(page->keys[i], 0), key->label);
-        lv_obj_set_style_border_color(page->keys[i], ui_color(system ? UI_COLOR_SEPARATOR : p->color), 0);
-        lv_obj_set_style_border_width(page->keys[i], system ? 1 : 2, 0);
+        fit_label(lv_obj_get_child(page->keys[i], 0), label_of(page, at, item));
+        lv_obj_set_style_border_color(page->keys[i], ui_color(color), 0);
+        lv_obj_set_style_border_width(page->keys[i], section == SEC_SYSTEM ? 1 : 2, 0);
     }
 
-    lv_label_set_text(page->app, system ? "Sistema" : (p->name[0] ? p->name : page->app_name));
-    lv_label_set_text(lv_obj_get_child(page->icon, 0), system ? LV_SYMBOL_SETTINGS : p->icon);
-    ui_icon_bubble_set_color(page->icon, system ? UI_COLOR_GRAY : p->color);
+    static const char *const icons[] = {LV_SYMBOL_EDIT, NULL, LV_SYMBOL_PLAY, LV_SYMBOL_SETTINGS};
+    static const uint32_t bubbles[] = {UI_COLOR_PINK, 0, UI_COLOR_TEAL, UI_COLOR_GRAY};
+    lv_label_set_text(page->app, section_name(page, section));
+    lv_label_set_text(lv_obj_get_child(page->icon, 0), section == SEC_APP ? p->icon : icons[section]);
+    ui_icon_bubble_set_color(page->icon, section == SEC_APP ? p->color : bubbles[section]);
     lv_label_set_text_fmt(page->pager, "%d/%d", page->page + 1, page_count(page));
 }
 
@@ -427,9 +513,19 @@ static void key_clicked(lv_event_t *e)
     }
     if (s_page == NULL || s_page->profile == NULL)
         return;
-    const deck_key_t *key = key_at(s_page, (int)(intptr_t)lv_event_get_user_data(e));
-    if (key == NULL)
+    deck_section_t section;
+    int i = item_at(s_page, (int)(intptr_t)lv_event_get_user_data(e), &section);
+    if (i < 0)
         return;
+    char action[24];
+    if (section == SEC_MINE || section == SEC_LAUNCH)
+    {
+        /* The agent presses the keys or starts the app: it knows the PC better than HID codes. */
+        snprintf(action, sizeof(action), "%s:%d", section == SEC_MINE ? "ck" : "launch", i);
+        send_action(action);
+        return;
+    }
+    const deck_key_t *key = key_of(s_page, section, i);
     if (key->action != NULL && strcmp(key->action, "@windows") == 0)
     {
         app_open_app(&s_windows_app, NULL);
@@ -473,6 +569,61 @@ static void page_knob(lv_event_t *e)
     lv_port_knob_t *knob = lv_event_get_param(e);
     knob->handled = true;
     turn_page(s_page, knob->delta > 0 ? 1 : -1);
+}
+
+/* ---- section index ---- */
+
+static void section_chosen(lv_event_t *e)
+{
+    int choice = (int)(intptr_t)lv_event_get_user_data(e);
+    app_back();
+    if (choice == SEC_COUNT)
+    {
+        app_open_app(&s_windows_app, NULL);
+        return;
+    }
+    if (s_page != NULL && s_page->profile != NULL)
+    {
+        s_page->page = section_first_page(s_page, (deck_section_t)choice);
+        show_page(s_page);
+    }
+}
+
+static void sections_create(lv_obj_t *screen, void *arg)
+{
+    (void)arg;
+    lv_obj_t *page = remote_page(screen, "Sezioni");
+    if (s_page == NULL || s_page->profile == NULL)
+        return;
+    deck_section_t now = current_section(s_page, NULL);
+    static const char *const icons[] = {LV_SYMBOL_EDIT, NULL, LV_SYMBOL_PLAY, LV_SYMBOL_SETTINGS};
+    static const uint32_t colors[] = {UI_COLOR_PINK, 0, UI_COLOR_TEAL, UI_COLOR_GRAY};
+    for (int i = 0; i < SEC_COUNT; i++)
+    {
+        int items = section_items(s_page, (deck_section_t)i);
+        if (items == 0)
+            continue;
+        char value[32];
+        snprintf(value, sizeof(value), "%s%d", i == (int)now ? LV_SYMBOL_OK " " : "", items);
+        ui_row(page, i == SEC_APP ? s_page->profile->icon : icons[i], i == SEC_APP ? s_page->profile->color : colors[i],
+               section_name(s_page, (deck_section_t)i), value, section_chosen, (void *)(intptr_t)i);
+    }
+    ui_row(page, LV_SYMBOL_LIST, UI_COLOR_BLUE, "App aperte", NULL, section_chosen, (void *)(intptr_t)SEC_COUNT);
+    ui_text(page,
+            "Le mie e Avvio si scelgono nell'app Watch Deck sul PC: tasto destro sull'icona > Apri Watch Deck.",
+            true);
+}
+
+static const app_t s_sections_app = {.id = "remote.deck.sections",
+                                     .name = "Sezioni",
+                                     .flags = APP_FLAG_HIDDEN | APP_FLAG_KEEP_SCREEN_ON,
+                                     .create = sections_create};
+
+static void header_clicked(lv_event_t *e)
+{
+    (void)e;
+    if (s_page != NULL && s_page->view == VIEW_LIVE && s_page->profile != NULL)
+        app_open_app(&s_sections_app, NULL);
 }
 
 static void pager_clicked(lv_event_t *e)
@@ -556,6 +707,29 @@ static void tick(lv_timer_t *timer)
     deck_state_t st;
     deck_state_take(&st);
 
+    /* Agent lists: quick launch any time, own shortcuts only for the app in front. */
+    uint32_t version;
+    bool lists = false;
+    deck_list(DECK_LIST_APPS, page->launch, 0, &version);
+    if (version != page->launch_seen)
+    {
+        page->launch_seen = version;
+        page->launch_count = deck_list(DECK_LIST_APPS, page->launch, DECK_LIST_MAX, &version);
+        lists = true;
+    }
+    deck_list(DECK_LIST_KEYS, page->mine, 0, &version);
+    if (version != page->mine_seen || (st.version != page->seen && page->mine_count > 0))
+    {
+        page->mine_seen = version;
+        page->mine_count = deck_list(DECK_LIST_KEYS, page->mine, DECK_LIST_MAX, &version);
+        if (page->mine_count > 0 && strncmp(page->mine[0].app, st.app[0] ? st.app : page->app_name,
+                                            sizeof(page->mine[0].app) - 1) != 0)
+            page->mine_count = 0; /* shortcuts of another app: the new list is on its way */
+        lists = true;
+    }
+    if (lists && page->profile != NULL && st.version == page->seen)
+        show_page(page);
+
     if (st.message[0])
         ui_toast(st.message);
     if (st.version == page->seen)
@@ -587,6 +761,8 @@ static void deleted(lv_event_t *e)
     deck_page_t *page = lv_event_get_user_data(e);
     lv_timer_delete(page->timer);
     if (s_page == page) s_page = NULL;
+    heap_caps_free(page->mine);
+    heap_caps_free(page->launch);
     free(page);
 }
 
@@ -616,6 +792,16 @@ static void deck_create(lv_obj_t *screen, void *arg)
     deck_page_t *page = calloc(1, sizeof(*page));
     if (page == NULL)
         return;
+    page->mine = heap_caps_calloc(DECK_LIST_MAX, sizeof(deck_item_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    page->launch = heap_caps_calloc(DECK_LIST_MAX, sizeof(deck_item_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (page->mine == NULL || page->launch == NULL)
+    {
+        heap_caps_free(page->mine);
+        heap_caps_free(page->launch);
+        free(page);
+        return;
+    }
+    page->mine_seen = page->launch_seen = UINT32_MAX;
     s_page = page;
     page->seen = UINT32_MAX;
     lv_obj_set_scrollable(screen, false);
@@ -645,10 +831,21 @@ static void deck_create(lv_obj_t *screen, void *arg)
     ui_key_rect_t head = strip(top, head_h);
     int32_t icon = head_h - 10;
     page->icon = ui_icon_bubble(page->live, LV_SYMBOL_HOME, UI_COLOR_GRAY, icon);
+    lv_obj_remove_flag(page->icon, LV_OBJ_FLAG_CLICKABLE); /* taps reach the header below */
     lv_obj_set_pos(page->icon, head.x + 50, head.y + 5);
     int32_t name_x = head.x + 50 + icon + 8;
     page->app = line(page->live, name_x, head.y + (head_h - lv_font_get_line_height(UI_FONT_LARGE)) / 2,
                      head.x + head.w - 64 - name_x, UI_FONT_LARGE, UI_COLOR_TEXT, LV_TEXT_ALIGN_LEFT);
+    /* The header names the section: a tap opens the index of sections. */
+    lv_obj_t *header = lv_obj_create(page->live);
+    lv_obj_remove_style_all(header);
+    lv_obj_set_pos(header, head.x + 48, head.y);
+    lv_obj_set_size(header, head.w - 48 - 62, head_h);
+    lv_obj_set_style_radius(header, 12, 0);
+    lv_obj_set_style_bg_color(header, ui_color(UI_COLOR_CARD_HI), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(header, header_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_move_background(header);
     lv_obj_t *pager = tile(page->live, (ui_key_rect_t){head.x + head.w - 60, head.y, 60, head_h}, "", pager_clicked,
                            NULL);
     lv_obj_set_style_border_width(pager, 0, 0);

@@ -11,7 +11,7 @@ Build first with <board repo>/tools/build_remote.ps1 -Board <board>, without
 import argparse, base64, hashlib, json, subprocess, urllib.error, urllib.request
 from pathlib import Path
 
-VERSION = "1.3.2"
+VERSION = "1.4.0"
 TAG = f"remote-v{VERSION}"
 REPO = "matteo-forcinito/watch-firmware-releases"
 BOARDS = {  # Market board id -> board repo
@@ -25,13 +25,14 @@ BOARDS = {  # Market board id -> board repo
 # Short summary and asset names: the catalogue is close to the 48 KB that older firmware accepts.
 SUMMARY = "Mouse, tastiera, media e Deck per il PC."
 COLOR = "45C8D8"
-NOTES = ("Remote 1.3.2, per tutti i dispositivi: mouse e air mouse a gesti (tocco = clic, tenuto = destro, "
-         "bordi per scorrimento, volume e luminosità). L'air mouse ignora il sobbalzo del dito: il tocco "
-         "clicca dove c'è il puntatore e i bordi non passano più al polso.")
+NOTES = ("Remote 1.4.0: scelta del computer e cambio a caldo (Remote > Computer), batteria su ogni schermata "
+         "e al PC, calibrazione dell'air mouse salvata, conferma all'uscita. Deck a sezioni (Le mie, App, Avvio, "
+         "Sistema; tocco sul titolo = indice), avvio di app e siti, App aperte, Cambia app con Alt tenuto. "
+         "Corretto il blocco con titoli di finestra troncati. Richiede Watch Deck aggiornato sul PC.")
 
 p = argparse.ArgumentParser()
 p.add_argument("--publish", action="store_true")
-p.add_argument("--boards", nargs="+", choices=BOARDS, default=["amoled_watch"])
+p.add_argument("--boards", nargs="+", choices=BOARDS, default=list(BOARDS))
 a = p.parse_args()
 root = Path(__file__).resolve().parents[3]
 prefix = f"https://github.com/{REPO}/releases/download/{TAG}/"

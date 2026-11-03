@@ -222,3 +222,33 @@ Componenti:
 Limiti noti: canale dati solo Bluetooth (con USB i tasti funzionano, senza contesto); layout
 verticale e rotondo compilato ma non ancora fotografato su un dispositivo; pacchetti delle altre
 board da generare con `tools/build_remote.ps1`.
+
+## Stato implementazione (Remote 1.4.0)
+
+**Sezioni del Deck.** Le pagine sono raggruppate in sezioni, nell'ordine: *Le mie* (scorciatoie
+dell'utente per l'app in primo piano), *App* (profilo integrato), *Avvio* (app e siti), *Sistema*
+(Cambia app con Alt tenuto, App aperte, vista attività, desktop, blocco, sospensione). Lo scorrimento
+le attraversa tutte; un tocco sul titolo apre l'indice delle sezioni (più «App aperte»).
+
+**Messaggi nuovi** (una riga JSON per messaggio, liste chiuse da `i = -1`):
+
+| Verso | Messaggio | Significato |
+|---|---|---|
+| PC → watch | `{"t":"host","name"}` | nome del PC, per la pagina Computer |
+| PC → watch | `{"t":"app","i","a","n"}` | voce di Avvio (`a` = tipo, `n` = nome) |
+| PC → watch | `{"t":"ck","i","a","n"}` | scorciatoia personale `n` dell'app `a` (inviata a ogni cambio di app) |
+| PC → watch | `{"t":"win","i","a","n"}` | finestra aperta (dopo l'azione `windows`) |
+| watch → PC | `act` `windows`, `focus:N`, `launch:N`, `ck:N`, `sleep` | elenco finestre, primo piano, avvio, scorciatoia, sospensione |
+
+I testi arrivano già tagliati in byte sui confini dei caratteri e il watch scarta comunque ogni
+sequenza UTF-8 incompleta: un carattere troncato bloccava il disegno delle etichette di LVGL
+(riavvio per "lvgl task stuck", visto su Guition e AMOLED con i titoli di Edge).
+
+**Agente.** `deck_config.py` trova le app installate (Windows `Get-StartApps`, macOS `/Applications`,
+Linux file `.desktop`), avvia app e siti e preme le scorciatoie (SendInput, osascript, xdotool).
+Configurazione in `%APPDATA%\WatchDeck\config.json`; al primo avvio l'elenco Avvio contiene le app più
+comuni trovate e i siti di streaming. La finestra (`deck_ui.py`, «Apri Watch Deck» dal tray o
+`WatchDeck.exe --ui`) modifica solo il file: l'agente se ne accorge entro 2 s e aggiorna i watch.
+L'agente serve tutti i Remote collegati al PC; uscendo restituisce il servizio Deck a Windows
+(una sessione GATT lasciata aperta da un processo terminato a forza blocca il servizio fino al
+riavvio di `bthserv`).

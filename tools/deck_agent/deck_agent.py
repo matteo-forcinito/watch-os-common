@@ -28,6 +28,8 @@ import sys
 
 from bleak import BleakClient, BleakScanner
 
+import deck_config
+
 SERVICE = "7a3e0000-5c1d-4e8b-9f2a-d3c0de0decc0"
 RX = "7a3e0001-5c1d-4e8b-9f2a-d3c0de0decc0"  # PC -> watch
 TX = "7a3e0002-5c1d-4e8b-9f2a-d3c0de0decc0"  # watch -> PC
@@ -41,7 +43,12 @@ except ImportError:  # CPU/RAM are then simply not shown
 
 
 def clean(text: str, limit: int) -> str:
-    return "".join(c for c in (text or "") if c >= " ")[:limit]
+    """Printable text that fits `limit` BYTES on the watch, cut on character boundaries.
+
+    The watch buffers are byte arrays: a character split there would hang its renderer.
+    Zero-width and format characters (U+200B in Edge titles...) have no glyph: dropped."""
+    text = "".join(c for c in (text or "") if c >= " " and not ("\u200b" <= c <= "\u200f" or c == "\ufeff"))
+    return text.encode()[:limit].decode(errors="ignore")
 
 
 def encode(message: dict) -> bytes:
@@ -260,8 +267,43 @@ else:
         return "Nessun monitor di sistema"
 
 
+# ---------------------------------------------------------------- settings (deck_config.py)
+
+CONFIG = deck_config.load()
+CONFIG_STAMP = deck_config.stamp()
+CURRENT_APP = ""  # process in front, for the user's own shortcuts
+RECENT_APPS: list[str] = []  # offered by the window when adding shortcuts
+
+
+def launch(index: str) -> str:
+    item = CONFIG["launch"][int(index)]
+    deck_config.launch(item["target"])
+    return f"Avvio {item['name']}"
+
+
+def own_keys(app: str) -> list[dict]:
+    return CONFIG["keys"].get(app, [])[: deck_config.KEYS_MAX]
+
+
+def press_own(index: str) -> str:
+    item = own_keys(CURRENT_APP)[int(index)]
+    deck_config.press(item["keys"])
+    return item["label"]
+
+
+def write_status() -> None:
+    """For the Watch Deck window: what the agent is doing right now."""
+    try:
+        os.makedirs(deck_config.FOLDER, exist_ok=True)
+        with open(deck_config.STATUS_PATH, "w", encoding="utf-8") as f:
+            json.dump({**STATUS, "pid": os.getpid(), "recent": RECENT_APPS[-20:]}, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
 ACTIONS = {"lock": lock, "display_off": display_off, "mic": mic_toggle, "taskmgr": taskmgr,
-           "windows": windows, "focus": focus, "sleep": sleep}  # "name:arg" passes arg
+           "windows": windows, "focus": focus, "sleep": sleep,
+           "launch": launch, "ck": press_own}  # "name:arg" passes arg
 
 
 # ---------------------------------------------------------------- link
@@ -565,7 +607,7 @@ async def session(name: str, selftest: bool = False) -> bool:
     async def send(message: dict) -> None:
         await link.send(encode(message))
 
-    global LINK
+    global LINK, CURRENT_APP, CONFIG, CONFIG_STAMP
     link, found, via = await open_link(name, loop, received, disconnected.set)
     LINK = link
     if link is None:
@@ -573,6 +615,22 @@ async def session(name: str, selftest: bool = False) -> bool:
     print(f"Collegato a {found} via {via}")
     STATUS.update(connected=True, device=found, via=via)
     await send({"t": "host", "name": clean(platform.node(), 23)})  # the watch lists hosts by name
+
+    def fit(text: str, size: int) -> str:  # the watch keeps `size` bytes: cut on UTF-8 boundaries
+        return clean(text, size).encode()[:size].decode(errors="ignore")
+
+    async def send_list(kind: str, app: str, names: list[str]) -> None:
+        for i, name in enumerate(names[: deck_config.LAUNCH_MAX]):
+            await send({"t": kind, "i": i, "a": fit(app, 15), "n": fit(name, 47)})
+        await send({"t": kind, "i": -1, "a": fit(app, 15)})
+
+    async def send_launch() -> None:
+        await send_list("app", "app", [item["name"] for item in CONFIG["launch"]])
+
+    async def send_own_keys() -> None:
+        await send_list("ck", CURRENT_APP, [item["label"] for item in own_keys(CURRENT_APP)])
+
+    await send_launch()
     if SWITCH:
         await send({"t": "cmd", "c": SWITCH})
         await asyncio.sleep(1.5)  # the watch answers, then restarts on the other transport
@@ -602,9 +660,21 @@ async def session(name: str, selftest: bool = False) -> bool:
             ctx = {"t": "ctx", "app": clean(app, 23), "title": clean(title, 63)}
             if ctx != last_ctx and app:
                 await send(ctx)
+                if app != CURRENT_APP:
+                    CURRENT_APP = app
+                    if app in RECENT_APPS:
+                        RECENT_APPS.remove(app)
+                    RECENT_APPS.append(app)
+                    await send_own_keys()
                 last_ctx = ctx
                 print(f"Contesto: {app} | {title[:50]}")
             if tick % 4 == 0:
+                if deck_config.stamp() != CONFIG_STAMP:  # saved from the Watch Deck window
+                    CONFIG_STAMP, CONFIG = deck_config.stamp(), deck_config.load()
+                    print("Impostazioni aggiornate")
+                    await send_launch()
+                    await send_own_keys()
+                write_status()
                 await send({"t": "ping"})  # the watch shows the touchbar only while it hears the agent
                 media = await now_playing()
                 if media is not None:
@@ -623,6 +693,8 @@ async def session(name: str, selftest: bool = False) -> bool:
                 if added:
                     print(f"Collegato anche a {' + '.join(added)}")
                     await send({"t": "host", "name": clean(platform.node(), 23)})
+                    await send_launch()
+                    await send_own_keys()
                     last_ctx = last_media = last_sys = None  # the new watch needs the whole state
             tick += 1
             try:

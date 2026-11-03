@@ -1,6 +1,7 @@
 """Watch Deck: the Deck agent as a Windows tray application (WatchDeck.exe).
 
     WatchDeck.exe              run in the tray (installs itself on first launch)
+    WatchDeck.exe --ui         the Watch Deck window (status, quick launch, own shortcuts)
     WatchDeck.exe --install    copy to %LOCALAPPDATA%\\Programs\\WatchDeck, Start menu, start with Windows
     WatchDeck.exe --uninstall  remove all of it (also from Settings > Apps)
 
@@ -146,6 +147,7 @@ class Tray:
     def menu(self) -> pystray.Menu:  # noqa: C901 - one flat menu
         connected = lambda _: deck_agent.STATUS["connected"]
         return pystray.Menu(
+            pystray.MenuItem("Apri Watch Deck", self.open_window, default=True),
             pystray.MenuItem(self.status, None, enabled=False),
             pystray.MenuItem(self.touchbar, None, enabled=False),
             pystray.Menu.SEPARATOR,
@@ -158,6 +160,11 @@ class Tray:
             pystray.MenuItem("Apri il log", lambda: os.startfile(deck_agent.log_to_file())),
             pystray.MenuItem(f"Esci da {NAME}", self.quit),
         )
+
+    def open_window(self) -> None:
+        """Settings window in its own process: tkinter and the tray loop never share a thread."""
+        command = [sys.executable, "--ui"] if FROZEN else [sys.executable, os.path.abspath(__file__), "--ui"]
+        subprocess.Popen(command, close_fds=True)
 
     def watch_status(self) -> None:
         """Repaint the icon when the connection changes (pystray polls nothing by itself)."""
@@ -191,6 +198,11 @@ class Tray:
 
 
 def main() -> None:
+    if "--ui" in sys.argv:
+        import deck_ui
+
+        deck_ui.main()
+        return
     deck_agent.log_to_file()
     if "--uninstall" in sys.argv:
         uninstall()

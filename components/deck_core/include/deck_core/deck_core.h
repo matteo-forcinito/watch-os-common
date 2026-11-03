@@ -61,15 +61,28 @@ bool deck_send_key(const deck_key_t *key, bool mac);
  */
 bool deck_run_key(const deck_key_t *key, bool mac);
 
-/* Windows open on the PC, sent by the agent after the "windows" action. */
-#define DECK_WINDOWS_MAX 12
+/*
+ * Lists the agent sends, one message per item and then i = -1:
+ *   DECK_LIST_WINDOWS  "win"  windows open on the PC (after the "windows" action); tap: "focus:N"
+ *   DECK_LIST_APPS     "app"  quick launch (apps and sites chosen in the agent); tap: "launch:N"
+ *   DECK_LIST_KEYS     "ck"   the user's own shortcuts for the app in front (`app` of the
+ *                             items = that app); tap: "ck:N", the agent presses the keys
+ */
+#define DECK_LIST_MAX 16
+typedef enum
+{
+    DECK_LIST_WINDOWS,
+    DECK_LIST_APPS,
+    DECK_LIST_KEYS,
+    DECK_LIST_COUNT,
+} deck_list_t;
 typedef struct
 {
-    char app[16];
-    char title[48];
-} deck_window_t;
-/* Copies the list; returns its size. `version` grows with every new list. */
-int deck_windows(deck_window_t *out, int max, uint32_t *version);
+    char app[16];   /* process name (windows, keys) or kind: "app", "web" (launchers) */
+    char title[48]; /* what the tile shows */
+} deck_item_t;
+/* Copies a list; returns its size. `version` grows with every new list. */
+int deck_list(deck_list_t list, deck_item_t *out, int max, uint32_t *version);
 bool deck_send_action(const char *action); /* false: the agent is not listening */
 
 /* Flat JSON readers for the agent's messages. */
