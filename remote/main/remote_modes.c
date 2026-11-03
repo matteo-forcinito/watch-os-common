@@ -384,25 +384,12 @@ static void shortcuts_create(lv_obj_t *screen, void *arg)
  *   tap                               left click; two taps make a double click
  *   hold still for 0.45 s             right click
  *   tap, then touch again and move    drag with the left button held until the finger lifts
- *   along the right / bottom edge     vertical / horizontal scroll
- *   along the left / top edge         PC volume / PC brightness
- * An edge claims a touch only when it starts there and first moves along the
- * edge: a tap on an edge is still a click and a move inwards is still the
- * pointer. Round panels use the outer ring, split in four sectors. */
+ *   along an edge                     scroll, volume, brightness (remote_gestures.c) */
 
 #define PAD_SLOP 8         /* px before a touch counts as a move */
 #define PAD_HOLD_MS 450    /* still this long: right click */
 #define PAD_TAP_MS 450     /* longer touches are never taps */
 #define PAD_REDRAG_MS 300  /* a touch this soon after a tap can start a drag */
-
-typedef enum
-{
-    EDGE_NONE = -1,
-    EDGE_RIGHT,
-    EDGE_BOTTOM,
-    EDGE_LEFT,
-    EDGE_TOP,
-} edge_t;
 
 typedef enum
 {
@@ -423,7 +410,7 @@ typedef struct
     float along;  /* edge travel not turned into steps yet */
     uint32_t pressed_at, released_at;
     uint32_t version;
-    edge_t edge; /* edge under the touch-down point */
+    remote_edge_t edge; /* edge under the touch-down point */
     touch_t state;
     bool after_tap; /* this touch began right after a tap */
     bool tapped;    /* the last touch was a tap */
@@ -434,32 +421,6 @@ static mouse_t *s_mouse;
 static int8_t bounded(float value)
 {
     return (int8_t)fmaxf(-127, fminf(127, value));
-}
-
-static edge_t edge_at(lv_point_t p)
-{
-    int32_t w = remote_screen_w(), h = remote_screen_h();
-    int32_t band = LV_MIN(w, h) * 14 / 100;
-    if (board_info()->round)
-    {
-        int32_t dx = p.x - w / 2, dy = p.y - h / 2, inner = LV_MIN(w, h) / 2 - band;
-        if (dx * dx + dy * dy < inner * inner)
-            return EDGE_NONE;
-        if (LV_ABS(dx) >= LV_ABS(dy))
-            return dx > 0 ? EDGE_RIGHT : EDGE_LEFT;
-        return dy > 0 ? EDGE_BOTTOM : EDGE_TOP;
-    }
-    int32_t distance[4] = {w - 1 - p.x, h - 1 - p.y, p.x, p.y};
-    edge_t edge = EDGE_NONE;
-    for (int i = 0; i < 4; i++)
-        if (distance[i] < band && (edge == EDGE_NONE || distance[i] < distance[edge]))
-            edge = (edge_t)i;
-    return edge;
-}
-
-static bool edge_vertical(edge_t edge)
-{
-    return edge == EDGE_RIGHT || edge == EDGE_LEFT;
 }
 
 static void pill_show(mouse_t *mouse, const char *text)
@@ -478,8 +439,7 @@ static void touch_ended(mouse_t *mouse)
     mouse->state = TOUCH_IDLE;
     lv_obj_add_flag(mouse->pill, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(mouse->hint, LV_OBJ_FLAG_HIDDEN);
-    for (int i = 0; i < 4; i++)
-        lv_obj_set_style_bg_color(mouse->marks[i], ui_color(UI_COLOR_SEPARATOR), 0);
+    remote_edge_light(mouse->marks, REMOTE_EDGE_NONE);
 }
 
 static void mouse_clear(void)
@@ -517,36 +477,6 @@ static void mouse_tick(lv_timer_t *timer)
     }
 }
 
-/* Edge travel in steps: scroll lines, volume or brightness clicks. */
-static void edge_move(mouse_t *mouse, int32_t delta)
-{
-    static const int32_t step_px[] = {[EDGE_RIGHT] = 12, [EDGE_BOTTOM] = 12, [EDGE_LEFT] = 18, [EDGE_TOP] = 24};
-    float step = step_px[mouse->edge];
-    mouse->along += delta;
-    while (fabsf(mouse->along) >= step)
-    {
-        int sign = mouse->along > 0 ? 1 : -1;
-        mouse->along -= sign * step;
-        switch (mouse->edge)
-        {
-        case EDGE_RIGHT: /* content follows the finger, as on a phone */
-            hid_link_pointer(0, 0, 0, (int8_t)sign, 0);
-            break;
-        case EDGE_BOTTOM:
-            hid_link_pointer(0, 0, 0, 0, (int8_t)-sign);
-            break;
-        case EDGE_LEFT: /* finger up: louder */
-            hid_link_media(sign < 0 ? HIDL_MEDIA_VOLUME_UP : HIDL_MEDIA_VOLUME_DOWN);
-            break;
-        case EDGE_TOP: /* finger right: brighter (Consumer Display Brightness +/-) */
-            hid_link_media(sign > 0 ? 0x006F : 0x0070);
-            break;
-        default:
-            break;
-        }
-    }
-}
-
 static void mouse_touch(lv_event_t *e)
 {
     mouse_t *mouse = lv_event_get_user_data(e);
@@ -563,7 +493,7 @@ static void mouse_touch(lv_event_t *e)
         mouse->pressed_at = lv_tick_get();
         mouse->after_tap = mouse->tapped && lv_tick_elaps(mouse->released_at) < PAD_REDRAG_MS;
         mouse->tapped = false;
-        mouse->edge = edge_at(point);
+        mouse->edge = remote_edge_at(point);
         mouse->along = 0;
         mouse->state = TOUCH_UNDECIDED;
         return;
@@ -577,8 +507,7 @@ static void mouse_touch(lv_event_t *e)
             int32_t tx = point.x - mouse->start.x, ty = point.y - mouse->start.y;
             if (LV_ABS(tx) + LV_ABS(ty) < PAD_SLOP)
                 return;
-            bool along = mouse->edge != EDGE_NONE &&
-                         (edge_vertical(mouse->edge) ? LV_ABS(ty) > LV_ABS(tx) : LV_ABS(tx) > LV_ABS(ty));
+            bool along = remote_edge_claims(mouse->edge, tx, ty);
             if (mouse->after_tap && remote_send_ok(hid_link_mouse(0, 0, 1, 0)))
             {
                 mouse->dragging = true;
@@ -587,10 +516,9 @@ static void mouse_touch(lv_event_t *e)
             }
             else if (along)
             {
-                static const char *const names[] = {"Scorri", "Scorri", "Volume", "Luminosità"};
                 mouse->state = TOUCH_EDGE;
-                lv_obj_set_style_bg_color(mouse->marks[mouse->edge], ui_accent(), 0);
-                pill_show(mouse, names[mouse->edge]);
+                remote_edge_light(mouse->marks, mouse->edge);
+                pill_show(mouse, remote_edge_name(mouse->edge));
                 dx = tx; /* the slop travel counts too */
                 dy = ty;
             }
@@ -598,7 +526,7 @@ static void mouse_touch(lv_event_t *e)
                 mouse->state = TOUCH_POINTER;
         }
         if (mouse->state == TOUCH_EDGE)
-            edge_move(mouse, edge_vertical(mouse->edge) ? dy : dx);
+            remote_edge_move(mouse->edge, remote_edge_vertical(mouse->edge) ? dy : dx, &mouse->along);
         else if (mouse->state == TOUCH_POINTER || mouse->state == TOUCH_DRAG)
         {
             float speed = remote_settings()->pointer_speed * 0.6f;
@@ -679,35 +607,6 @@ static void mouse_knob(lv_event_t *event)
     remote_send_ok(hid_link_pointer(0, 0, mouse->dragging ? 1 : 0, bounded(knob->delta), 0));
 }
 
-/* A thin bar and a small glyph on each gesture edge, inside the ring on round panels. */
-static lv_obj_t *edge_mark(lv_obj_t *parent, edge_t edge, const char *icon)
-{
-    int32_t w = remote_screen_w(), h = remote_screen_h();
-    bool round = board_info()->round, vertical = edge_vertical(edge);
-    int32_t inset = round ? LV_MIN(w, h) * 4 / 100 : 5, thick = 4;
-    int32_t length = (vertical ? h : w) * (round ? 22 : 30) / 100;
-    static const lv_align_t aligns[] = {LV_ALIGN_RIGHT_MID, LV_ALIGN_BOTTOM_MID, LV_ALIGN_LEFT_MID, LV_ALIGN_TOP_MID};
-    static const int8_t sx[] = {-1, 0, 1, 0}, sy[] = {0, -1, 0, 1};
-
-    lv_obj_t *bar = lv_obj_create(parent);
-    lv_obj_remove_style_all(bar);
-    lv_obj_set_size(bar, vertical ? thick : length, vertical ? length : thick);
-    lv_obj_set_style_radius(bar, thick / 2, 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(bar, ui_color(UI_COLOR_SEPARATOR), 0);
-    lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(bar, aligns[edge], sx[edge] * inset, sy[edge] * inset);
-
-    lv_obj_t *glyph = lv_label_create(parent);
-    lv_label_set_text(glyph, icon);
-    lv_obj_set_style_text_font(glyph, UI_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(glyph, ui_color(UI_COLOR_TEXT_DIM), 0);
-    lv_obj_set_style_text_align(glyph, LV_TEXT_ALIGN_CENTER, 0);
-    int32_t gap = inset + thick + 8;
-    lv_obj_align(glyph, aligns[edge], sx[edge] * gap, sy[edge] * gap);
-    return bar;
-}
-
 static void mouse_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
@@ -737,10 +636,8 @@ static void mouse_create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(mouse->pad, mouse_touch, LV_EVENT_RELEASED, mouse);
     lv_obj_add_event_cb(mouse->pad, mouse_touch, LV_EVENT_PRESS_LOST, mouse);
 
-    mouse->marks[EDGE_RIGHT] = edge_mark(mouse->pad, EDGE_RIGHT, LV_SYMBOL_UP "\n" LV_SYMBOL_DOWN);
-    mouse->marks[EDGE_BOTTOM] = edge_mark(mouse->pad, EDGE_BOTTOM, LV_SYMBOL_LEFT "  " LV_SYMBOL_RIGHT);
-    mouse->marks[EDGE_LEFT] = edge_mark(mouse->pad, EDGE_LEFT, LV_SYMBOL_VOLUME_MAX);
-    mouse->marks[EDGE_TOP] = edge_mark(mouse->pad, EDGE_TOP, LV_SYMBOL_IMAGE);
+    for (int i = 0; i < 4; i++)
+        mouse->marks[i] = remote_edge_mark(mouse->pad, (remote_edge_t)i);
 
     mouse->hint = lv_label_create(mouse->pad);
     lv_label_set_text(mouse->hint, "Tocca: clic\nTieni premuto: destro\nTocca e trascina: sposta");

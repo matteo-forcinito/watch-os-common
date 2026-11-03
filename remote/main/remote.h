@@ -97,6 +97,25 @@ static inline bool remote_landscape(void)
     return remote_screen_w() > remote_screen_h() + 40;
 }
 
+/* Edge gestures of the touch surfaces (remote_gestures.c): scroll, volume, brightness. */
+typedef enum
+{
+    REMOTE_EDGE_NONE = -1,
+    REMOTE_EDGE_RIGHT,
+    REMOTE_EDGE_BOTTOM,
+    REMOTE_EDGE_LEFT,
+    REMOTE_EDGE_TOP,
+} remote_edge_t;
+remote_edge_t remote_edge_at(lv_point_t p);
+bool remote_edge_vertical(remote_edge_t edge);
+/* The first move (tx, ty from the touch-down) goes along the edge the touch started on. */
+bool remote_edge_claims(remote_edge_t edge, int32_t tx, int32_t ty);
+const char *remote_edge_name(remote_edge_t edge);
+/* Travel along the edge in px; *carry keeps what has not become a step yet. */
+void remote_edge_move(remote_edge_t edge, int32_t delta, float *carry);
+lv_obj_t *remote_edge_mark(lv_obj_t *parent, remote_edge_t edge);
+void remote_edge_light(lv_obj_t *const marks[4], remote_edge_t lit);
+
 /* Mode switcher: one button, same place and look on every mode screen. */
 extern const app_t remote_switcher_app;
 void remote_switcher_open(lv_event_t *e);

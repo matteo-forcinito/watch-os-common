@@ -1,8 +1,13 @@
 /*
  * Air mouse: the watch's gyroscope moves the PC pointer.
  *
- * The pointer moves only while a finger rests on the pad (a "clutch"), so the
- * hand can be repositioned without moving it, unless "always on" is chosen.
+ * The whole screen is the pad, with the touch mouse's gestures adapted:
+ *   finger resting + wrist moving   pointer (a "clutch": the hand can be repositioned)
+ *   tap                             left click
+ *   finger and wrist still 0.6 s    right click
+ *   along an edge                   scroll, volume, brightness (remote_gestures.c)
+ * With "always on" the wrist always moves the pointer, and a resting finger
+ * plus a wrist movement drags (left button held until the finger lifts).
  * Gravity from the accelerometer makes the mapping orientation independent:
  *   horizontal = rotation about the vertical (gravity) axis,
  *   vertical   = rotation about the device's horizontal "right" axis.
@@ -32,22 +37,35 @@
 #define AIR_ALWAYS   4
 #define CALIBRATION_SAMPLES 60
 
+/* What the finger on the pad is doing (one-touch panels). */
+typedef enum
+{
+    AIR_IDLE,
+    AIR_UNDECIDED, /* down, nothing moved yet: tap, hold or pointer */
+    AIR_POINTER,   /* the wrist moves the pointer (clutch, or drag when always on) */
+    AIR_EDGE,      /* finger along an edge: scroll, volume, brightness */
+    AIR_DONE,      /* right click sent: the rest of this touch is ignored */
+} air_touch_t;
+
+#define AIR_SLOP 8      /* finger px before a touch counts as a move */
+#define AIR_STILL 12    /* wrist px before the hand counts as moving */
+#define AIR_HOLD_MS 600 /* finger and wrist still this long: right click */
+#define AIR_TAP_MS 400
+
 typedef struct
 {
-    lv_obj_t *pad;
-    lv_obj_t *hint;
+    lv_obj_t *pad, *ring, *hint, *pill, *marks[4];
     lv_timer_t *timer;
-    float dx, dy;
-    float travel;
+    lv_point_t start, last;
+    float dx, dy; /* pointer counts not sent yet */
+    float travel; /* wrist travel during this touch */
+    float along;  /* edge travel not turned into steps yet */
     uint32_t pressed_at;
     uint32_t version;
-    bool clutch;
-    bool scrolling;
-    bool held;
-    lv_point_t last;
-    float sx, sy;
+    remote_edge_t edge;
+    air_touch_t state;
+    bool held; /* left button down: drag with "always on" */
     bool calibrated_shown;
-    lv_obj_t *scroll;
 } air_t;
 
 static air_t *s_air;
@@ -186,9 +204,40 @@ static int8_t bounded(float value)
     return (int8_t)(value < -127 ? -127 : value > 127 ? 127 : value);
 }
 
-static bool moving(const air_t *air)
+static bool always_on(void)
 {
-    return air->clutch || (remote_settings()->air_flags & AIR_ALWAYS);
+    return (remote_settings()->air_flags & AIR_ALWAYS) != 0;
+}
+
+static void ring_color(air_t *air, uint32_t color)
+{
+    lv_obj_set_style_border_color(air->ring, ui_color(color), 0);
+}
+
+static void pill_show(air_t *air, const char *text)
+{
+    lv_label_set_text(lv_obj_get_child(air->pill, 0), text);
+    lv_obj_remove_flag(air->pill, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* Finger lifted, link lost or page left: nothing stays pressed or queued. */
+static void touch_end(air_t *air)
+{
+    if (air->held)
+        hid_link_mouse(0, 0, 0, 0);
+    air->held = false;
+    air->state = AIR_IDLE;
+    air->dx = air->dy = 0;
+    lv_obj_add_flag(air->pill, LV_OBJ_FLAG_HIDDEN);
+    remote_edge_light(air->marks, REMOTE_EDGE_NONE);
+    ring_color(air, UI_COLOR_TEAL);
+}
+
+static const char *idle_hint(void)
+{
+    return !atomic_load(&s_calibrated) ? "Tieni fermo\nl'orologio..."
+           : always_on()               ? "Muovi il polso\nTocca e muovi: trascina"
+                                       : "Tieni il dito\ne muovi il polso";
 }
 
 static void air_tick(lv_timer_t *timer)
@@ -196,43 +245,59 @@ static void air_tick(lv_timer_t *timer)
     air_t *air = lv_timer_get_user_data(timer);
     int mx = atomic_exchange(&s_motion_x, 0);
     int my = atomic_exchange(&s_motion_y, 0);
-    if (air->version != hid_link_version())
+    if (air->version != hid_link_version() || app_current() != &remote_air_app)
     {
         air->version = hid_link_version();
-        air->dx = air->dy = 0;
-        air->clutch = false;
-        air->held = false;
-        air->sx = air->sy = 0;
+        if (air->state != AIR_IDLE)
+            touch_end(air);
+        air->dx = air->dy = 0; /* motion off the page is discarded, never replayed */
+        return;
     }
     bool calibrated = atomic_load(&s_calibrated);
     if (calibrated != air->calibrated_shown)
     {
         air->calibrated_shown = calibrated;
-        lv_label_set_text(air->hint, !calibrated ? "Tieni fermo\nl'orologio..."
-                                     : remote_settings()->air_flags & AIR_ALWAYS ? "Muovi il polso\nPremi: trascina"
-                                                                                  : "Tieni premuto\ne muovi il polso");
+        lv_label_set_text(air->hint, idle_hint());
     }
     if (atomic_load(&s_imu_error) != ESP_OK)
     {
         lv_label_set_text(air->hint, "Sensore di\nmovimento assente");
         return;
     }
-    if (air->scrolling && app_current() == &remote_air_app)
+
+    if (air->state == AIR_UNDECIDED || air->state == AIR_POINTER)
+        air->travel += abs(mx) + abs(my);
+    if (air->state == AIR_UNDECIDED)
     {
-        int8_t x = bounded(air->sx / 12), y = bounded(air->sy / 12);
-        if ((x || y) && hid_link_pointer(0, 0, 0, y, -x))
-        { air->sx -= x * 12; air->sy -= y * 12; }
-        air->dx = air->dy = 0;
-        return;
+        if (air->travel >= AIR_STILL)
+        {
+            /* The hand moved: pointer (clutch) or drag (always on). */
+            air->state = AIR_POINTER;
+            ring_color(air, UI_COLOR_ORANGE);
+            if (always_on() && remote_send_ok(hid_link_mouse(0, 0, 1, 0)))
+            {
+                air->held = true;
+                pill_show(air, "Trascina");
+            }
+        }
+        else if (lv_tick_elaps(air->pressed_at) >= AIR_HOLD_MS)
+        {
+            air->state = AIR_DONE;
+            if (remote_send_ok(hid_link_click(2, 1)))
+                pill_show(air, "Clic destro");
+            return;
+        }
     }
-    if (!moving(air) || app_current() != &remote_air_app)
+    /* The wrist drives the pointer while the finger holds it, or always when chosen. */
+    bool pointer = air->state == AIR_POINTER || air->state == AIR_UNDECIDED ||
+                   (air->state == AIR_IDLE && always_on());
+    if (!pointer)
     {
-        air->dx = air->dy = 0; /* motion outside the clutch is discarded, never replayed */
+        air->dx = air->dy = 0;
         return;
     }
     air->dx = fmaxf(-512, fminf(512, air->dx + mx));
     air->dy = fmaxf(-512, fminf(512, air->dy + my));
-    air->travel += abs(mx) + abs(my);
     int8_t dx = bounded(air->dx), dy = bounded(air->dy);
     if ((dx || dy) && hid_link_pointer(dx, dy, air->held ? 1 : 0, 0, 0))
     {
@@ -246,43 +311,59 @@ static void air_touch(lv_event_t *e)
     air_t *air = lv_event_get_user_data(e);
     lv_event_code_t code = lv_event_get_code(e);
     lv_indev_t *indev = lv_indev_active();
-    lv_point_t point = {0};
-    if (indev) lv_indev_get_point(indev, &point);
+    if (indev == NULL)
+        return;
+    lv_point_t point;
+    lv_indev_get_point(indev, &point);
+
     if (code == LV_EVENT_PRESSED)
     {
-        air->last = point;
-        if (!air->scrolling && (remote_settings()->air_flags & AIR_ALWAYS))
-            air->held = remote_send_ok(hid_link_mouse(0, 0, 1, 0));
-        air->clutch = true;
-        air->travel = 0;
+        air->start = air->last = point;
         air->pressed_at = lv_tick_get();
-        atomic_store(&s_motion_x, 0); /* start from where the hand is now */
-        atomic_store(&s_motion_y, 0);
-        lv_obj_set_style_border_color(air->pad, ui_color(UI_COLOR_ORANGE), 0);
+        air->travel = 0;
+        air->along = 0;
+        air->edge = remote_edge_at(point);
+        air->state = AIR_UNDECIDED;
+        if (!always_on())
+        {
+            atomic_store(&s_motion_x, 0); /* the clutch starts from where the hand is now */
+            atomic_store(&s_motion_y, 0);
+        }
+        return;
     }
-    else if (code == LV_EVENT_PRESSING && air->clutch && air->scrolling)
+    if (code == LV_EVENT_PRESSING)
     {
-        air->sx = fmaxf(-512, fminf(512, air->sx + point.x - air->last.x));
-        air->sy = fmaxf(-512, fminf(512, air->sy + point.y - air->last.y));
+        int32_t dx = point.x - air->last.x, dy = point.y - air->last.y;
         air->last = point;
+        if (air->state == AIR_UNDECIDED)
+        {
+            int32_t tx = point.x - air->start.x, ty = point.y - air->start.y;
+            if (LV_ABS(tx) + LV_ABS(ty) < AIR_SLOP)
+                return;
+            if (remote_edge_claims(air->edge, tx, ty))
+            {
+                air->state = AIR_EDGE;
+                remote_edge_light(air->marks, air->edge);
+                pill_show(air, remote_edge_name(air->edge));
+                dx = tx; /* the slop travel counts too */
+                dy = ty;
+            }
+            else
+            {
+                air->state = AIR_POINTER; /* a finger slide is no gesture here: keep the clutch */
+                ring_color(air, UI_COLOR_ORANGE);
+            }
+        }
+        if (air->state == AIR_EDGE)
+            remote_edge_move(air->edge, remote_edge_vertical(air->edge) ? dy : dx, &air->along);
+        return;
     }
-    else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)
-    {
-        bool tap = code == LV_EVENT_RELEASED && air->travel < 12 && lv_tick_elaps(air->pressed_at) < 350;
-        air->clutch = false;
-        lv_obj_set_style_border_color(air->pad, ui_color(air->scrolling ? UI_COLOR_ORANGE : UI_COLOR_TEAL), 0);
-        bool held = air->held;
-        air->held = false;
-        if (held) hid_link_mouse(0, 0, 0, 0);
-        if (tap && !held && !air->scrolling)
-            remote_send_ok(hid_link_click(1, 1));
-    }
-}
-
-static void air_button(lv_event_t *e)
-{
-    int i = (int)(intptr_t)lv_event_get_user_data(e);
-    remote_send_ok(hid_link_click(i == 0 ? 1 : 2, 1));
+    /* Released or lost */
+    bool tap =
+        code == LV_EVENT_RELEASED && air->state == AIR_UNDECIDED && lv_tick_elaps(air->pressed_at) < AIR_TAP_MS;
+    if (tap)
+        remote_send_ok(hid_link_click(1, 1));
+    touch_end(air);
 }
 
 static void option_clicked(lv_event_t *e)
@@ -299,7 +380,7 @@ static void option_clicked(lv_event_t *e)
     remote_settings_save(&settings);
     ui_toast(settings.air_flags & (i == 0 ? AIR_INVERT_X : i == 1 ? AIR_INVERT_Y : AIR_ALWAYS) ? "Attivo" : "Disattivo");
     if (s_air != NULL)
-        s_air->calibrated_shown = !atomic_load(&s_calibrated); /* refresh the hint */
+        lv_label_set_text(s_air->hint, idle_hint());
 }
 
 static void air_options_create(lv_obj_t *screen, void *arg)
@@ -314,29 +395,15 @@ static void air_options_create(lv_obj_t *screen, void *arg)
     ui_row(page, LV_SYMBOL_GPS, UI_COLOR_ORANGE, "Sempre attivo", flags & AIR_ALWAYS ? "Si" : "No", option_clicked,
            (void *)2);
     ui_row(page, LV_SYMBOL_REFRESH, UI_COLOR_BLUE, "Ricalibra", "Tieni fermo", option_clicked, (void *)3);
-    ui_text(page, "Velocita: Opzioni > velocita del puntatore. Con \"Sempre attivo\" il puntatore segue sempre il polso.",
+    ui_text(page,
+            "Sul pad: tocca per il clic, tieni fermi dito e polso per il destro. Bordi: scorrimento, volume e "
+            "luminosità come nel mouse. Con \"Sempre attivo\" il puntatore segue sempre il polso e dito + polso "
+            "trascina. Velocità: Opzioni > velocità del puntatore.",
             true);
 }
 
 static const app_t s_air_options_app = {
     .id = "remote.air.options", .name = "Air mouse", .flags = APP_FLAG_HIDDEN, .create = air_options_create};
-
-static void air_scroll(lv_event_t *e)
-{
-    (void)e;
-    if (s_air == NULL)
-        return;
-    s_air->scrolling = !s_air->scrolling;
-    s_air->sx = s_air->sy = s_air->dx = s_air->dy = 0;
-    s_air->held = false;
-    hid_link_release_all();
-    lv_obj_set_style_bg_color(s_air->scroll, ui_color(s_air->scrolling ? UI_COLOR_ORANGE : UI_COLOR_CARD_HI), 0);
-    lv_obj_set_style_border_color(s_air->pad, ui_color(s_air->scrolling ? UI_COLOR_ORANGE : UI_COLOR_TEAL), 0);
-    if (s_air->scrolling)
-        lv_label_set_text(s_air->hint, "Scorri con il dito\nin ogni direzione");
-    else
-        s_air->calibrated_shown = !atomic_load(&s_calibrated); /* the next tick restores the hint */
-}
 
 static void air_more(lv_event_t *e)
 {
@@ -366,56 +433,17 @@ static void air_create(lv_obj_t *screen, void *arg)
         return;
     }
     s_air = air;
+    lv_obj_set_scrollable(screen, false);
     int32_t w = remote_screen_w(), h = remote_screen_h();
-    bool round = board_info()->round, landscape = remote_landscape();
+    bool round = board_info()->round;
 
-    /* Header: switcher on the left, title centred. */
-    ui_key_rect_t head = remote_header_band();
-    remote_switcher_button(screen);
-    lv_obj_t *title = lv_label_create(screen);
-    lv_label_set_text(title, "Air mouse");
-    lv_obj_set_style_text_font(title, UI_FONT_LARGE, 0);
-    lv_obj_update_layout(title);
-    lv_obj_set_pos(title, (w - lv_obj_get_width(title)) / 2, head.y + (head.h - lv_obj_get_height(title)) / 2);
-
-    /* Pad and four controls: below the pad in portrait, beside it in landscape. */
-    int32_t top = head.y + head.h + 8, bottom = round ? h * 91 / 100 : h - 8;
-    int32_t row_h = 48, size, pad_x, pad_y;
-    ui_key_rect_t controls[4];
-    if (landscape)
-    {
-        int32_t split = w * 56 / 100;
-        size = LV_MIN(split - 16, bottom - top);
-        pad_x = (split - size) / 2;
-        pad_y = top + (bottom - top - size) / 2;
-        int32_t ch = (bottom - top) / 4;
-        for (int i = 0; i < 4; i++)
-            controls[i] = (ui_key_rect_t){split, top + ch * i, w - 8 - split, ch};
-    }
-    else
-    {
-        int32_t area = bottom - 2 * row_h - 8 - top;
-        size = LV_MIN(w * 62 / 100, area);
-        pad_x = (w - size) / 2;
-        pad_y = top + (area - size) / 2;
-        for (int row = 0; row < 2; row++)
-        {
-            ui_key_rect_t band = ui_keyboard_band(w, h, round, bottom - (2 - row) * row_h, row_h, 8);
-            for (int col = 0; col < 2; col++)
-                controls[row * 2 + col] = (ui_key_rect_t){band.x + band.w * col / 2, band.y,
-                                                          band.w * (col + 1) / 2 - band.w * col / 2, band.h};
-        }
-    }
-
+    /* The whole screen is the pad, as in the touch mouse */
     air->pad = lv_obj_create(screen);
     lv_obj_remove_style_all(air->pad);
-    lv_obj_set_pos(air->pad, pad_x, pad_y);
-    lv_obj_set_size(air->pad, size, size);
-    lv_obj_set_style_radius(air->pad, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_size(air->pad, w, h);
+    lv_obj_set_style_radius(air->pad, round ? LV_RADIUS_CIRCLE : 0, 0);
     lv_obj_set_style_bg_opa(air->pad, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(air->pad, ui_color(UI_COLOR_CARD), 0);
-    lv_obj_set_style_border_width(air->pad, 3, 0);
-    lv_obj_set_style_border_color(air->pad, ui_color(UI_COLOR_TEAL), 0);
     lv_obj_set_scrollable(air->pad, false);
     lv_obj_set_press_lock(air->pad, true);
     lv_obj_set_gesture_bubble(air->pad, false);
@@ -423,36 +451,62 @@ static void air_create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(air->pad, air_touch, LV_EVENT_PRESSING, air);
     lv_obj_add_event_cb(air->pad, air_touch, LV_EVENT_RELEASED, air);
     lv_obj_add_event_cb(air->pad, air_touch, LV_EVENT_PRESS_LOST, air);
-    air->hint = lv_label_create(air->pad);
+    for (int i = 0; i < 4; i++)
+        air->marks[i] = remote_edge_mark(air->pad, (remote_edge_t)i);
+
+    /* The ring tells what the wrist does: teal idle, orange while it moves the pointer */
+    int32_t size = LV_MIN(w, h) * 46 / 100;
+    air->ring = lv_obj_create(air->pad);
+    lv_obj_remove_style_all(air->ring);
+    lv_obj_set_size(air->ring, size, size);
+    lv_obj_set_style_radius(air->ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(air->ring, 3, 0);
+    lv_obj_set_style_border_color(air->ring, ui_color(UI_COLOR_TEAL), 0);
+    lv_obj_remove_flag(air->ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(air->ring);
+    air->hint = lv_label_create(air->ring);
     lv_label_set_text(air->hint, "Tieni fermo\nl'orologio...");
-    lv_obj_set_width(air->hint, size * 80 / 100);
-    lv_obj_set_style_text_font(air->hint, UI_FONT_BODY, 0);
+    lv_obj_set_width(air->hint, size * 84 / 100);
+    lv_obj_set_style_text_font(air->hint, UI_FONT_SMALL, 0);
     lv_obj_set_style_text_align(air->hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(air->hint);
 
-    static const char *const names[] = {"Sinistro", "Destro", "Scorri", "Altro"};
-    for (int i = 0; i < 4; i++)
-    {
-        ui_key_rect_t r = controls[i];
-        lv_obj_t *button = lv_obj_create(screen);
-        lv_obj_remove_style_all(button);
-        lv_obj_set_pos(button, r.x + 3, r.y + 3);
-        lv_obj_set_size(button, r.w - 6, r.h - 6);
-        lv_obj_set_scrollable(button, false);
-        lv_obj_set_style_radius(button, 14, 0);
-        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(button, ui_color(UI_COLOR_CARD_HI), 0);
-        lv_obj_set_style_bg_color(button, ui_accent(), LV_STATE_PRESSED);
-        lv_obj_add_event_cb(button, i < 2 ? air_button : i == 2 ? air_scroll : air_more, LV_EVENT_CLICKED,
-                            (void *)(intptr_t)i);
-        lv_port_set_focusable(button);
-        lv_obj_t *label = lv_label_create(button);
-        lv_label_set_text(label, names[i]);
-        lv_obj_set_style_text_font(label, UI_FONT_BODY, 0);
-        lv_obj_center(label);
-        if (i == 2)
-            air->scroll = button;
-    }
+    air->pill = lv_obj_create(air->pad);
+    lv_obj_remove_style_all(air->pill);
+    lv_obj_set_size(air->pill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(air->pill, 18, 0);
+    lv_obj_set_style_pad_ver(air->pill, 8, 0);
+    lv_obj_set_style_radius(air->pill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(air->pill, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(air->pill, ui_accent(), 0);
+    lv_obj_remove_flag(air->pill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *pill_text = lv_label_create(air->pill);
+    lv_label_set_text(pill_text, "");
+    lv_obj_set_style_text_font(pill_text, UI_FONT_BODY, 0);
+    lv_obj_set_style_text_color(pill_text, lv_color_black(), 0);
+    lv_obj_center(air->pill);
+    lv_obj_add_flag(air->pill, LV_OBJ_FLAG_HIDDEN);
+
+    /* Header over the pad: switcher on the left, options on the right */
+    ui_key_rect_t head = remote_header_band();
+    remote_switcher_button(screen);
+    lv_obj_t *more = lv_obj_create(screen);
+    lv_obj_remove_style_all(more);
+    lv_obj_set_pos(more, head.x + head.w - 47, head.y + 3);
+    lv_obj_set_size(more, 44, head.h - 6);
+    lv_obj_set_scrollable(more, false);
+    lv_obj_set_style_radius(more, 14, 0);
+    lv_obj_set_style_bg_opa(more, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(more, ui_color(UI_COLOR_CARD_HI), 0);
+    lv_obj_set_style_bg_color(more, ui_accent(), LV_STATE_PRESSED);
+    lv_obj_set_ext_click_area(more, 8);
+    lv_obj_add_event_cb(more, air_more, LV_EVENT_CLICKED, NULL);
+    lv_port_set_focusable(more);
+    lv_obj_t *more_label = lv_label_create(more);
+    lv_label_set_text(more_label, LV_SYMBOL_BARS);
+    lv_obj_set_style_text_color(more_label, ui_accent(), 0);
+    lv_obj_center(more_label);
+
     air->version = hid_link_version();
     air->calibrated_shown = false;
     atomic_store(&s_motion_x, 0);
@@ -467,11 +521,8 @@ static void air_create(lv_obj_t *screen, void *arg)
 
 static void air_pause(void)
 {
-    if (s_air != NULL) {
-        s_air->clutch = false;
-        s_air->held = false;
-        s_air->sx = s_air->sy = s_air->dx = s_air->dy = 0;
-    }
+    if (s_air != NULL)
+        touch_end(s_air);
     atomic_store(&s_wanted, false);
     hid_link_release_all();
 }
