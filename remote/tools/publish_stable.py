@@ -11,7 +11,7 @@ Build first with <board repo>/tools/build_remote.ps1 -Board <board>, without
 import argparse, base64, hashlib, json, subprocess, urllib.error, urllib.request
 from pathlib import Path
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 TAG = f"remote-v{VERSION}"
 REPO = "matteo-forcinito/watch-firmware-releases"
 # Publish only boards verified on hardware with this version.

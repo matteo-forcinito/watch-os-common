@@ -48,9 +48,11 @@ typedef enum
 } air_touch_t;
 
 #define AIR_SLOP 8      /* finger px before a touch counts as a move */
-#define AIR_STILL 12    /* wrist px before the hand counts as moving */
+#define AIR_STILL 20    /* wrist px before the hand counts as moving */
 #define AIR_HOLD_MS 600 /* finger and wrist still this long: right click */
 #define AIR_TAP_MS 400
+#define AIR_SETTLE_MS 150   /* wrist motion ignored after a press or release: the finger jolts the watch */
+#define AIR_EDGE_WAIT_MS 300 /* on an edge the finger gets this long to start a gesture */
 
 typedef struct
 {
@@ -60,7 +62,7 @@ typedef struct
     float dx, dy; /* pointer counts not sent yet */
     float travel; /* wrist travel during this touch */
     float along;  /* edge travel not turned into steps yet */
-    uint32_t pressed_at;
+    uint32_t pressed_at, released_at;
     uint32_t version;
     remote_edge_t edge;
     air_touch_t state;
@@ -228,6 +230,7 @@ static void touch_end(air_t *air)
     air->held = false;
     air->state = AIR_IDLE;
     air->dx = air->dy = 0;
+    air->released_at = lv_tick_get();
     lv_obj_add_flag(air->pill, LV_OBJ_FLAG_HIDDEN);
     remote_edge_light(air->marks, REMOTE_EDGE_NONE);
     ring_color(air, UI_COLOR_TEAL);
@@ -265,11 +268,20 @@ static void air_tick(lv_timer_t *timer)
         return;
     }
 
-    if (air->state == AIR_UNDECIDED || air->state == AIR_POINTER)
-        air->travel += abs(mx) + abs(my);
+    /* The jolt of a release would move the pointer between the clicks of a double click. */
+    if (air->state == AIR_IDLE && lv_tick_elaps(air->released_at) < AIR_SETTLE_MS)
+        return;
     if (air->state == AIR_UNDECIDED)
     {
-        if (air->travel >= AIR_STILL)
+        uint32_t elapsed = lv_tick_elaps(air->pressed_at);
+        if (elapsed < AIR_SETTLE_MS)
+            return; /* the jolt of the press is no hand movement */
+        /* Held back while undecided: a tap clicks where the pointer was. */
+        air->travel += abs(mx) + abs(my);
+        air->dx += mx;
+        air->dy += my;
+        mx = my = 0;
+        if (air->travel >= AIR_STILL && (air->edge == REMOTE_EDGE_NONE || elapsed >= AIR_EDGE_WAIT_MS))
         {
             /* The hand moved: pointer (clutch) or drag (always on). */
             air->state = AIR_POINTER;
@@ -280,17 +292,19 @@ static void air_tick(lv_timer_t *timer)
                 pill_show(air, "Trascina");
             }
         }
-        else if (lv_tick_elaps(air->pressed_at) >= AIR_HOLD_MS)
+        else if (elapsed >= AIR_HOLD_MS && air->travel < AIR_STILL)
         {
             air->state = AIR_DONE;
+            air->dx = air->dy = 0;
             if (remote_send_ok(hid_link_click(2, 1)))
                 pill_show(air, "Clic destro");
             return;
         }
+        else
+            return;
     }
     /* The wrist drives the pointer while the finger holds it, or always when chosen. */
-    bool pointer = air->state == AIR_POINTER || air->state == AIR_UNDECIDED ||
-                   (air->state == AIR_IDLE && always_on());
+    bool pointer = air->state == AIR_POINTER || (air->state == AIR_IDLE && always_on());
     if (!pointer)
     {
         air->dx = air->dy = 0;
@@ -343,6 +357,7 @@ static void air_touch(lv_event_t *e)
             if (remote_edge_claims(air->edge, tx, ty))
             {
                 air->state = AIR_EDGE;
+                air->dx = air->dy = 0; /* wrist motion held back while undecided is dropped */
                 remote_edge_light(air->marks, air->edge);
                 pill_show(air, remote_edge_name(air->edge));
                 dx = tx; /* the slop travel counts too */
