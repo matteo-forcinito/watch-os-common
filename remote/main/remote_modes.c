@@ -604,7 +604,7 @@ static void mouse_knob(lv_event_t *event)
     mouse_t *mouse = lv_event_get_user_data(event);
     lv_port_knob_t *knob = lv_event_get_param(event);
     knob->handled = true;
-    remote_send_ok(hid_link_pointer(0, 0, mouse->dragging ? 1 : 0, bounded(knob->delta), 0));
+    remote_send_ok(hid_link_pointer(0, 0, mouse->dragging ? 1 : 0, remote_wheel(bounded(knob->delta)), 0));
 }
 
 static void mouse_create(lv_obj_t *screen, void *arg)

@@ -68,10 +68,10 @@ void remote_edge_move(remote_edge_t edge, int32_t delta, float *carry)
         switch (edge)
         {
         case REMOTE_EDGE_RIGHT: /* content follows the finger, as on a phone */
-            hid_link_pointer(0, 0, 0, (int8_t)sign, 0);
+            hid_link_pointer(0, 0, 0, remote_wheel((int8_t)sign), 0);
             break;
         case REMOTE_EDGE_BOTTOM:
-            hid_link_pointer(0, 0, 0, 0, (int8_t)-sign);
+            hid_link_pointer(0, 0, 0, 0, remote_pan((int8_t)-sign));
             break;
         case REMOTE_EDGE_LEFT: /* finger up: louder */
             hid_link_media(sign < 0 ? HIDL_MEDIA_VOLUME_UP : HIDL_MEDIA_VOLUME_DOWN);

@@ -83,6 +83,14 @@ static void set_swipe(lv_event_t *e)
     remote_settings_save(&s);
 }
 
+static void set_scroll(lv_event_t *e)
+{
+    remote_settings_t s = *remote_settings();
+    uint8_t bit = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    s.scroll_flags = switch_on(e) ? s.scroll_flags | bit : s.scroll_flags & ~bit;
+    remote_settings_save(&s);
+}
+
 static void set_auto_caps(lv_event_t *e)
 {
     remote_settings_t s = *remote_settings();
@@ -134,6 +142,10 @@ static void create(lv_obj_t *screen, void *arg)
            : s->pointer_speed == 2 ? "Normale"
                                    : "Veloce",
            cycle_speed, NULL);
+    ui_switch_row(page, LV_SYMBOL_UP, UI_COLOR_TEAL, "Inverti scorrimento verticale", s->scroll_flags & 1, set_scroll,
+                  (void *)1);
+    ui_switch_row(page, LV_SYMBOL_RIGHT, UI_COLOR_TEAL, "Inverti scorrimento orizzontale", s->scroll_flags & 2,
+                  set_scroll, (void *)2);
     ui_text(page, "Le scorciatoie dipendono dall'app aperta sul computer. Per il gamepad configura i tasti nel gioco.",
             true);
 

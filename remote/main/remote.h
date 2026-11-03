@@ -37,12 +37,16 @@ typedef struct
     uint8_t meeting;       /* 0 Teams, 1 Zoom */
     uint8_t pointer_speed; /* 1..3 */
     uint8_t air_flags;     /* air mouse: 1 invert X, 2 invert Y, 4 always on */
+    uint8_t scroll_flags;  /* 1 invert vertical, 2 invert horizontal scroll (edges, knob) */
 } remote_settings_t;
 
 /* Settings kept in NVS ("remote" namespace). */
 const remote_settings_t *remote_settings(void);
 void remote_settings_save(const remote_settings_t *settings);
 void remote_settings_load(void);
+/* Scroll steps as the user wants them (Opzioni > Mouse: inverti). */
+int8_t remote_wheel(int8_t steps);
+int8_t remote_pan(int8_t steps);
 
 /* Dictionary for the current language (loaded once, NULL if out of memory). */
 const swipe_dict_t *remote_dictionary(void);

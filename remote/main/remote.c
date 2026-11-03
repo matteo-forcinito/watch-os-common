@@ -37,6 +37,16 @@ const remote_settings_t *remote_settings(void)
     return &s_settings;
 }
 
+int8_t remote_wheel(int8_t steps)
+{
+    return s_settings.scroll_flags & 1 ? (int8_t)-steps : steps;
+}
+
+int8_t remote_pan(int8_t steps)
+{
+    return s_settings.scroll_flags & 2 ? (int8_t)-steps : steps;
+}
+
 void remote_settings_load(void)
 {
     nvs_handle_t nvs;
@@ -75,6 +85,7 @@ void remote_settings_load(void)
     if (s_settings.pointer_speed < 1 || s_settings.pointer_speed > 3)
         s_settings.pointer_speed = 2;
     s_settings.air_flags &= 7;
+    s_settings.scroll_flags &= 3; /* older blobs end before it: 0, as before */
 
     hid_link_set_host_layout((hid_host_layout_t)s_settings.host_layout);
 }
