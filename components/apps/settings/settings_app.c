@@ -164,6 +164,11 @@ static void set_knob_focus(lv_event_t *e)
     lv_port_set_focus_mode(on);
 }
 
+static void set_knob_reverse(lv_event_t *e)
+{
+    lv_port_set_knob_reverse(switch_on(e));
+}
+
 static const char *homepage_name(uint8_t homepage)
 {
     return homepage == 1 ? "Casa" : homepage == 2 ? "Lista app" : "Classica";
@@ -221,6 +226,12 @@ static void display_create(lv_obj_t *screen, void *arg)
     }
 
     ui_text(page, "Always on: l'ora resta visibile, attenuata (consuma un po' di più).", true);
+
+    if (ui_board_info()->has_knob)
+    {
+        ui_switch_row(page, LV_SYMBOL_LOOP, UI_COLOR_TEAL, "Rotella: inverti", lv_port_knob_reverse(),
+                      set_knob_reverse, NULL);
+    }
 
     if (ui_board_info()->has_knob)
     {

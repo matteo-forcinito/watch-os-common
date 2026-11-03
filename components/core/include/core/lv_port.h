@@ -129,6 +129,9 @@ static inline void lv_port_set_focusable(lv_obj_t *obj)
 
 void lv_port_set_focus_mode(bool on);
 bool lv_port_focus_mode(void);
+/* Knob boards: turn the other way round (saved; system and apps share it). */
+void lv_port_set_knob_reverse(bool on);
+bool lv_port_knob_reverse(void);
 
 /* "Press" the highlighted object (knob click in focus mode). */
 void lv_port_focus_enter(void);

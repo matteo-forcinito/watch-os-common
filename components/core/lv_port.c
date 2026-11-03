@@ -4,6 +4,7 @@
 
 #include "core/power.h"
 #include "core/settings.h"
+#include "nvs.h"
 #include "core/state.h"
 #include "core/sys.h"
 
@@ -763,9 +764,31 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 
 /* ---------------------------------------------------------------- knob */
 
+/* Kept apart from settings_t (key "knob_rev"): a longer settings blob would not load in
+ * external apps built before it, and the direction must be the same everywhere. */
+#define KNOB_NVS "lv_port"
+static atomic_bool s_knob_reverse;
+
+void lv_port_set_knob_reverse(bool on)
+{
+    atomic_store(&s_knob_reverse, on);
+    nvs_handle_t nvs;
+    if (nvs_open(KNOB_NVS, NVS_READWRITE, &nvs) == ESP_OK)
+    {
+        nvs_set_u8(nvs, "knob_rev", on);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
+
+bool lv_port_knob_reverse(void)
+{
+    return atomic_load(&s_knob_reverse);
+}
+
 static void knob_cb(int delta)
 {
-    atomic_fetch_add(&s_knob_delta, delta);
+    atomic_fetch_add(&s_knob_delta, atomic_load(&s_knob_reverse) ? -delta : delta);
     lv_port_wake();
 }
 
@@ -1431,6 +1454,15 @@ static esp_err_t init_port(bool headless)
         s_focus_color = lv_color_hex(TK_CYAN);
         /* Without touch the focus is the only way to pick anything. */
         s_focus_mode = settings_get()->knob_focus || !board_info()->has_touch;
+
+        nvs_handle_t nvs;
+        uint8_t reverse = 0;
+        if (nvs_open(KNOB_NVS, NVS_READONLY, &nvs) == ESP_OK)
+        {
+            nvs_get_u8(nvs, "knob_rev", &reverse);
+            nvs_close(nvs);
+        }
+        atomic_store(&s_knob_reverse, reverse != 0);
 
         if (knob_init(knob_cb) != ESP_OK)
         {
