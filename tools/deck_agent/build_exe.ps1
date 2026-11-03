@@ -2,7 +2,8 @@
 #   powershell -ExecutionPolicy Bypass -File build_exe.ps1
 # Output: dist\WatchDeck.exe. Running it offers to install itself (Start menu,
 # start with Windows, Settings > Apps entry for removal).
-$ErrorActionPreference = 'Stop'
+# Native tools write notices on stderr (pip's "new release"): exit codes decide, not stderr.
+$ErrorActionPreference = 'Continue'
 Set-Location $PSScriptRoot
 
 py -3 -m pip install --quiet --upgrade -r requirements.txt pyinstaller
