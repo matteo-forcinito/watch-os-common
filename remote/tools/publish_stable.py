@@ -11,7 +11,7 @@ Build first with <board repo>/tools/build_remote.ps1 -Board <board>, without
 import argparse, base64, hashlib, json, subprocess, urllib.error, urllib.request
 from pathlib import Path
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 TAG = f"remote-v{VERSION}"
 REPO = "matteo-forcinito/watch-firmware-releases"
 BOARDS = {  # Market board id -> board repo
@@ -25,10 +25,9 @@ BOARDS = {  # Market board id -> board repo
 # Short summary and asset names: the catalogue is close to the 48 KB that older firmware accepts.
 SUMMARY = "Mouse, tastiera, media e Deck per il PC."
 COLOR = "45C8D8"
-NOTES = ("Remote 1.4.0: scelta del computer e cambio a caldo (Remote > Computer), batteria su ogni schermata "
-         "e al PC, calibrazione dell'air mouse salvata, conferma all'uscita. Deck a sezioni (Le mie, App, Avvio, "
-         "Sistema; tocco sul titolo = indice), avvio di app e siti, App aperte, Cambia app con Alt tenuto. "
-         "Corretto il blocco con titoli di finestra troncati. Richiede Watch Deck aggiornato sul PC.")
+NOTES = ("Remote 1.4.1: inversione dello scorrimento verticale e orizzontale (Opzioni). Watcher: la rotella "
+         "risponde a ogni scatto. Dalla 1.4.0: scelta del computer a caldo, batteria su ogni schermata, Deck a "
+         "sezioni con avvio di app e siti, App aperte, Cambia app. Serve Watch Deck aggiornato sul PC.")
 
 p = argparse.ArgumentParser()
 p.add_argument("--publish", action="store_true")
