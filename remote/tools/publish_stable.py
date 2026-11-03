@@ -11,7 +11,7 @@ Build first with <board repo>/tools/build_remote.ps1 -Board <board>, without
 import argparse, base64, hashlib, json, subprocess, urllib.error, urllib.request
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 TAG = f"remote-v{VERSION}"
 REPO = "matteo-forcinito/watch-firmware-releases"
 # Publish only boards verified on hardware with this version.
@@ -23,9 +23,9 @@ BOARDS = {  # Market board id -> board repo
 }
 SUMMARY = "Mouse a gesti, tastiera, media, Deck per il PC; hub per più orologi."
 COLOR = "45C8D8"
-NOTES = ("Remote 1.3.0: layout corretti anche con lo schermo ruotato, selettore rapido delle modalità, "
-         "mouse a gesti (tocco, tieni premuto per il destro, tocca e trascina; bordi per scorrimento, "
-         "volume e luminosità), air mouse ridisegnato, Deck anche via cavo USB.")
+NOTES = ("Remote 1.3.1: air mouse a gesti come il mouse (tocco = clic, dito e polso fermi = destro, "
+         "bordi per scorrimento, volume e luminosità; con \"Sempre attivo\" dito + polso trascina). "
+         "Profili del Deck in un componente condiviso con Deck Bar.")
 
 p = argparse.ArgumentParser()
 p.add_argument("--publish", action="store_true")

@@ -1,4 +1,4 @@
-# Remote 1.3.0
+# Remote 1.3.1
 
 App esterna condivisa da Watcher W1-A, AMOLED 1.8, AMOLED 1.75 e Knob 1.8.
 Ogni modello richiede il proprio binario: i pacchetti non sono intercambiabili.
@@ -37,6 +37,7 @@ intercettare le scorciatoie; i comandi riunione sono predisposti per le app desk
 | Tastiera swipe | Lettere, numeri, simboli, accenti, maiuscole, suggerimenti IT/EN, spazio, cancellazione, Invio |
 | Tastiera PC | QWERTY, numeri/simboli, Ctrl, Alt, AltGr, Shift, Win/Cmd, Tab, Esc, Invio e spazio; pagina Fn con F1–F12, frecce, Home/End, Ins/Del, PgUp/PgDn, Caps, Print, Scroll, Pause e Menu |
 | Mouse | Tutto lo schermo è il touchpad, senza pulsanti: tocco = clic, due tocchi = doppio clic, tieni premuto = destro, tocca e poi trascina = trascinamento. Lungo i bordi: destro scorre in verticale, inferiore in orizzontale, sinistro regola il volume, superiore la luminosità (portatili). Un bordo agisce solo se il dito parte lì e si muove lungo il bordo; sui rotondi conta la fascia esterna. ≡ in alto: clic centrale, avanti/indietro |
+| Air mouse | Il polso muove il puntatore mentre il dito resta sullo schermo (o sempre, con «Sempre attivo»). Tocco = clic, dito e polso fermi 0,6 s = destro, con «Sempre attivo» dito + polso = trascinamento. Bordi come nel mouse. ≡ in alto: opzioni e ricalibrazione. Solo sui modelli con giroscopio |
 | Media | Play/pausa, precedente/successivo, volume con ripetizione, mute, stop ed espulsione se supportata dal computer |
 | Presentazioni | Avvio PowerPoint, avvio dalla slide corrente, precedente/successiva, schermo nero/bianco, prima slide e termine |
 | Riunioni | Teams/Zoom: microfono, video, mano, condivisione, toolbar/chat e uscita |
