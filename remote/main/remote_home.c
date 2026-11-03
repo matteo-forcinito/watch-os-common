@@ -19,8 +19,10 @@
 #include "ui/ui.h"
 
 #include "hid_link/hid_hub.h"
+#include "esp_app_desc.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct
@@ -167,7 +169,7 @@ void remote_home_create(lv_obj_t *screen)
         ui_text(page, remote_device_name(), true);
     }
 
-    if (remote_settings()->transport == HID_LINK_BLE && hid_hub_role() != HID_HUB_SATELLITE)
+    if (hid_hub_role() != HID_HUB_SATELLITE)
         s_host = ui_row(page, LV_SYMBOL_BLUETOOTH, UI_COLOR_BLUE, "Computer", remote_host_text(), open_hosts, NULL);
 
     ui_row(page, LV_SYMBOL_SHUFFLE, UI_COLOR_PURPLE, "Hub multi-orologio", remote_hub_role_text(), open_hub, NULL);
@@ -175,6 +177,9 @@ void remote_home_create(lv_obj_t *screen)
     ui_row(page, LV_SYMBOL_LEFT, UI_COLOR_RED, "Esci", NULL, leave, NULL);
 
     ui_text(page, "Associa Remote dalle impostazioni Bluetooth del computer. Esci torna al launcher.", true);
+    char version[48];
+    snprintf(version, sizeof(version), "Remote %s", esp_app_get_description()->version);
+    ui_text(page, version, true);
 
     refresh_status(NULL);
     lv_timer_create(refresh_status, 300, NULL); /* the home screen is never deleted */

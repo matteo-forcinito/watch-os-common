@@ -205,6 +205,8 @@ static void create(lv_obj_t *screen, void *arg)
 const char *remote_host_text(void)
 {
     static hid_link_host_t hosts[HID_LINK_HOSTS_MAX];
+    if (hid_link_transport() != HID_LINK_BLE)
+        return "Solo Bluetooth";
     int count = hid_link_hosts(hosts, HID_LINK_HOSTS_MAX);
     for (int i = 0; i < count; i++)
         if (hosts[i].connected && hid_link_state() == HID_LINK_CONNECTED)

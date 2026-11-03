@@ -34,6 +34,12 @@ static void cycle_speed(lv_event_t *e)
                                                                                                : "Veloce");
 }
 
+static void open_hosts(lv_event_t *e)
+{
+    (void)e;
+    app_open_app(&remote_hosts_app, NULL);
+}
+
 static void forget_worker(void *arg)
 {
     (void)arg;
@@ -137,6 +143,7 @@ static void create(lv_obj_t *screen, void *arg)
     ui_switch_row(page, LV_SYMBOL_UP, UI_COLOR_TEAL, "Maiuscola automatica", s->auto_caps, set_auto_caps, NULL);
 
     ui_section(page, "BLUETOOTH");
+    ui_row(page, LV_SYMBOL_BLUETOOTH, UI_COLOR_BLUE, "Computer", remote_host_text(), open_hosts, NULL);
     ui_row(page, LV_SYMBOL_TRASH, UI_COLOR_RED, "Dimentica dispositivi", NULL, forget_hosts, NULL);
 }
 
