@@ -14,18 +14,20 @@ from pathlib import Path
 VERSION = "1.3.2"
 TAG = f"remote-v{VERSION}"
 REPO = "matteo-forcinito/watch-firmware-releases"
-# Publish only boards verified on hardware with this version.
 BOARDS = {  # Market board id -> board repo
     "amoled_watch": "ESP32-S3-Amoled-Touch-1.8",
     "amoled175_watch": "ESP32-S3-Touch-AMOLED-1.75",
+    "amoled175c_watch": "ESP32-S3-Touch-AMOLED-1.75C",
     "knob_os": "ESP32-S3-Knob-Touch-LCD-1.8",
     "watcher_os": "SenseCap-Watcher-W1-A",
+    "guition4848_panel": "ESP32-4848S040C-I",
 }
-SUMMARY = "Mouse a gesti, tastiera, media, Deck per il PC; hub per più orologi."
+# Short summary and asset names: the catalogue is close to the 48 KB that older firmware accepts.
+SUMMARY = "Mouse, tastiera, media e Deck per il PC."
 COLOR = "45C8D8"
-NOTES = ("Remote 1.3.1: air mouse a gesti come il mouse (tocco = clic, dito e polso fermi = destro, "
-         "bordi per scorrimento, volume e luminosità; con \"Sempre attivo\" dito + polso trascina). "
-         "Profili del Deck in un componente condiviso con Deck Bar.")
+NOTES = ("Remote 1.3.2, per tutti i dispositivi: mouse e air mouse a gesti (tocco = clic, tenuto = destro, "
+         "bordi per scorrimento, volume e luminosità). L'air mouse ignora il sobbalzo del dito: il tocco "
+         "clicca dove c'è il puntatore e i bordi non passano più al polso.")
 
 p = argparse.ArgumentParser()
 p.add_argument("--publish", action="store_true")
@@ -43,7 +45,8 @@ for board in a.boards:
     assert binary[80:112].split(b"\0", 1)[0] == b"remote", f"{board}: wrong project"
     assert binary[48:80].split(b"\0", 1)[0] == VERSION.encode(), f"{board}: wrong version"
     assert b"CONFIG_WATCH_DEV_CONSOLE=y" not in (app / "build-remote/sdkconfig").read_bytes(), f"{board}: console build"
-    names = (f"Remote-{board}-{VERSION}.bin", f"Remote-{board}-{VERSION}.png")
+    names = (f"{board}.bin", "icon.png")  # one icon for every board
+    assert names[1] not in assets or assets[names[1]] == icon, f"{board}: icon differs"
     assets[names[0]], assets[names[1]] = binary, icon
     item = lambda data, name: {"size": len(data), "sha256": hashlib.sha256(data).hexdigest(), "url": prefix + name}
     entries.append({"id": "Remote", "name": "Remote", "version": VERSION, "board": board, "project": "remote",
