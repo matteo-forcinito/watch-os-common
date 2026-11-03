@@ -272,23 +272,25 @@ ACTIONS = {"lock": lock, "display_off": display_off, "mic": mic_toggle, "taskmgr
 
 
 class WinLink:
-    """Deck service of a paired watch, over the connection Windows already holds."""
+    """Deck service of every paired watch Windows holds connected (several Remote at once)."""
+
+    SEND_TIMEOUT = 5  # a write the watch never confirms must not freeze the agent
 
     def __init__(self, loop, on_receive, on_lost):
         self.loop, self.on_receive, self.on_lost = loop, on_receive, on_lost
-        self.device = self.rx = self.tx = None
-        self.tokens = []
+        self.watches = {}  # device id -> (name, device, rx, tx, tokens)
 
-    async def open(self, name: str) -> str | None:
+    async def _connect(self, name: str) -> list[str]:
         from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice
         from winrt.windows.devices.bluetooth.genericattributeprofile import (
             GattClientCharacteristicConfigurationDescriptorValue as Cccd,
         )
         from winrt.windows.devices.enumeration import DeviceInformation
 
+        added = []
         selector = BluetoothLEDevice.get_device_selector_from_pairing_state(True)
         for info in await DeviceInformation.find_all_async_aqs_filter(selector):
-            if name.lower() not in info.name.lower():
+            if name.lower() not in info.name.lower() or info.id in self.watches:
                 continue
             device = await BluetoothLEDevice.from_id_async(info.id)
             if device is None or device.connection_status != BluetoothConnectionStatus.CONNECTED:
@@ -297,14 +299,29 @@ class WinLink:
             service = next((s for s in services.services if str(s.uuid) == SERVICE), None)
             if service is None:
                 continue  # an older Remote without the Deck service
-            chars = (await service.get_characteristics_async(BluetoothCacheMode.UNCACHED)).characteristics
-            by_uuid = {str(c.uuid): c for c in chars}
-            self.device, self.rx, self.tx = device, by_uuid[RX], by_uuid[TX]
-            self.tokens.append(self.tx.add_value_changed(self._changed))
-            self.tokens.append(device.add_connection_status_changed(self._status))
-            await self.tx.write_client_characteristic_configuration_descriptor_with_result_async(Cccd.NOTIFY)
-            return info.name
-        return None
+            result = await service.get_characteristics_async(BluetoothCacheMode.UNCACHED)
+            if not result.characteristics:  # Windows may refuse a fresh read: its cache is as good
+                result = await service.get_characteristics_async(BluetoothCacheMode.CACHED)
+            by_uuid = {str(c.uuid): c for c in result.characteristics}
+            if RX not in by_uuid or TX not in by_uuid:  # GATT read failed: the next refresh tries again
+                print(f"{info.name}: servizio Deck non leggibile (stato {result.status})")
+                device.close()
+                continue
+            rx, tx = by_uuid[RX], by_uuid[TX]
+            tokens = [tx.add_value_changed(self._changed), device.add_connection_status_changed(self._status)]
+            await tx.write_client_characteristic_configuration_descriptor_with_result_async(Cccd.NOTIFY)
+            self.watches[info.id] = (info.name, device, rx, tx, tokens)
+            added.append(info.name)
+        return added
+
+    async def open(self, name: str) -> str | None:
+        self.name = name
+        added = await self._connect(name)
+        return " + ".join(added) if added else None
+
+    async def refresh(self) -> list[str]:
+        """Watches connected since the session started."""
+        return await self._connect(self.name)
 
     def _changed(self, _, args) -> None:
         data = bytes(args.characteristic_value)
@@ -320,16 +337,23 @@ class WinLink:
         from winrt.windows.devices.bluetooth.genericattributeprofile import GattCommunicationStatus, GattWriteOption
         from winrt.windows.storage.streams import DataWriter
 
-        writer = DataWriter()
-        writer.write_bytes(data)
-        result = await self.rx.write_value_with_result_async(writer.detach_buffer(), GattWriteOption.WRITE_WITH_RESPONSE)
-        if result.status != GattCommunicationStatus.SUCCESS:
-            raise OSError(f"scrittura GATT: stato {result.status}")
+        for key, (name, _, rx, _, _) in list(self.watches.items()):
+            writer = DataWriter()
+            writer.write_bytes(data)
+            try:
+                result = await asyncio.wait_for(
+                    rx.write_value_with_result_async(writer.detach_buffer(), GattWriteOption.WRITE_WITH_RESPONSE),
+                    self.SEND_TIMEOUT)
+                ok = result.status == GattCommunicationStatus.SUCCESS
+            except (asyncio.TimeoutError, OSError):
+                ok = False
+            if not ok:
+                raise OSError(f"{name} non risponde")
 
     async def close(self) -> None:
-        if self.device is not None:
-            self.device.close()
-            self.device = None
+        for _, device, _, _, _ in self.watches.values():
+            device.close()
+        self.watches.clear()
 
 
 class BleakLink:
@@ -571,6 +595,12 @@ async def session(name: str, selftest: bool = False) -> bool:
                 if state != last_sys:
                     await send(state)
                     last_sys = state
+            if tick % 20 == 19 and hasattr(link, "refresh"):
+                added = await link.refresh()
+                if added:
+                    print(f"Collegato anche a {' + '.join(added)}")
+                    await send({"t": "host", "name": clean(platform.node(), 23)})
+                    last_ctx = last_media = last_sys = None  # the new watch needs the whole state
             tick += 1
             try:
                 await asyncio.wait_for(disconnected.wait(), 0.5)
