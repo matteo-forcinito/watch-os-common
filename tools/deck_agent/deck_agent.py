@@ -331,30 +331,42 @@ class WinLink:
 
         added = []
         selector = BluetoothLEDevice.get_device_selector_from_pairing_state(True)
-        for info in await DeviceInformation.find_all_async_aqs_filter(selector):
+        devices = await asyncio.wait_for(DeviceInformation.find_all_async_aqs_filter(selector), 10)
+        for info in devices:
             if name.lower() not in info.name.lower() or info.id in self.watches:
                 continue
-            device = await BluetoothLEDevice.from_id_async(info.id)
-            if device is None or device.connection_status != BluetoothConnectionStatus.CONNECTED:
+            try:
+                # A watch that is restarting may never answer: skip it, the next round tries again.
+                found = await asyncio.wait_for(self._open_one(info, BluetoothLEDevice, BluetoothConnectionStatus,
+                                                              BluetoothCacheMode, Cccd), 10)
+            except (asyncio.TimeoutError, OSError) as error:
+                print(f"{info.name}: non risponde ({type(error).__name__})")
                 continue
-            services = await device.get_gatt_services_async(BluetoothCacheMode.UNCACHED)
-            service = next((s for s in services.services if str(s.uuid) == SERVICE), None)
-            if service is None:
-                continue  # an older Remote without the Deck service
-            result = await service.get_characteristics_async(BluetoothCacheMode.UNCACHED)
-            if not result.characteristics:  # Windows may refuse a fresh read: its cache is as good
-                result = await service.get_characteristics_async(BluetoothCacheMode.CACHED)
-            by_uuid = {str(c.uuid): c for c in result.characteristics}
-            if RX not in by_uuid or TX not in by_uuid:  # GATT read failed: the next refresh tries again
-                print(f"{info.name}: servizio Deck non leggibile (stato {result.status})")
-                device.close()
-                continue
-            rx, tx = by_uuid[RX], by_uuid[TX]
-            tokens = [tx.add_value_changed(self._changed), device.add_connection_status_changed(self._status)]
-            await tx.write_client_characteristic_configuration_descriptor_with_result_async(Cccd.NOTIFY)
-            self.watches[info.id] = (info.name, device, rx, tx, tokens)
-            added.append(info.name)
+            if found:
+                added.append(info.name)
         return added
+
+    async def _open_one(self, info, BluetoothLEDevice, BluetoothConnectionStatus, BluetoothCacheMode, Cccd) -> bool:
+        device = await BluetoothLEDevice.from_id_async(info.id)
+        if device is None or device.connection_status != BluetoothConnectionStatus.CONNECTED:
+            return False
+        services = await device.get_gatt_services_async(BluetoothCacheMode.UNCACHED)
+        service = next((s for s in services.services if str(s.uuid) == SERVICE), None)
+        if service is None:
+            return False  # an older Remote without the Deck service
+        result = await service.get_characteristics_async(BluetoothCacheMode.UNCACHED)
+        if not result.characteristics:  # Windows may refuse a fresh read: its cache is as good
+            result = await service.get_characteristics_async(BluetoothCacheMode.CACHED)
+        by_uuid = {str(c.uuid): c for c in result.characteristics}
+        if RX not in by_uuid or TX not in by_uuid:  # GATT read failed: the next refresh tries again
+            print(f"{info.name}: servizio Deck non leggibile (stato {result.status})")
+            device.close()
+            return False
+        rx, tx = by_uuid[RX], by_uuid[TX]
+        tokens = [tx.add_value_changed(self._changed), device.add_connection_status_changed(self._status)]
+        await tx.write_client_characteristic_configuration_descriptor_with_result_async(Cccd.NOTIFY)
+        self.watches[info.id] = (info.name, device, rx, tx, tokens)
+        return True
 
     async def open(self, name: str) -> str | None:
         self.name = name
@@ -363,7 +375,7 @@ class WinLink:
 
     async def refresh(self) -> list[str]:
         """Watches connected since the session started."""
-        return await self._connect(self.name)
+        return await self._connect(getattr(self, "name", "Remote"))
 
     def _changed(self, _, args) -> None:
         data = bytes(args.characteristic_value)
@@ -547,8 +559,32 @@ async def shutdown() -> None:
         await LINK.close()
 
 
+class Links:
+    """The cable and Bluetooth at once: a watch on USB and others paired over the air."""
+
+    def __init__(self, links: list) -> None:
+        self.links = links
+
+    async def send(self, data: bytes) -> None:
+        for link in self.links:
+            await link.send(data)
+
+    async def refresh(self) -> list[str]:
+        added = []
+        for link in self.links:
+            if hasattr(link, "refresh"):
+                added += await link.refresh()
+        return added
+
+    async def close(self) -> None:
+        for link in self.links:
+            await link.close()
+
+
 async def open_link(name: str, loop, received, lost):
-    """The cable first (it also works without pairing), then Bluetooth."""
+    """Every watch in reach: the cable (works without pairing) and the paired ones over Bluetooth."""
+    links, names, vias = [], [], []
+    bluetooth = None
     for kind, via in ((UsbLink, "USB"), (WinLink if WINDOWS else BleakLink, "Bluetooth")):
         link = kind(loop, received, lost)
         try:
@@ -557,8 +593,17 @@ async def open_link(name: str, loop, received, lost):
             print(f"{via}: {error}")
             found = None
         if found:
-            return link, found, via
-    return None, None, None
+            links.append(link)
+            names.append(found)
+            vias.append(via)
+        elif kind is WinLink:
+            bluetooth = link  # none yet: keep looking for watches that connect later
+    if not links:
+        return None, None, None
+    if bluetooth is not None:
+        links.append(bluetooth)
+    link = links[0] if len(links) == 1 else Links(links)
+    return link, " + ".join(names), " + ".join(vias)
 
 
 async def session(name: str, selftest: bool = False) -> bool:
