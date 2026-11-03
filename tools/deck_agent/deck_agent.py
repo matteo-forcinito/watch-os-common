@@ -476,7 +476,7 @@ class BleakLink:
         return device.name or device.address
 
     async def send(self, data: bytes) -> None:
-        await self.client.write_gatt_char(RX, data, response=True)
+        await bounded(self.client.write_gatt_char(RX, data, response=True), 5)
 
     async def close(self) -> None:
         if self.client is not None:
@@ -763,7 +763,10 @@ async def session(name: str, selftest: bool = False) -> bool:
                     await send_own_keys()
                 write_status()
                 await send({"t": "ping"})  # the watch shows the touchbar only while it hears the agent
-                media = await now_playing()
+                try:  # Windows' media session can stall (seen with a TV stream in Edge): never wait on it
+                    media = await bounded(now_playing(), 3)
+                except asyncio.TimeoutError:
+                    media = None
                 if media is not None:
                     media = {"t": "media", **media, "title": clean(media["title"], 63), "artist": clean(media["artist"], 47)}
                     if media != last_media:
