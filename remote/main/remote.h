@@ -16,6 +16,7 @@
 #include "core/app.h"
 #include "hid_link/hid_link.h"
 #include "swipe.h"
+#include "ui/keyboard_layout.h"
 
 #include <stdbool.h>
 
@@ -81,6 +82,29 @@ bool remote_send_ok(bool accepted);
 void remote_alarm_prepare(void);
 void remote_alarm_start(void);
 
+/* The screen as LVGL draws it, rotation included: layouts must never use the
+ * native panel size (an AMOLED 1.8 turned to landscape is 448x368). */
+static inline int32_t remote_screen_w(void)
+{
+    return lv_display_get_horizontal_resolution(lv_display_get_default());
+}
+static inline int32_t remote_screen_h(void)
+{
+    return lv_display_get_vertical_resolution(lv_display_get_default());
+}
+static inline bool remote_landscape(void)
+{
+    return remote_screen_w() > remote_screen_h() + 40;
+}
+
+/* Mode switcher: one button, same place and look on every mode screen. */
+extern const app_t remote_switcher_app;
+void remote_switcher_open(lv_event_t *e);
+lv_obj_t *remote_switcher_button(lv_obj_t *screen);
+/* The header band of every mode screen: switcher on the left, title centred. */
+ui_key_rect_t remote_header_band(void);
+/* ui_page() plus the switcher, for the list screens of a mode. */
+lv_obj_t *remote_page(lv_obj_t *screen, const char *title);
 void remote_home_create(lv_obj_t *screen);
 
 #endif

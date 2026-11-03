@@ -1,4 +1,4 @@
-# Remote 1.2.0
+# Remote 1.3.0
 
 App esterna condivisa da Watcher W1-A, AMOLED 1.8, AMOLED 1.75 e Knob 1.8.
 Ogni modello richiede il proprio binario: i pacchetti non sono intercambiabili.
@@ -33,10 +33,10 @@ intercettare le scorciatoie; i comandi riunione sono predisposti per le app desk
 
 | Modalità | Comandi |
 |---|---|
-| PC (Deck) | Touchbar che cambia con l'app in primo piano (VS Code, browser, file, Office, terminale, musica, chiamate), media, microfono, blocco PC, schermo spento, CPU/RAM e brano. Contesto e stato richiedono l'agente `tools/deck_agent` sul PC (solo Bluetooth; su Windows `install_windows.ps1`). Senza agente la pagina guida al collegamento. Vedi `docs/DECK.md` |
+| PC (Deck) | Touchbar che cambia con l'app in primo piano (VS Code, browser, file, Office, terminale, musica, chiamate), media, microfono, blocco PC, schermo spento, CPU/RAM e brano. Contesto e stato richiedono l'agente `tools/deck_agent` sul PC (Bluetooth o cavo USB; su Windows `install_windows.ps1`). Senza agente la pagina guida al collegamento. Vedi `docs/DECK.md` |
 | Tastiera swipe | Lettere, numeri, simboli, accenti, maiuscole, suggerimenti IT/EN, spazio, cancellazione, Invio |
 | Tastiera PC | QWERTY, numeri/simboli, Ctrl, Alt, AltGr, Shift, Win/Cmd, Tab, Esc, Invio e spazio; pagina Fn con F1–F12, frecce, Home/End, Ins/Del, PgUp/PgDn, Caps, Print, Scroll, Pause e Menu |
-| Mouse | Touchpad relativo, tap per click, sinistro/destro/centrale, doppio click, trascinamento con rilascio esplicito, avanti/indietro, frecce di scroll verticali/orizzontali ai lati del touchpad con ripetizione, pad in modalità scorrimento |
+| Mouse | Tutto lo schermo è il touchpad, senza pulsanti: tocco = clic, due tocchi = doppio clic, tieni premuto = destro, tocca e poi trascina = trascinamento. Lungo i bordi: destro scorre in verticale, inferiore in orizzontale, sinistro regola il volume, superiore la luminosità (portatili). Un bordo agisce solo se il dito parte lì e si muove lungo il bordo; sui rotondi conta la fascia esterna. ≡ in alto: clic centrale, avanti/indietro |
 | Media | Play/pausa, precedente/successivo, volume con ripetizione, mute, stop ed espulsione se supportata dal computer |
 | Presentazioni | Avvio PowerPoint, avvio dalla slide corrente, precedente/successiva, schermo nero/bianco, prima slide e termine |
 | Riunioni | Teams/Zoom: microfono, video, mano, condivisione, toolbar/chat e uscita |
@@ -46,6 +46,9 @@ intercettare le scorciatoie; i comandi riunione sono predisposti per le app desk
 La tastiera PC seleziona i modificatori per **il prossimo tasto** e li rilascia insieme a esso.
 Il pulsante **123 → Fn → abc** cambia pagina. Non è un terminale e non legge il testo sul PC.
 Sui display rotondi, righe e controlli seguono le corde del cerchio.
+
+Il pulsante ≡ in alto a sinistra apre il selettore: tutte le modalità a colpo d'occhio, la corrente evidenziata.
+I layout seguono lo schermo come è orientato (anche ruotato in orizzontale).
 
 Sui dispositivi con rotella: mouse = scorrimento, media = volume, presentazioni = slide.
 Quando è attiva la navigazione tramite focus, la rotella continua a selezionare i controlli.

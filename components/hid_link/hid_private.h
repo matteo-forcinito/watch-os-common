@@ -12,6 +12,8 @@
 #define HID_REPORT_MEDIA 2
 #define HID_REPORT_MOUSE 3
 #define HID_REPORT_GAMEPAD 4
+#define HID_REPORT_DECK 5 /* USB only: Deck data channel (hid_usb.c) */
+#define HID_DECK_CHUNK 63
 
 /*
  * One report map for both transports:
@@ -37,6 +39,9 @@ void hid_ble_forget(void);
 esp_err_t hid_deck_register(void);
 void hid_deck_subscribe(uint16_t conn, uint16_t attr, bool notify);
 void hid_deck_disconnected(void);
+/* USB: one 63-byte chunk from the PC; queue a message to the PC. */
+void hid_deck_usb_frame(const uint8_t *chunk, uint16_t length);
+bool hid_usb_deck_send(const char *message);
 
 esp_err_t hid_usb_start(const char *name);
 esp_err_t hid_usb_send(uint8_t report_id, const uint8_t *data, uint16_t length);

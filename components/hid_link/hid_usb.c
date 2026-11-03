@@ -7,6 +7,11 @@
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "class/hid/hid_device.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+
+#include <string.h>
 
 /*
  * USB keyboard (TinyUSB HID class). The watch must be connected with the
@@ -20,6 +25,35 @@
 
 static const char *TAG = "hid_usb";
 
+/* The USB report map is Remote's map plus a vendor collection (report 5):
+ * the Deck data channel on the cable, opened by the PC agent with hidapi,
+ * no driver needed. 63 bytes each way: [length | 0x80 on the last chunk] + 62. */
+static const uint8_t s_deck_collection[] = {
+    0x06, 0x00, 0xFF,       /* Usage Page (Vendor 0xFF00) */
+    0x09, 0x01,             /* Usage (1) */
+    0xA1, 0x01,             /* Collection (Application) */
+    0x85, HID_REPORT_DECK,  /*   Report ID */
+    0x15, 0x00,             /*   Logical Minimum (0) */
+    0x26, 0xFF, 0x00,       /*   Logical Maximum (255) */
+    0x75, 0x08,             /*   Report Size (8) */
+    0x95, HID_DECK_CHUNK,   /*   Report Count */
+    0x09, 0x02, 0x81, 0x02, /*   Usage (2), Input (Data, Var, Abs) */
+    0x09, 0x03, 0x91, 0x02, /*   Usage (3), Output (Data, Var, Abs) */
+    0xC0,                   /* End Collection */
+};
+#define USB_MAP_BYTES (HID_REPORT_MAP_BYTES + 27)
+_Static_assert(sizeof(s_deck_collection) == 27, "deck collection size");
+static uint8_t s_usb_map[USB_MAP_BYTES];
+
+/* Deck messages to the PC: chunked by a small task (below), never from TinyUSB's own task. */
+typedef struct
+{
+    char text[HID_DECK_MAX + 1];
+} deck_message_t;
+
+static QueueHandle_t s_deck_queue;
+static void deck_tx_task(void *arg);
+
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
 #define HID_EP_IN 0x81
 
@@ -27,7 +61,7 @@ static const uint8_t s_config_descriptor[] = {
     /* config number, interface count, string index, total length, attributes, power (mA) */
     TUD_CONFIG_DESCRIPTOR(1, 1, 0, CONFIG_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
     /* interface, string index, boot protocol, report map length, EP in, size, polling (ms) */
-    TUD_HID_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_NONE, HID_REPORT_MAP_BYTES, HID_EP_IN, 16, 5),
+    TUD_HID_DESCRIPTOR(0, 4, HID_ITF_PROTOCOL_NONE, USB_MAP_BYTES, HID_EP_IN, 64, 5),
 };
 
 static char s_product[32] = "Watch Remote";
@@ -71,7 +105,7 @@ __attribute__((weak)) void hid_usb_keyboard_leds(uint8_t leds)
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
     (void)instance;
-    return hid_report_map;
+    return s_usb_map;
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer,
@@ -89,6 +123,17 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
                            uint16_t bufsize)
 {
     (void)instance;
+
+    if (report_id == HID_REPORT_DECK && report_type == HID_REPORT_TYPE_OUTPUT && buffer != NULL)
+    {
+        if (bufsize == HID_DECK_CHUNK + 1 && buffer[0] == HID_REPORT_DECK)
+        {
+            buffer++; /* some paths keep the report id in the buffer */
+            bufsize--;
+        }
+        hid_deck_usb_frame(buffer, bufsize);
+        return;
+    }
 
     /* Keyboard LED output report (bit 1 = Caps Lock): forwarded to an optional hook. */
     if (report_type == HID_REPORT_TYPE_OUTPUT && buffer != NULL && bufsize >= 1 &&
@@ -120,6 +165,8 @@ esp_err_t hid_usb_start(const char *name)
     }
 
     snprintf(s_product, sizeof(s_product), "%.31s", name != NULL ? name : "Watch Remote");
+    memcpy(s_usb_map, hid_report_map, HID_REPORT_MAP_BYTES);
+    memcpy(s_usb_map + HID_REPORT_MAP_BYTES, s_deck_collection, sizeof(s_deck_collection));
     uint8_t mac[6] = {0};
     ESP_ERROR_CHECK(esp_efuse_mac_get_default(mac));
     snprintf(s_serial, sizeof(s_serial), "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -151,6 +198,13 @@ esp_err_t hid_usb_start(const char *name)
 
     err = tinyusb_driver_install(&config);
 
+    if (err == ESP_OK && s_deck_queue == NULL)
+    {
+        /* Created once here, before any sender can race to create it. */
+        s_deck_queue = xQueueCreate(4, sizeof(deck_message_t));
+        if (s_deck_queue == NULL || xTaskCreate(deck_tx_task, "deck_usb", 3072, NULL, 4, NULL) != pdPASS)
+            ESP_LOGW(TAG, "Deck channel unavailable on USB");
+    }
     if (err == ESP_OK)
     {
         s_started = true;
@@ -183,4 +237,44 @@ esp_err_t hid_usb_send(uint8_t report_id, const uint8_t *data, uint16_t length)
     }
 
     return tud_hid_report(report_id, data, length) ? ESP_OK : ESP_FAIL;
+}
+
+/* ---- Deck messages to the PC */
+
+static void deck_tx_task(void *arg)
+{
+    (void)arg;
+    deck_message_t message;
+    for (;;)
+    {
+        if (xQueueReceive(s_deck_queue, &message, portMAX_DELAY) != pdTRUE)
+            continue;
+        size_t length = strlen(message.text), sent = 0;
+        do
+        {
+            uint8_t chunk[HID_DECK_CHUNK] = {0};
+            size_t n = length - sent > HID_DECK_CHUNK - 1 ? HID_DECK_CHUNK - 1 : length - sent;
+            chunk[0] = (uint8_t)(n | (sent + n == length ? 0x80 : 0));
+            memcpy(chunk + 1, message.text + sent, n);
+            bool ok = false;
+            for (int tries = 0; tries < 50 && !ok; tries++) /* the keyboard shares the endpoint */
+            {
+                ok = tud_mounted() && tud_hid_ready() && tud_hid_report(HID_REPORT_DECK, chunk, sizeof(chunk));
+                if (!ok)
+                    vTaskDelay(pdMS_TO_TICKS(4));
+            }
+            if (!ok)
+                break; /* PC gone: drop the rest of this message */
+            sent += n;
+        } while (sent < length);
+    }
+}
+
+bool hid_usb_deck_send(const char *message)
+{
+    if (!s_started || s_deck_queue == NULL || !tud_mounted())
+        return false;
+    deck_message_t copy;
+    snprintf(copy.text, sizeof(copy.text), "%s", message);
+    return xQueueSend(s_deck_queue, &copy, 0) == pdTRUE;
 }

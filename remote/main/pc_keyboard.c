@@ -162,7 +162,7 @@ static void pc_pressed(lv_event_t *event)
 static void pc_back(lv_event_t *event)
 {
     (void)event;
-    app_back();
+    remote_switcher_open(NULL);
 }
 
 static void pc_tick(lv_timer_t *timer)
@@ -214,10 +214,10 @@ static void pc_create(lv_obj_t *screen, void *arg)
         ui_toast("Memoria insufficiente");
         return;
     }
-    int32_t w = board_info()->width, h = board_info()->height;
+    int32_t w = remote_screen_w(), h = remote_screen_h();
     bool round = board_info()->round;
     ui_key_rect_t header = ui_keyboard_band(w, h, round, h * 8 / 100, h * 10 / 100, 6);
-    pc_button(screen, (ui_key_rect_t){header.x, header.y, 36, header.h}, LV_SYMBOL_LEFT, pc_back, NULL);
+    pc_button(screen, (ui_key_rect_t){header.x, header.y, 36, header.h}, LV_SYMBOL_LIST, pc_back, NULL);
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, "Tastiera PC");
     lv_obj_set_style_text_font(title, UI_FONT_BODY, 0);

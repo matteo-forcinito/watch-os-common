@@ -56,6 +56,7 @@ void app_main(void)
     app_register(&remote_options_app);
     remote_modes_register();
     app_register(&remote_deck_app);
+    app_register(&remote_switcher_app);
     remote_air_register();
     remote_hub_register();
 

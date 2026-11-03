@@ -9,6 +9,7 @@
  *                 {"t":"media","title":"..","artist":"..","playing":1}
  *                 {"t":"sys","cpu":12,"ram":48,"mic":1}      mic: 1 live, 0 muted, -1 unknown
  *                 {"t":"res","ok":1,"msg":"PC bloccato"}
+ *                 {"t":"cmd","c":"usb"|"ble"}           move Remote to the other transport
  *                 {"t":"ping"} every 2 s, {"t":"bye"} on exit: the watch shows the touchbar
  *                 only while the agent is heard
  *   watch -> PC   {"t":"hello","v":0,"name":".."}
@@ -23,7 +24,10 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_timer.h"
+#include "extapp_sdk.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,6 +97,57 @@ static int number_field(const char *json, const char *key, int fallback)
     return p != NULL && (*p == '-' || (*p >= '0' && *p <= '9')) ? atoi(p) : fallback;
 }
 
+/* {"t":"cmd","c":"usb"|"ble"}: the agent's tray menu moves Remote to the other
+ * transport. Saved now, restarted shortly after so the agent gets its answer. */
+static void restart_now(void *arg)
+{
+    (void)arg;
+    extapp_restart_self();
+}
+
+/* Runs in the esp_timer task, never in the USB or Bluetooth task: saving to NVS
+ * there would stall the link that carries the answer. */
+static _Atomic int s_command = HID_LINK_NONE;
+
+static void command(void *arg)
+{
+    (void)arg;
+    hid_link_transport_t to = (hid_link_transport_t)atomic_exchange(&s_command, HID_LINK_NONE);
+    if (to == HID_LINK_NONE)
+        return;
+    if (to == HID_LINK_SATELLITE || (to == HID_LINK_USB && !board_info()->has_usb_otg))
+    {
+        hid_deck_send("{\"t\":\"res\",\"ok\":0,\"msg\":\"Trasporto non disponibile\"}");
+        return;
+    }
+    remote_settings_t settings = *remote_settings();
+    settings.transport = (uint8_t)to;
+    remote_settings_save(&settings);
+    hid_deck_send(to == HID_LINK_USB ? "{\"t\":\"res\",\"ok\":1,\"msg\":\"Passo a USB\"}"
+                                     : "{\"t\":\"res\",\"ok\":1,\"msg\":\"Passo a Bluetooth\"}");
+    static esp_timer_handle_t timer;
+    const esp_timer_create_args_t args = {.callback = restart_now, .name = "deck_restart"};
+    if (timer == NULL && esp_timer_create(&args, &timer) != ESP_OK)
+        return;
+    esp_timer_start_once(timer, 500 * 1000);
+}
+
+static void command_later(const char *json)
+{
+    static esp_timer_handle_t timer;
+    char what[8] = "";
+    text_field(json, "c", what, sizeof(what));
+    /* An unknown transport becomes HID_LINK_SATELLITE: answered as not available. */
+    atomic_store(&s_command, strcmp(what, "usb") == 0   ? HID_LINK_USB
+                             : strcmp(what, "ble") == 0 ? HID_LINK_BLE
+                                                        : HID_LINK_SATELLITE);
+    const esp_timer_create_args_t args = {.callback = command, .name = "deck_cmd"};
+    if (timer == NULL && esp_timer_create(&args, &timer) != ESP_OK)
+        return;
+    esp_timer_stop(timer);
+    esp_timer_start_once(timer, 1000);
+}
+
 /* Bluetooth host task: copy into the shared state, the UI polls it. */
 static void receive(const char *json, size_t length)
 {
@@ -105,6 +160,11 @@ static void receive(const char *json, size_t length)
     s_heard = strcmp(type, "bye") != 0; /* the agent says goodbye when it quits */
     if (strcmp(type, "ping") == 0 || strcmp(type, "bye") == 0)
         return;
+    if (strcmp(type, "cmd") == 0)
+    {
+        command_later(json);
+        return;
+    }
 
     taskENTER_CRITICAL(&s_lock);
     next = s_state;
@@ -185,7 +245,7 @@ enum
     K_F1 = 0x3A, K_F2, K_F3, K_F4, K_F5, K_F6, K_F7, K_F8, K_F9, K_F10, K_F11, K_F12,
     K_HOME = 0x4A, K_PGUP = 0x4B, K_DEL = 0x4C, K_END = 0x4D, K_PGDN = 0x4E,
     K_RIGHT = 0x4F, K_LEFT = 0x50, K_DOWN = 0x51, K_UP = 0x52,
-    K_KP_MINUS = 0x56, K_KP_PLUS = 0x57,
+    K_KP_MINUS = 0x56, K_KP_PLUS = 0x57, K_KP_0 = 0x62,
 };
 
 typedef struct
@@ -281,6 +341,108 @@ static const deck_key_t k_discord[] = {
     {"Microfono", C | S, K_M},     {"Silenzia tutto", C | S, K_D}, {"Cerca", C, K_K},        {"Segna letti", S, K_ESC},
     {"Server prec.", C | A, K_UP}, {"Server succ.", C | A, K_DOWN}, {"Canale prec.", A, K_UP}, {"Canale succ.", A, K_DOWN},
 };
+static const deck_key_t k_netflix[] = {
+    {"Play / pausa", 0, K_SPACE}, {"Schermo intero", 0, K_F}, {"Muto", 0, K_M},       {"-10 s", 0, K_LEFT},
+    {"+10 s", 0, K_RIGHT},        {"Volume +", 0, K_UP},      {"Volume -", 0, K_DOWN}, {"Salta intro", 0, K_S},
+};
+static const deck_key_t k_twitch[] = {
+    {"Play / pausa", 0, K_SPACE}, {"Schermo intero", 0, K_F}, {"Muto", 0, K_M}, {"Modalita cinema", A, K_T},
+};
+static const deck_key_t k_meet[] = {
+    {"Microfono", C, K_D},        {"Video", C, K_E},          {"Alza la mano", C | A, K_H}, {"Chat", C | A, K_C},
+    {"Partecipanti", C | A, K_P}, {"Sottotitoli", 0, K_C},
+};
+static const deck_key_t k_photoshop[] = {
+    {"Pennello", 0, K_B},    {"Gomma", 0, K_E},          {"Sposta", 0, K_V},            {"Selezione", 0, K_M},
+    {"Lazo", 0, K_L},        {"Contagocce", 0, K_I},     {"Timbro", 0, K_S},            {"Testo", 0, K_T},
+    {"Annulla", C, K_Z},     {"Ripeti", C | S, K_Z},     {"Nuovo livello", C | S, K_N}, {"Trasforma", C, K_T},
+    {"Deseleziona", C, K_D}, {"Inverti selez.", C | S, K_I}, {"Adatta", C, K_0},        {"Salva", C, K_S},
+};
+static const deck_key_t k_illustrator[] = {
+    {"Selezione", 0, K_V},  {"Selez. diretta", 0, K_A}, {"Penna", 0, K_P},     {"Testo", 0, K_T},
+    {"Rettangolo", 0, K_M}, {"Ellisse", 0, K_L},        {"Pennello", 0, K_B},  {"Contagocce", 0, K_I},
+    {"Raggruppa", C, K_G},  {"Separa", C | S, K_G},     {"Annulla", C, K_Z},   {"Ripeti", C | S, K_Z},
+    {"Adatta", C, K_0},     {"Esporta", C | A, K_E},    {"Salva", C, K_S},     {"Righelli", C, K_R},
+};
+static const deck_key_t k_premiere[] = {
+    {"Play / pausa", 0, K_SPACE}, {"Indietro J", 0, K_J}, {"Stop K", 0, K_K},    {"Avanti L", 0, K_L},
+    {"Taglia qui", C, K_K},       {"Lama", 0, K_C},       {"Selezione", 0, K_V}, {"Elimina ripple", S, K_DEL},
+    {"Marker", 0, K_M},           {"Punto In", 0, K_I},   {"Punto Out", 0, K_O}, {"Annulla", C, K_Z},
+    {"Inizio", 0, K_HOME},        {"Fine", 0, K_END},     {"Esporta", C, K_M},   {"Salva", C, K_S},
+};
+static const deck_key_t k_aftereffects[] = {
+    {"Anteprima", 0, K_SPACE},  {"Nuova comp.", C, K_N}, {"Nuovo solido", C, K_Y}, {"Dividi livello", C | S, K_D},
+    {"Precomponi", C | S, K_C}, {"Annulla", C, K_Z},     {"Inizio", 0, K_HOME},    {"Fine", 0, K_END},
+    {"Coda render", C, K_M},    {"Salva", C, K_S},       {"Selezione", 0, K_V},    {"Testo", C | A | S, K_T},
+};
+static const deck_key_t k_resolve[] = {
+    {"Play / pausa", 0, K_SPACE}, {"Indietro J", 0, K_J}, {"Stop K", 0, K_K},      {"Avanti L", 0, K_L},
+    {"Selezione", 0, K_A},        {"Lama", 0, K_B},       {"Dividi", C, K_B},      {"Marker", 0, K_M},
+    {"Punto In", 0, K_I},         {"Punto Out", 0, K_O},  {"Annulla", C, K_Z},     {"Ripeti", C | S, K_Z},
+    {"Inizio", 0, K_HOME},        {"Fine", 0, K_END},     {"Elimina ripple", S, K_DEL}, {"Salva", C, K_S},
+};
+static const deck_key_t k_blender[] = {
+    {"Sposta", 0, K_G},          {"Ruota", 0, K_R},    {"Scala", 0, K_S},        {"Estrudi", 0, K_E},
+    {"Modifica / oggetto", 0, K_TAB}, {"Elimina", 0, K_X}, {"Duplica", S, K_D},  {"Cerca", 0, K_F3},
+    {"Seleziona tutto", 0, K_A}, {"Nascondi", 0, K_H}, {"Mostra tutto", A, K_H}, {"Vista camera", 0, K_KP_0},
+    {"Render", 0, K_F12},        {"Annulla", C, K_Z},  {"Ripeti", C | S, K_Z},   {"Salva", C, K_S},
+};
+static const deck_key_t k_gimp[] = {
+    {"Pennello", 0, K_P}, {"Gomma", S, K_E},             {"Sposta", 0, K_M},          {"Selezione", 0, K_R},
+    {"Lazo", 0, K_F},     {"Testo", 0, K_T},             {"Contagocce", 0, K_O},      {"Annulla", C, K_Z},
+    {"Ripeti", C, K_Y},   {"Nuovo livello", C | S, K_N}, {"Deseleziona", C | S, K_A}, {"Adatta", C | S, K_J},
+    {"Esporta", C | S, K_E}, {"Salva", C, K_S},
+};
+static const deck_key_t k_figma[] = {
+    {"Sposta", 0, K_V},     {"Cornice", 0, K_F},     {"Rettangolo", 0, K_R},     {"Ellisse", 0, K_O},
+    {"Testo", 0, K_T},      {"Penna", 0, K_P},       {"Commento", 0, K_C},       {"Raggruppa", C, K_G},
+    {"Separa", C | S, K_G}, {"Auto layout", S, K_A}, {"Componente", C | A, K_K}, {"Duplica", C, K_D},
+    {"Adatta tutto", S, K_1}, {"Annulla", C, K_Z},   {"Esporta", C | S, K_E},    {"Nascondi", C | S, K_H},
+};
+static const deck_key_t k_outlook[] = {
+    {"Nuova mail", C, K_N}, {"Rispondi", C, K_R},   {"Rispondi a tutti", C | S, K_R}, {"Inoltra", C, K_F},
+    {"Invia", A, K_S},      {"Elimina", 0, K_DEL},  {"Letto", C, K_Q},                {"Non letto", C, K_U},
+    {"Posta", C, K_1},      {"Calendario", C, K_2}, {"Contatti", C, K_3},             {"Cerca", C, K_E},
+};
+static const deck_key_t k_slack[] = {
+    {"Vai a", C, K_K},         {"Non letti", C | S, K_A},   {"Menzioni", C | S, K_M}, {"Messaggi diretti", C | S, K_K},
+    {"Canale prec.", A, K_UP}, {"Canale succ.", A, K_DOWN}, {"Huddle", C | S, K_H},   {"Cerca", C, K_G},
+};
+static const deck_key_t k_notion[] = {
+    {"Cerca", C, K_P},  {"Nuova pagina", C, K_N}, {"Grassetto", C, K_B},    {"Corsivo", C, K_I},
+    {"Codice", C, K_E}, {"Link", C, K_K},         {"Commento", C | S, K_M}, {"Annulla", C, K_Z},
+};
+static const deck_key_t k_obsidian[] = {
+    {"Comandi", C, K_P},         {"Apri nota", C, K_O},         {"Nuova nota", C, K_N},  {"Cerca", C | S, K_F},
+    {"Grafo", C, K_G},           {"Modifica / vista", C, K_E},  {"Grassetto", C, K_B},   {"Corsivo", C, K_I},
+    {"Indietro", C | A, K_LEFT}, {"Avanti", C | A, K_RIGHT},
+};
+static const deck_key_t k_jetbrains[] = {
+    {"Azioni", C | S, K_A},  {"Apri file", C | S, K_N}, {"Esegui", S, K_F10},    {"Debug", S, K_F9},
+    {"Breakpoint", C, K_F8}, {"Step over", 0, K_F8},    {"Step into", 0, K_F7},  {"Riformatta", C | A, K_L},
+    {"Rinomina", S, K_F6},   {"Definizione", C, K_B},   {"Usi", A, K_F7},        {"Terminale", A, K_F12},
+    {"Progetto", A, K_1},    {"Commit", C, K_K},        {"Aggiorna", C, K_T},    {"Salva", C, K_S},
+};
+static const deck_key_t k_visualstudio[] = {
+    {"Compila", C | S, K_B}, {"Avvia", 0, K_F5},      {"Senza debug", C, K_F5},       {"Ferma", S, K_F5},
+    {"Breakpoint", 0, K_F9}, {"Step over", 0, K_F10}, {"Step into", 0, K_F11},        {"Definizione", 0, K_F12},
+    {"Trova", C, K_F},       {"Vai a tutto", C, K_T}, {"Soluzione", C | A, K_L},      {"Salva tutto", C | S, K_S},
+};
+static const deck_key_t k_notepadpp[] = {
+    {"Nuovo", C, K_N},    {"Apri", C, K_O},          {"Salva", C, K_S},      {"Chiudi", C, K_W},
+    {"Trova", C, K_F},    {"Sostituisci", C, K_H},   {"Vai a riga", C, K_G}, {"Duplica riga", C, K_D},
+    {"Commenta", C, K_Q}, {"Maiuscolo", C | S, K_U}, {"Minuscolo", C, K_U},  {"Annulla", C, K_Z},
+};
+static const deck_key_t k_vlc[] = {
+    {"Play / pausa", 0, K_SPACE}, {"Schermo intero", 0, K_F}, {"Muto", 0, K_M},       {"Stop", 0, K_S},
+    {"-10 s", A, K_LEFT},         {"+10 s", A, K_RIGHT},      {"Volume +", C, K_UP},   {"Volume -", C, K_DOWN},
+    {"Precedente", 0, K_P},       {"Successivo", 0, K_N},     {"Sottotitoli", 0, K_V}, {"Traccia audio", 0, K_B},
+};
+static const deck_key_t k_acrobat[] = {
+    {"Pagina giu", 0, K_PGDN}, {"Pagina su", 0, K_PGUP},   {"Prima", 0, K_HOME},       {"Ultima", 0, K_END},
+    {"Cerca", C, K_F},         {"Zoom +", C, K_KP_PLUS},   {"Zoom -", C, K_KP_MINUS},  {"Adatta pagina", C, K_0},
+    {"Adatta larghezza", C, K_2}, {"Lettura", C, K_H},     {"Schermo intero", C, K_L}, {"Stampa", C, K_P},
+};
 static const deck_key_t k_generic[] = {
     {"Copia", C, K_C},         {"Incolla", C, K_V},       {"Taglia", C, K_X},          {"Annulla", C, K_Z},
     {"Ripeti", C, K_Y},        {"Seleziona tutto", C, K_A}, {"Cambia app", A, K_TAB},  {"Chiudi finestra", A, K_F4},
@@ -299,6 +461,11 @@ static const deck_key_t k_system[] = {
 /* First match wins: site profiles come before their browser. */
 static const deck_profile_t s_profiles[] = {
     {BROWSERS, "YouTube", "YouTube", LV_SYMBOL_VIDEO, UI_COLOR_RED, KEYS(k_youtube)},
+    {BROWSERS, "Netflix", "Netflix", LV_SYMBOL_VIDEO, UI_COLOR_RED, KEYS(k_netflix)},
+    {BROWSERS, "Twitch", "Twitch", LV_SYMBOL_VIDEO, UI_COLOR_PURPLE, KEYS(k_twitch)},
+    {BROWSERS, "Meet", "Google Meet", LV_SYMBOL_CALL, UI_COLOR_GREEN, KEYS(k_meet)},
+    {BROWSERS, "Google Docs", "Google Docs", LV_SYMBOL_FILE, UI_COLOR_BLUE, KEYS(k_word)},
+    {BROWSERS, "Documenti Google", "Google Docs", LV_SYMBOL_FILE, UI_COLOR_BLUE, KEYS(k_word)},
     {"code,cursor,codium,windsurf", NULL, "VS Code", LV_SYMBOL_EDIT, UI_COLOR_BLUE, KEYS(k_code)},
     {BROWSERS, NULL, "Browser", LV_SYMBOL_DIRECTORY, UI_COLOR_TEAL, KEYS(k_browser)},
     {"explorer,nautilus,dolphin,thunar,nemo", NULL, "File", LV_SYMBOL_DIRECTORY, UI_COLOR_ORANGE, KEYS(k_files)},
@@ -312,6 +479,24 @@ static const deck_profile_t s_profiles[] = {
     {"ms-teams,teams", NULL, "Teams", LV_SYMBOL_CALL, UI_COLOR_INDIGO, KEYS(k_teams)},
     {"zoom", NULL, "Zoom", LV_SYMBOL_CALL, UI_COLOR_BLUE, KEYS(k_zoom)},
     {"discord", NULL, "Discord", LV_SYMBOL_CALL, UI_COLOR_INDIGO, KEYS(k_discord)},
+    {"photoshop", NULL, "Photoshop", LV_SYMBOL_IMAGE, UI_COLOR_BLUE, KEYS(k_photoshop)},
+    {"illustrator", NULL, "Illustrator", LV_SYMBOL_EDIT, UI_COLOR_ORANGE, KEYS(k_illustrator)},
+    {"adobe premiere pro", NULL, "Premiere Pro", LV_SYMBOL_VIDEO, UI_COLOR_PURPLE, KEYS(k_premiere)},
+    {"afterfx", NULL, "After Effects", LV_SYMBOL_VIDEO, UI_COLOR_INDIGO, KEYS(k_aftereffects)},
+    {"resolve", NULL, "DaVinci Resolve", LV_SYMBOL_VIDEO, UI_COLOR_ORANGE, KEYS(k_resolve)},
+    {"blender", NULL, "Blender", LV_SYMBOL_IMAGE, UI_COLOR_ORANGE, KEYS(k_blender)},
+    {"gimp,gimp-2.10,gimp-3.0", NULL, "GIMP", LV_SYMBOL_IMAGE, UI_COLOR_GRAY, KEYS(k_gimp)},
+    {"figma", NULL, "Figma", LV_SYMBOL_EDIT, UI_COLOR_PINK, KEYS(k_figma)},
+    {"outlook,olk", NULL, "Outlook", LV_SYMBOL_ENVELOPE, UI_COLOR_BLUE, KEYS(k_outlook)},
+    {"slack", NULL, "Slack", LV_SYMBOL_CALL, UI_COLOR_PURPLE, KEYS(k_slack)},
+    {"notion", NULL, "Notion", LV_SYMBOL_FILE, UI_COLOR_GRAY, KEYS(k_notion)},
+    {"obsidian", NULL, "Obsidian", LV_SYMBOL_FILE, UI_COLOR_PURPLE, KEYS(k_obsidian)},
+    {"idea64,pycharm64,webstorm64,clion64,rider64,goland64,phpstorm64,studio64", NULL, "JetBrains",
+     LV_SYMBOL_EDIT, UI_COLOR_ORANGE, KEYS(k_jetbrains)},
+    {"devenv", NULL, "Visual Studio", LV_SYMBOL_EDIT, UI_COLOR_PURPLE, KEYS(k_visualstudio)},
+    {"notepad++", NULL, "Notepad++", LV_SYMBOL_EDIT, UI_COLOR_GREEN, KEYS(k_notepadpp)},
+    {"vlc", NULL, "VLC", LV_SYMBOL_VIDEO, UI_COLOR_ORANGE, KEYS(k_vlc)},
+    {"acrobat,acrord32", NULL, "Acrobat", LV_SYMBOL_FILE, UI_COLOR_RED, KEYS(k_acrobat)},
 };
 
 static const deck_profile_t s_generic = {NULL, NULL, "", LV_SYMBOL_HOME, UI_COLOR_GRAY, KEYS(k_generic)};
@@ -358,15 +543,16 @@ static const char *profile_name(const char *app, const char *title)
  *
  * Geometry follows the screen as LVGL draws it (rotation included):
  * landscape 3x3 keys, portrait 2x4, round panels 2x4 on circle chords.
- * Without the agent the page is a connection guide (USB, pairing, agent). */
+ * Without the agent the page is a connection guide (cable or pairing, then agent).
+ * The Deck channel works on both transports: GATT on Bluetooth, vendor HID report on USB. */
 
 #define GRID_MAX 9
 
 typedef enum
 {
     VIEW_NONE,
-    VIEW_USB,
-    VIEW_PAIR,
+    VIEW_CABLE, /* USB: cable not connected to a PC */
+    VIEW_PAIR,  /* Bluetooth: no host connected */
     VIEW_AGENT,
     VIEW_LIVE,
 } deck_view_t;
@@ -655,22 +841,31 @@ static void show_guide(deck_page_t *page, deck_view_t view)
         const char *icon, *title, *text;
         uint32_t color;
     } guides[] = {
-        [VIEW_USB] = {LV_SYMBOL_USB, "Serve il Bluetooth",
-                      "Via USB il PC riceve i tasti ma non puo dire al watch quale app e aperta.", UI_COLOR_ORANGE},
+        [VIEW_CABLE] = {LV_SYMBOL_USB, "Collega il cavo",
+                        "Collega il watch al PC con il cavo USB. Funziona anche senza associazione Bluetooth.",
+                        UI_COLOR_ORANGE},
         [VIEW_PAIR] = {LV_SYMBOL_BLUETOOTH, "Associa il PC",
-                       "Bluetooth del PC > Aggiungi dispositivo. Se era gia associato, rimuovilo e riassocialo.",
+                       "Bluetooth del PC > Aggiungi dispositivo. Se era già associato, rimuovilo e riassocialo.",
                        UI_COLOR_BLUE},
-        [VIEW_AGENT] = {LV_SYMBOL_REFRESH, "Avvia l'agente",
-                        "Sul PC esegui install_windows.ps1 in watch-os-common/tools/deck_agent.", UI_COLOR_GREEN},
+        [VIEW_AGENT] = {LV_SYMBOL_REFRESH, "Avvia Watch Deck",
+                        "Installa WatchDeck.exe sul PC: resta nella barra di Windows e si collega da solo.",
+                        UI_COLOR_GREEN},
     };
     ui_icon_bubble_set_color(page->guide_icon, guides[view].color);
     lv_label_set_text(lv_obj_get_child(page->guide_icon, 0), guides[view].icon);
     lv_label_set_text(page->guide_title, guides[view].title);
     lv_label_set_text(page->guide_text, guides[view].text);
-    if (view == VIEW_USB)
+    /* The other transport is one tap away (USB only on boards with a native port). */
+    bool usb = remote_settings()->transport == HID_LINK_USB;
+    if (view != VIEW_AGENT && (usb || board_info()->has_usb_otg))
+    {
+        lv_label_set_text(lv_obj_get_child(page->guide_button, 0), usb ? "Usa il Bluetooth" : "Usa il cavo USB");
         lv_obj_remove_flag(page->guide_button, LV_OBJ_FLAG_HIDDEN);
+    }
     else
+    {
         lv_obj_add_flag(page->guide_button, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void tick(lv_timer_t *timer)
@@ -687,10 +882,10 @@ static void tick(lv_timer_t *timer)
     if (!agent)
         s_hello_sent = false;
 
-    deck_view_t view = remote_settings()->transport == HID_LINK_USB ? VIEW_USB
-                       : hid_link_state() != HID_LINK_CONNECTED    ? VIEW_PAIR
-                       : !agent                                    ? VIEW_AGENT
-                                                                   : VIEW_LIVE;
+    deck_view_t view = hid_link_state() != HID_LINK_CONNECTED
+                           ? (remote_settings()->transport == HID_LINK_USB ? VIEW_CABLE : VIEW_PAIR)
+                       : !agent ? VIEW_AGENT
+                                : VIEW_LIVE;
     if (view != page->view)
     {
         page->view = view;
@@ -744,19 +939,10 @@ static void tick(lv_timer_t *timer)
 
 static void deleted(lv_event_t *e)
 {
-    (void)e;
-    if (s_page != NULL)
-    {
-        lv_timer_delete(s_page->timer);
-        free(s_page);
-        s_page = NULL;
-    }
-}
-
-static void back_clicked(lv_event_t *e)
-{
-    (void)e;
-    app_back();
+    deck_page_t *page = lv_event_get_user_data(e);
+    lv_timer_delete(page->timer);
+    if (s_page == page) s_page = NULL;
+    free(page);
 }
 
 static void build_guide(deck_page_t *page, lv_obj_t *screen, int32_t h)
@@ -775,7 +961,7 @@ static void build_guide(deck_page_t *page, lv_obj_t *screen, int32_t h)
     lv_obj_set_style_text_color(page->guide_text, ui_color(UI_COLOR_TEXT_DIM), 0);
     lv_label_set_long_mode(page->guide_text, LV_LABEL_LONG_MODE_WRAP);
     r = strip(h * 80 / 100, h * 12 / 100);
-    page->guide_button = tile(page->guide, r, "Passa a Bluetooth", remote_change_transport, NULL);
+    page->guide_button = tile(page->guide, r, "", remote_change_transport, NULL);
     lv_obj_set_style_border_color(page->guide_button, ui_accent(), 0);
 }
 
@@ -848,12 +1034,11 @@ static void deck_create(lv_obj_t *screen, void *arg)
     page->mic = tile(page->live, (ui_key_rect_t){r.x + r.w * 3 / 4, r.y, r.w - r.w * 3 / 4, r.h}, "Mic",
                      action_clicked, "mic");
 
-    /* Back on top of both layers */
-    lv_obj_t *back = tile(screen, (ui_key_rect_t){head.x, head.y, 48, head_h}, LV_SYMBOL_LEFT, back_clicked, NULL);
-    lv_obj_set_style_border_width(back, 0, 0);
+    /* Switcher on top of both layers */
+    remote_switcher_button(screen);
 
     page->timer = lv_timer_create(tick, 150, page);
-    lv_obj_add_event_cb(screen, deleted, LV_EVENT_DELETE, NULL);
+    lv_obj_add_event_cb(screen, deleted, LV_EVENT_DELETE, page);
     tick(page->timer);
 }
 

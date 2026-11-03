@@ -21,6 +21,7 @@ import asyncio
 import json
 import os
 import shutil
+import threading
 import subprocess
 import sys
 
@@ -289,11 +290,80 @@ class BleakLink:
             self.client = None
 
 
+class UsbLink:
+    """Deck channel on the cable: vendor HID report 5 of Remote in USB mode (no driver, hidapi).
+
+    Each report carries [length | 0x80 on the last chunk] + up to 62 bytes of the JSON message."""
+
+    REPORT, CHUNK = 5, 63
+
+    def __init__(self, loop, on_receive, on_lost):
+        self.loop, self.on_receive, self.on_lost = loop, on_receive, on_lost
+        self.device = None
+        self.reader = None
+        self.running = False
+
+    async def open(self, name: str) -> str | None:
+        try:
+            import hid
+        except ImportError:
+            return None
+        for info in hid.enumerate(0x303A):  # Espressif
+            product = info.get("product_string") or ""
+            if info.get("usage_page") == 0xFF00 and name.lower() in product.lower():
+                device = hid.device()
+                device.open_path(info["path"])
+                self.device, self.running = device, True
+                self.reader = threading.Thread(target=self._read, daemon=True)
+                self.reader.start()
+                return product
+        return None
+
+    def _read(self) -> None:
+        message = bytearray()
+        while self.running:
+            try:
+                data = bytes(self.device.read(64, 250))
+            except (OSError, ValueError):
+                break
+            if not data:
+                continue
+            if data[0] == self.REPORT and len(data) == self.CHUNK + 1:
+                data = data[1:]  # Windows keeps the report id in front
+            size = data[0] & 0x3F
+            message += data[1:1 + size]
+            if data[0] & 0x80:
+                self.loop.call_soon_threadsafe(self.on_receive, bytes(message))
+                message.clear()
+        if self.running:
+            self.loop.call_soon_threadsafe(self.on_lost)
+
+    async def send(self, data: bytes) -> None:
+        def write() -> None:
+            for start in range(0, max(len(data), 1), self.CHUNK - 1):
+                part = data[start:start + self.CHUNK - 1]
+                last = start + self.CHUNK - 1 >= len(data)
+                report = bytes([self.REPORT, len(part) | (0x80 if last else 0)]) + part
+                if self.device.write(report.ljust(self.CHUNK + 1, b"\0")) < 0:
+                    raise OSError("scrittura USB non riuscita")
+
+        await asyncio.to_thread(write)
+
+    async def close(self) -> None:
+        self.running = False
+        if self.reader is not None:
+            self.reader.join(timeout=1)
+        if self.device is not None:
+            self.device.close()
+            self.device = None
+
+
 # Contexts and the touchbar the watch must choose for each (--selftest).
 SELFTEST = [
     ("code", "main.c - ESP-IDF - Visual Studio Code", "VS Code"),
     ("chrome", "Gmail - Google Chrome", "Browser"),
     ("msedge", "Lofi beats - YouTube - Microsoft Edge", "YouTube"),
+    ("chrome", "Stranger Things | Netflix - Google Chrome", "Netflix"),
     ("explorer", "Documenti", "File"),
     ("winword", "Relazione.docx - Word", "Word"),
     ("excel", "Budget.xlsx - Excel", "Excel"),
@@ -303,11 +373,37 @@ SELFTEST = [
     ("ms-teams", "Riunione | Microsoft Teams", "Teams"),
     ("zoom", "Zoom Meeting", "Zoom"),
     ("discord", "#generale - Discord", "Discord"),
+    ("photoshop", "foto.psd @ 100%", "Photoshop"),
+    ("adobe premiere pro", "Progetto - Adobe Premiere Pro", "Premiere Pro"),
+    ("resolve", "DaVinci Resolve", "DaVinci Resolve"),
+    ("blender", "Blender", "Blender"),
+    ("figma", "Design - Figma", "Figma"),
+    ("olk", "Posta in arrivo - Outlook", "Outlook"),
+    ("pycharm64", "progetto - main.py", "JetBrains"),
+    ("vlc", "film.mkv - VLC", "VLC"),
     ("notepad", "Senza titolo - Blocco note", "Generale"),
 ]
 
-
 FIXED: tuple[str, str] | None = None  # --fixed: pretend this app is focused (tests, screenshots)
+SWITCH: str | None = None  # --watch-transport: ask the watch to move to usb/ble, then exit
+
+# Shared with the tray (deck_tray.py): what the agent is doing, and commands for the watch.
+STATUS = {"connected": False, "device": "", "via": "", "app": ""}
+COMMANDS: "asyncio.Queue[dict] | None" = None
+
+
+async def open_link(name: str, loop, received, lost):
+    """The cable first (it also works without pairing), then Bluetooth."""
+    for kind, via in ((UsbLink, "USB"), (WinLink if WINDOWS else BleakLink, "Bluetooth")):
+        link = kind(loop, received, lost)
+        try:
+            found = await link.open(name)
+        except Exception as error:  # a link that cannot open must not hide the other one
+            print(f"{via}: {error}")
+            found = None
+        if found:
+            return link, found, via
+    return None, None, None
 
 
 async def session(name: str, selftest: bool = False) -> bool:
@@ -326,6 +422,9 @@ async def session(name: str, selftest: bool = False) -> bool:
             print(f"Watch: {message.get('name', '?')}")
         elif message.get("t") == "prof":
             profiles.put_nowait(message.get("n", ""))
+            STATUS["app"] = message.get("n", "")
+        elif message.get("t") == "res":
+            print(f"Watch: {message.get('msg', '')}")
         elif message.get("t") == "act" and message.get("a") in ACTIONS:
             if message.get("id") is not None and message.get("id") == done.get("id"):
                 return  # the same tap delivered again
@@ -346,11 +445,16 @@ async def session(name: str, selftest: bool = False) -> bool:
     async def send(message: dict) -> None:
         await link.send(encode(message))
 
-    link = (WinLink if WINDOWS else BleakLink)(loop, received, disconnected.set)
-    found = await link.open(name)
-    if found is None:
+    link, found, via = await open_link(name, loop, received, disconnected.set)
+    if link is None:
         return False
-    print(f"Collegato a {found}")
+    print(f"Collegato a {found} via {via}")
+    STATUS.update(connected=True, device=found, via=via)
+    if SWITCH:
+        await send({"t": "cmd", "c": SWITCH})
+        await asyncio.sleep(1.5)  # the watch answers, then restarts on the other transport
+        await link.close()
+        raise SystemExit(0)
     if selftest:
         failed = 0
         for app, title, expected in SELFTEST:
@@ -360,8 +464,8 @@ async def session(name: str, selftest: bool = False) -> bool:
             except asyncio.TimeoutError:
                 got = "(nessuna risposta)"
             failed += got != expected
-            print(f"{'OK  ' if got == expected else 'ERR '} {app:16} -> {got} (atteso {expected})")
-            await asyncio.sleep(0.8)  # visible on the watch
+            print(f"{'OK  ' if got == expected else 'ERR '} {app:20} -> {got} (atteso {expected})")
+            await asyncio.sleep(0.5)  # visible on the watch
         await link.close()
         print("Selftest superato" if not failed else f"Selftest: {failed} errori")
         raise SystemExit(1 if failed else 0)
@@ -369,6 +473,8 @@ async def session(name: str, selftest: bool = False) -> bool:
         last_ctx = last_media = last_sys = None
         tick = 0
         while not disconnected.is_set():
+            while COMMANDS is not None and not COMMANDS.empty():
+                await send(COMMANDS.get_nowait())
             app, title = FIXED or foreground()
             ctx = {"t": "ctx", "app": clean(app, 23), "title": clean(title, 63)}
             if ctx != last_ctx and app:
@@ -395,6 +501,7 @@ async def session(name: str, selftest: bool = False) -> bool:
             except asyncio.TimeoutError:
                 pass
     finally:
+        STATUS.update(connected=False, device="", via="", app="")
         try:
             await send({"t": "bye"})
         except Exception:  # link already gone
@@ -404,34 +511,55 @@ async def session(name: str, selftest: bool = False) -> bool:
     return True
 
 
-async def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--name", default="Remote", help="part of the watch's Bluetooth name")
-    parser.add_argument("--selftest", action="store_true", help="check the touchbar chosen for known apps, then exit")
-    parser.add_argument("--fixed", nargs=2, metavar=("APP", "TITLE"), help="report this app instead of the focused one")
-    args = parser.parse_args()
-    global FIXED
-    FIXED = tuple(args.fixed) if args.fixed else None
-    if sys.stdout is None:  # pythonw (Startup shortcut): log to a file instead of a console
-        folder = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "DeckAgent")
-        os.makedirs(folder, exist_ok=True)
-        sys.stdout = sys.stderr = open(os.path.join(folder, "agent.log"), "a", encoding="utf-8", buffering=1)
-    if WINDOWS and not args.selftest:
-        kernel32.CreateMutexW(None, False, "Local\\WatchOsDeckAgent")  # held until the process exits
-        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
-            print("Agente gia in esecuzione.")
-            return
-    print(f"Cerco \"{args.name}\" tra i dispositivi associati e collegati...")
+def log_to_file() -> str:
+    """Without a console (pythonw, the tray exe) everything printed goes to a log file."""
+    folder = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "DeckAgent")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "agent.log")
+    if sys.stdout is None or getattr(sys, "frozen", False):
+        sys.stdout = sys.stderr = open(path, "a", encoding="utf-8", buffering=1)
+    return path
+
+
+async def run(name: str = "Remote", selftest: bool = False) -> None:
+    """Find the watch, serve it, and start over whenever the link drops."""
+    global COMMANDS
+    COMMANDS = asyncio.Queue()
+    print(f"Cerco \"{name}\" via USB e tra i dispositivi Bluetooth associati...")
     waiting = False
     while True:
         try:
-            if not await session(args.name, args.selftest) and not waiting:
-                print("Non trovato: associa il watch dal Bluetooth del PC e apri Remote (Bluetooth, non USB).")
+            if not await session(name, selftest) and not waiting:
+                print("Non trovato: collega il cavo (Remote su USB) o associa il watch via Bluetooth.")
                 waiting = True
         except Exception as error:  # radio errors: retry
             print(f"Collegamento perso: {error}")
             waiting = False
         await asyncio.sleep(3)
+
+
+def single_instance() -> bool:
+    if not WINDOWS:
+        return True
+    kernel32.CreateMutexW(None, False, "Local\\WatchOsDeckAgent")  # held until the process exits
+    return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--name", default="Remote", help="part of the watch's name")
+    parser.add_argument("--selftest", action="store_true", help="check the touchbar chosen for known apps, then exit")
+    parser.add_argument("--fixed", nargs=2, metavar=("APP", "TITLE"), help="report this app instead of the focused one")
+    parser.add_argument("--watch-transport", choices=("usb", "ble"), help="move Remote to USB or Bluetooth, then exit")
+    args = parser.parse_args()
+    global FIXED, SWITCH
+    FIXED = tuple(args.fixed) if args.fixed else None
+    SWITCH = args.watch_transport
+    log_to_file()
+    if not args.selftest and not SWITCH and not single_instance():
+        print("Agente gia in esecuzione.")
+        return
+    await run(args.name, args.selftest)
 
 
 if __name__ == "__main__":

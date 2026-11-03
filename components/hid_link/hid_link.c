@@ -1,6 +1,11 @@
 #include "hid_private.h"
 
 #include "esp_log.h"
+#include "sdkconfig.h"
+#if CONFIG_IDF_TARGET_ESP32S3
+#include "soc/rtc_cntl_reg.h"
+#include "soc/soc.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -426,6 +431,15 @@ esp_err_t hid_link_start(hid_link_transport_t transport, const char *name)
         return ESP_ERR_INVALID_STATE;
     }
     hid_link_stop();
+#if CONFIG_IDF_TARGET_ESP32S3
+    if (transport != HID_LINK_USB)
+    {
+        /* A previous USB session routed the internal PHY to the OTG controller in an RTC
+         * register that survives software restarts: give the port back to the serial
+         * console, as after a power cycle. */
+        REG_CLR_BIT(RTC_CNTL_USB_CONF_REG, RTC_CNTL_SW_HW_USB_PHY_SEL | RTC_CNTL_SW_USB_PHY_SEL);
+    }
+#endif
     s_transport = transport;
     hid_link_set_state(HID_LINK_WAITING); /* before asynchronous transport callbacks */
     esp_err_t err = transport == HID_LINK_BLE   ? hid_ble_start(name)

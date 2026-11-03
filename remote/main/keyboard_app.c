@@ -659,7 +659,7 @@ static void show_bubble(int index, const char *text)
     {
         y = s_kb->geometry.header.y;
     }
-    ui_key_rect_t band = ui_keyboard_band(s_kb->pad_w, board_info()->height, board_info()->round, y, 56, 6);
+    ui_key_rect_t band = ui_keyboard_band(s_kb->pad_w, remote_screen_h(), board_info()->round, y, 56, 6);
     int32_t x = key.x + key.w / 2 - bw / 2;
 
     if (x < band.x)
@@ -1049,7 +1049,7 @@ static void on_enter(lv_event_t *e)
 static void on_back(lv_event_t *e)
 {
     (void)e;
-    app_back();
+    remote_switcher_open(NULL);
 }
 
 /* --------------------------------------------------------------- UI */
@@ -1102,7 +1102,7 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(back, on_back, LV_EVENT_CLICKED, NULL);
     lv_port_set_focusable(back);
     lv_obj_t *arrow = lv_label_create(back);
-    lv_label_set_text(arrow, LV_SYMBOL_LEFT);
+    lv_label_set_text(arrow, LV_SYMBOL_LIST);
     lv_obj_set_style_text_font(arrow, UI_FONT_BODY, 0);
     lv_obj_center(arrow);
 

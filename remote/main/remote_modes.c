@@ -16,12 +16,6 @@ typedef struct
     lv_timer_t *timer;
 } panel_t;
 
-static void back_clicked(lv_event_t *e)
-{
-    (void)e;
-    app_back();
-}
-
 static void panel_tick(lv_timer_t *timer)
 {
     panel_t *panel = lv_timer_get_user_data(timer);
@@ -62,31 +56,36 @@ static lv_obj_t *button_at(lv_obj_t *screen, ui_key_rect_t rect, const char *tex
     return button;
 }
 
+/* Lowest usable line: round panels stop at the last comfortable chord. */
+static int32_t panel_bottom(void)
+{
+    int32_t h = remote_screen_h();
+    return board_info()->round ? h * 91 / 100 : h - 4;
+}
+
 static panel_t *panel_create(lv_obj_t *screen, const char *title)
 {
     lv_obj_set_scrollable(screen, false);
-    int32_t w = board_info()->width;
-    int32_t h = board_info()->height;
-    ui_key_rect_t header = ui_keyboard_band(w, h, board_info()->round, h * 9 / 100, h * 10 / 100, 8);
-    button_at(screen, (ui_key_rect_t){header.x, header.y, 40, header.h}, LV_SYMBOL_LEFT, UI_COLOR_CARD, back_clicked,
-              LV_EVENT_CLICKED, NULL);
+    int32_t w = remote_screen_w();
+    int32_t h = remote_screen_h();
+    ui_key_rect_t header = remote_header_band();
+    remote_switcher_button(screen);
     lv_obj_t *label = lv_label_create(screen);
     lv_label_set_text(label, title);
-    lv_obj_set_width(label, header.w - 46);
-    lv_obj_set_height(label, header.h);
+    /* Centred on the screen, clear of the switcher on both sides. */
+    lv_obj_set_width(label, header.w - 2 * 52);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_style_text_font(label,
-                               strlen(title) > 12  ? UI_FONT_SMALL
-                               : strlen(title) > 8 ? UI_FONT_BODY
-                                                   : UI_FONT_LARGE,
-                               0);
+    lv_obj_set_style_text_font(label, strlen(title) > 12 ? UI_FONT_BODY : UI_FONT_LARGE, 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(label, header.x + 44, header.y + (header.h - 26) / 2);
+    lv_obj_update_layout(label);
+    lv_obj_set_pos(label, header.x + 52, header.y + (header.h - lv_obj_get_height(label)) / 2);
     panel_t *panel = calloc(1, sizeof(*panel));
     if (panel == NULL)
         return NULL;
     panel->status = lv_label_create(screen);
-    ui_key_rect_t footer = ui_keyboard_band(w, h, board_info()->round, h * 87 / 100, 20, 8);
+    int32_t status_h = lv_font_get_line_height(UI_FONT_SMALL);
+    ui_key_rect_t footer =
+        ui_keyboard_band(w, h, board_info()->round, panel_bottom() - status_h, status_h, 8);
     lv_obj_set_pos(panel->status, footer.x, footer.y);
     lv_obj_set_width(panel->status, footer.w);
     lv_obj_set_style_text_align(panel->status, LV_TEXT_ALIGN_CENTER, 0);
@@ -97,13 +96,17 @@ static panel_t *panel_create(lv_obj_t *screen, const char *title)
     return panel;
 }
 
-/* Four rows with two generous controls each; every row fits its circular band. */
+/* Four rows with two generous controls each, between the header and the status
+ * line; every row fits its circular band. */
 static ui_key_rect_t grid_rect(int index)
 {
-    int32_t h = board_info()->height;
+    int32_t h = remote_screen_h();
+    ui_key_rect_t header = remote_header_band();
+    int32_t top = header.y + header.h + 4;
+    int32_t bottom = panel_bottom() - lv_font_get_line_height(UI_FONT_SMALL) - 4;
     int row = index / 2;
-    int32_t y0 = h * (23 + 15 * row) / 100;
-    ui_key_rect_t band = ui_keyboard_band(board_info()->width, h, board_info()->round, y0, h * 14 / 100, 8);
+    int32_t y0 = top + (bottom - top) * row / 4, y1 = top + (bottom - top) * (row + 1) / 4;
+    ui_key_rect_t band = ui_keyboard_band(remote_screen_w(), h, board_info()->round, y0, y1 - y0, 8);
     int32_t middle = band.w / 2;
     return (ui_key_rect_t){band.x + (index % 2 ? middle : 0), band.y, index % 2 ? band.w - middle : middle, band.h};
 }
@@ -244,15 +247,17 @@ static void meeting_clicked(lv_event_t *e)
 static void meeting_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
-    lv_obj_t *page = ui_page(screen, remote_settings()->meeting ? "Zoom" : "Teams");
+    lv_obj_t *page = remote_page(screen, remote_settings()->meeting ? "Zoom" : "Teams");
     ui_text(page, "Apri la riunione sul computer. I pulsanti alternano lo stato; Remote non legge microfono o camera.",
             true);
     static const char *const names[] = {"Microfono: alterna", "Camera: alterna", "Alza / abbassa mano",
                                         "Condivisione",       "Toolbar / chat",  "Lascia riunione"};
     for (int i = 0; i < 6; i++)
     {
-        ui_row(page, i == 5 ? LV_SYMBOL_CLOSE : LV_SYMBOL_CALL, i == 5 ? UI_COLOR_RED : UI_COLOR_INDIGO, names[i], NULL,
-               meeting_clicked, (void *)(intptr_t)i);
+        static const char *const icons[] = {LV_SYMBOL_AUDIO, LV_SYMBOL_VIDEO,   LV_SYMBOL_UP,
+                                            LV_SYMBOL_UPLOAD, LV_SYMBOL_LIST, LV_SYMBOL_CLOSE};
+        ui_row(page, icons[i], i == 5 ? UI_COLOR_RED : UI_COLOR_INDIGO, names[i], NULL, meeting_clicked,
+               (void *)(intptr_t)i);
     }
 }
 
@@ -361,7 +366,7 @@ static void shortcut_category(lv_event_t *e)
 static void shortcuts_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
-    lv_obj_t *page = ui_page(screen, "Scorciatoie");
+    lv_obj_t *page = remote_page(screen, "Scorciatoie");
     for (unsigned i = 0; i < 4; i++)
         ui_row(page, LV_SYMBOL_LIST, UI_COLOR_TEAL, s_shortcut_apps[i].name, NULL, shortcut_category,
                (void *)&s_shortcut_apps[i]);
@@ -372,26 +377,109 @@ static void shortcuts_create(lv_obj_t *screen, void *arg)
         ui_row(page, LV_SYMBOL_KEYBOARD, UI_COLOR_CARD, names[i], NULL, shortcut_clicked, (void *)(intptr_t)i);
 }
 
+/* ------------------------------------------------------------------ trackpad
+ *
+ * The whole screen is the pad and gestures replace the buttons (one-touch panels):
+ *   move                              pointer
+ *   tap                               left click; two taps make a double click
+ *   hold still for 0.45 s             right click
+ *   tap, then touch again and move    drag with the left button held until the finger lifts
+ *   along the right / bottom edge     vertical / horizontal scroll
+ *   along the left / top edge         PC volume / PC brightness
+ * An edge claims a touch only when it starts there and first moves along the
+ * edge: a tap on an edge is still a click and a move inwards is still the
+ * pointer. Round panels use the outer ring, split in four sectors. */
+
+#define PAD_SLOP 8         /* px before a touch counts as a move */
+#define PAD_HOLD_MS 450    /* still this long: right click */
+#define PAD_TAP_MS 450     /* longer touches are never taps */
+#define PAD_REDRAG_MS 300  /* a touch this soon after a tap can start a drag */
+
+typedef enum
+{
+    EDGE_NONE = -1,
+    EDGE_RIGHT,
+    EDGE_BOTTOM,
+    EDGE_LEFT,
+    EDGE_TOP,
+} edge_t;
+
+typedef enum
+{
+    TOUCH_IDLE,
+    TOUCH_UNDECIDED, /* down, not moved yet: tap, hold or the start of a move */
+    TOUCH_POINTER,
+    TOUCH_DRAG,
+    TOUCH_EDGE,
+    TOUCH_DONE, /* right click sent: the rest of this touch is ignored */
+} touch_t;
+
 typedef struct
 {
-    lv_obj_t *pad;
-    lv_obj_t *drag_label;
+    lv_obj_t *pad, *hint, *pill, *marks[4];
     lv_timer_t *timer;
-    lv_point_t last;
-    float dx, dy;
-    float distance;
-    uint32_t pressed_at;
+    lv_point_t start, last;
+    float dx, dy; /* pointer counts not sent yet */
+    float along;  /* edge travel not turned into steps yet */
+    uint32_t pressed_at, released_at;
     uint32_t version;
-    uint8_t held;
-    bool touching;
-    bool dragging;
-    bool scrolling;
+    edge_t edge; /* edge under the touch-down point */
+    touch_t state;
+    bool after_tap; /* this touch began right after a tap */
+    bool tapped;    /* the last touch was a tap */
+    bool dragging;  /* left button held */
 } mouse_t;
 static mouse_t *s_mouse;
 
-static uint8_t mouse_buttons(mouse_t *mouse)
+static int8_t bounded(float value)
 {
-    return mouse->held | (mouse->dragging ? 1 : 0);
+    return (int8_t)fmaxf(-127, fminf(127, value));
+}
+
+static edge_t edge_at(lv_point_t p)
+{
+    int32_t w = remote_screen_w(), h = remote_screen_h();
+    int32_t band = LV_MIN(w, h) * 14 / 100;
+    if (board_info()->round)
+    {
+        int32_t dx = p.x - w / 2, dy = p.y - h / 2, inner = LV_MIN(w, h) / 2 - band;
+        if (dx * dx + dy * dy < inner * inner)
+            return EDGE_NONE;
+        if (LV_ABS(dx) >= LV_ABS(dy))
+            return dx > 0 ? EDGE_RIGHT : EDGE_LEFT;
+        return dy > 0 ? EDGE_BOTTOM : EDGE_TOP;
+    }
+    int32_t distance[4] = {w - 1 - p.x, h - 1 - p.y, p.x, p.y};
+    edge_t edge = EDGE_NONE;
+    for (int i = 0; i < 4; i++)
+        if (distance[i] < band && (edge == EDGE_NONE || distance[i] < distance[edge]))
+            edge = (edge_t)i;
+    return edge;
+}
+
+static bool edge_vertical(edge_t edge)
+{
+    return edge == EDGE_RIGHT || edge == EDGE_LEFT;
+}
+
+static void pill_show(mouse_t *mouse, const char *text)
+{
+    lv_label_set_text(lv_obj_get_child(mouse->pill, 0), text);
+    lv_obj_remove_flag(mouse->pill, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(mouse->hint, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void touch_ended(mouse_t *mouse)
+{
+    if (mouse->dragging)
+        hid_link_mouse(0, 0, 0, 0);
+    mouse->dragging = false;
+    mouse->dx = mouse->dy = 0; /* nothing moves after the finger lifts */
+    mouse->state = TOUCH_IDLE;
+    lv_obj_add_flag(mouse->pill, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(mouse->hint, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < 4; i++)
+        lv_obj_set_style_bg_color(mouse->marks[i], ui_color(UI_COLOR_SEPARATOR), 0);
 }
 
 static void mouse_clear(void)
@@ -399,51 +487,63 @@ static void mouse_clear(void)
     if (s_mouse != NULL)
     {
         s_mouse->dx = s_mouse->dy = 0;
-        s_mouse->held = 0;
-        s_mouse->dragging = false;
-        s_mouse->touching = false;
-        lv_label_set_text(s_mouse->drag_label, "Trascina");
+        s_mouse->tapped = false;
+        touch_ended(s_mouse);
     }
-    hid_link_release_all();
-}
-
-static int8_t bounded(float value)
-{
-    return (int8_t)(value < -127 ? -127 : value > 127 ? 127 : value);
 }
 
 static void mouse_tick(lv_timer_t *timer)
 {
     mouse_t *mouse = lv_timer_get_user_data(timer);
-    if (app_current() != &remote_mouse_app && (mouse->dragging || mouse->held || mouse->touching))
-    {
-        mouse->dx = mouse->dy = 0;
-        mouse->held = 0;
-        mouse->dragging = false;
-        mouse->touching = false;
-        hid_link_mouse(0, 0, 0, 0);
-        lv_label_set_text(mouse->drag_label, "Trascina");
-    }
-    if (mouse->version != hid_link_version())
+    if ((app_current() != &remote_mouse_app && mouse->state != TOUCH_IDLE) || mouse->version != hid_link_version())
     {
         mouse->version = hid_link_version();
-        mouse->dx = mouse->dy = 0;
-        mouse->held = 0;
-        mouse->dragging = false;
-        mouse->touching = false;
-        lv_label_set_text(mouse->drag_label, "Trascina");
-    }
-    float scale = mouse->scrolling ? 12.0f : 1.0f;
-    int8_t dx = bounded(mouse->dx / scale);
-    int8_t dy = bounded(mouse->dy / scale);
-    if (dx == 0 && dy == 0)
+        mouse_clear();
         return;
-    bool ok = mouse->scrolling ? hid_link_pointer(0, 0, mouse_buttons(mouse), -dy, dx)
-                               : hid_link_pointer(dx, dy, mouse_buttons(mouse), 0, 0);
-    if (ok)
+    }
+    /* Held still: right click, once, while the finger is still down. */
+    if (mouse->state == TOUCH_UNDECIDED && !mouse->after_tap && lv_tick_elaps(mouse->pressed_at) >= PAD_HOLD_MS)
     {
-        mouse->dx -= dx * scale;
-        mouse->dy -= dy * scale;
+        mouse->state = TOUCH_DONE;
+        if (remote_send_ok(hid_link_click(2, 1)))
+            pill_show(mouse, "Clic destro");
+        return;
+    }
+    int8_t dx = bounded(mouse->dx), dy = bounded(mouse->dy);
+    if ((dx || dy) && hid_link_pointer(dx, dy, mouse->dragging ? 1 : 0, 0, 0))
+    {
+        mouse->dx -= dx;
+        mouse->dy -= dy;
+    }
+}
+
+/* Edge travel in steps: scroll lines, volume or brightness clicks. */
+static void edge_move(mouse_t *mouse, int32_t delta)
+{
+    static const int32_t step_px[] = {[EDGE_RIGHT] = 12, [EDGE_BOTTOM] = 12, [EDGE_LEFT] = 18, [EDGE_TOP] = 24};
+    float step = step_px[mouse->edge];
+    mouse->along += delta;
+    while (fabsf(mouse->along) >= step)
+    {
+        int sign = mouse->along > 0 ? 1 : -1;
+        mouse->along -= sign * step;
+        switch (mouse->edge)
+        {
+        case EDGE_RIGHT: /* content follows the finger, as on a phone */
+            hid_link_pointer(0, 0, 0, (int8_t)sign, 0);
+            break;
+        case EDGE_BOTTOM:
+            hid_link_pointer(0, 0, 0, 0, (int8_t)-sign);
+            break;
+        case EDGE_LEFT: /* finger up: louder */
+            hid_link_media(sign < 0 ? HIDL_MEDIA_VOLUME_UP : HIDL_MEDIA_VOLUME_DOWN);
+            break;
+        case EDGE_TOP: /* finger right: brighter (Consumer Display Brightness +/-) */
+            hid_link_media(sign > 0 ? 0x006F : 0x0070);
+            break;
+        default:
+            break;
+        }
     }
 }
 
@@ -456,51 +556,65 @@ static void mouse_touch(lv_event_t *e)
         return;
     lv_point_t point;
     lv_indev_get_point(indev, &point);
+
     if (code == LV_EVENT_PRESSED)
     {
-        mouse->last = point;
-        mouse->distance = 0;
+        mouse->start = mouse->last = point;
         mouse->pressed_at = lv_tick_get();
-        mouse->touching = true;
-    }
-    else if (code == LV_EVENT_PRESSING && mouse->touching)
-    {
-        float dx = point.x - mouse->last.x;
-        float dy = point.y - mouse->last.y;
-        mouse->distance += fabsf(dx) + fabsf(dy);
-        float speed = mouse->scrolling ? 1.0f : remote_settings()->pointer_speed * 0.6f;
-        mouse->dx = fmaxf(-512, fminf(512, mouse->dx + dx * speed));
-        mouse->dy = fmaxf(-512, fminf(512, mouse->dy + dy * speed));
-        mouse->last = point;
-    }
-    else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST)
-    {
-        bool tap = mouse->touching && code == LV_EVENT_RELEASED && mouse->distance < 8 &&
-                   lv_tick_elaps(mouse->pressed_at) < 500;
-        mouse->touching = false;
-        if (tap && !mouse->dragging && !mouse->scrolling)
-        {
-            remote_send_ok(hid_link_click(1, 1));
-        }
-    }
-}
-
-static void mouse_button(lv_event_t *e)
-{
-    int i = (int)(intptr_t)lv_event_get_user_data(e);
-    if (s_mouse == NULL)
+        mouse->after_tap = mouse->tapped && lv_tick_elaps(mouse->released_at) < PAD_REDRAG_MS;
+        mouse->tapped = false;
+        mouse->edge = edge_at(point);
+        mouse->along = 0;
+        mouse->state = TOUCH_UNDECIDED;
         return;
-    if (i == 1)
-    {
-        bool next = !s_mouse->dragging;
-        if (remote_send_ok(hid_link_mouse(0, 0, next ? 1 : 0, 0)))
-        {
-            s_mouse->dragging = next;
-            lv_label_set_text(s_mouse->drag_label, next ? "Rilascia" : "Trascina");
-        }
     }
-    else
-        remote_send_ok(hid_link_click(i == 0 ? 1 : 2, 1));
+    if (code == LV_EVENT_PRESSING)
+    {
+        int32_t dx = point.x - mouse->last.x, dy = point.y - mouse->last.y;
+        mouse->last = point;
+        if (mouse->state == TOUCH_UNDECIDED)
+        {
+            int32_t tx = point.x - mouse->start.x, ty = point.y - mouse->start.y;
+            if (LV_ABS(tx) + LV_ABS(ty) < PAD_SLOP)
+                return;
+            bool along = mouse->edge != EDGE_NONE &&
+                         (edge_vertical(mouse->edge) ? LV_ABS(ty) > LV_ABS(tx) : LV_ABS(tx) > LV_ABS(ty));
+            if (mouse->after_tap && remote_send_ok(hid_link_mouse(0, 0, 1, 0)))
+            {
+                mouse->dragging = true;
+                mouse->state = TOUCH_DRAG;
+                pill_show(mouse, "Trascina");
+            }
+            else if (along)
+            {
+                static const char *const names[] = {"Scorri", "Scorri", "Volume", "Luminosità"};
+                mouse->state = TOUCH_EDGE;
+                lv_obj_set_style_bg_color(mouse->marks[mouse->edge], ui_accent(), 0);
+                pill_show(mouse, names[mouse->edge]);
+                dx = tx; /* the slop travel counts too */
+                dy = ty;
+            }
+            else
+                mouse->state = TOUCH_POINTER;
+        }
+        if (mouse->state == TOUCH_EDGE)
+            edge_move(mouse, edge_vertical(mouse->edge) ? dy : dx);
+        else if (mouse->state == TOUCH_POINTER || mouse->state == TOUCH_DRAG)
+        {
+            float speed = remote_settings()->pointer_speed * 0.6f;
+            mouse->dx = fmaxf(-512, fminf(512, mouse->dx + dx * speed));
+            mouse->dy = fmaxf(-512, fminf(512, mouse->dy + dy * speed));
+        }
+        return;
+    }
+    /* Released or lost */
+    bool tap =
+        code == LV_EVENT_RELEASED && mouse->state == TOUCH_UNDECIDED && lv_tick_elaps(mouse->pressed_at) < PAD_TAP_MS;
+    if (tap)
+        remote_send_ok(hid_link_click(1, 1));
+    mouse->tapped = tap && !mouse->after_tap; /* a third quick touch never drags */
+    mouse->released_at = lv_tick_get();
+    touch_ended(mouse);
 }
 
 static void mouse_extra(lv_event_t *e)
@@ -509,17 +623,11 @@ static void mouse_extra(lv_event_t *e)
     static const uint8_t buttons[] = {4, 1, 8, 16};
     if (i < 4)
         remote_send_ok(hid_link_click(buttons[i], i == 1 ? 2 : 1));
-    else if (i < 8)
+    else
     {
         int8_t wheel = i == 4 ? 3 : i == 5 ? -3 : 0;
         int8_t pan = i == 6 ? -3 : i == 7 ? 3 : 0;
-        remote_send_ok(hid_link_pointer(0, 0, s_mouse != NULL ? mouse_buttons(s_mouse) : 0, wheel, pan));
-    }
-    else if (s_mouse != NULL)
-    {
-        s_mouse->scrolling = !s_mouse->scrolling;
-        s_mouse->dx = s_mouse->dy = 0;
-        ui_toast(s_mouse->scrolling ? "Pad: scorrimento" : "Pad: puntatore");
+        remote_send_ok(hid_link_pointer(0, 0, 0, wheel, pan));
     }
 }
 
@@ -527,19 +635,17 @@ static void mouse_more_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
     lv_obj_t *page = ui_page(screen, "Mouse: comandi");
-    static const char *const names[] = {"Click centrale",
-                                        "Doppio click",
-                                        "Indietro",
-                                        "Avanti",
-                                        "Scorri su",
-                                        "Scorri giu",
-                                        "Scorri a sinistra",
-                                        "Scorri a destra",
-                                        "Pad: puntatore / scorrimento"};
-    for (int i = 0; i < 9; i++)
-    {
-        ui_row(page, LV_SYMBOL_GPS, UI_COLOR_TEAL, names[i], NULL, mouse_extra, (void *)(intptr_t)i);
-    }
+    static const char *const names[] = {"Clic centrale", "Doppio clic", "Indietro",          "Avanti",
+                                        "Scorri su",     "Scorri giù",  "Scorri a sinistra", "Scorri a destra"};
+    static const char *const icons[] = {LV_SYMBOL_GPS, LV_SYMBOL_GPS,  LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT,
+                                        LV_SYMBOL_UP,  LV_SYMBOL_DOWN, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT};
+    for (int i = 0; i < 8; i++)
+        ui_row(page, icons[i], UI_COLOR_TEAL, names[i], NULL, mouse_extra, (void *)(intptr_t)i);
+    ui_text(page,
+            "Sul pad: tocca per il clic, tieni premuto per il destro, tocca e poi trascina per spostare. "
+            "Bordo destro e inferiore: scorrimento. Bordo sinistro: volume. Bordo superiore: luminosità, "
+            "se il PC la regola da tastiera.",
+            true);
 }
 static const app_t s_mouse_more_app = {
     .id = "remote.mouse.more", .name = "Comandi mouse", .flags = APP_FLAG_HIDDEN, .create = mouse_more_create};
@@ -570,13 +676,41 @@ static void mouse_knob(lv_event_t *event)
     mouse_t *mouse = lv_event_get_user_data(event);
     lv_port_knob_t *knob = lv_event_get_param(event);
     knob->handled = true;
-    remote_send_ok(hid_link_pointer(0, 0, mouse_buttons(mouse), bounded(knob->delta), 0));
+    remote_send_ok(hid_link_pointer(0, 0, mouse->dragging ? 1 : 0, bounded(knob->delta), 0));
+}
+
+/* A thin bar and a small glyph on each gesture edge, inside the ring on round panels. */
+static lv_obj_t *edge_mark(lv_obj_t *parent, edge_t edge, const char *icon)
+{
+    int32_t w = remote_screen_w(), h = remote_screen_h();
+    bool round = board_info()->round, vertical = edge_vertical(edge);
+    int32_t inset = round ? LV_MIN(w, h) * 4 / 100 : 5, thick = 4;
+    int32_t length = (vertical ? h : w) * (round ? 22 : 30) / 100;
+    static const lv_align_t aligns[] = {LV_ALIGN_RIGHT_MID, LV_ALIGN_BOTTOM_MID, LV_ALIGN_LEFT_MID, LV_ALIGN_TOP_MID};
+    static const int8_t sx[] = {-1, 0, 1, 0}, sy[] = {0, -1, 0, 1};
+
+    lv_obj_t *bar = lv_obj_create(parent);
+    lv_obj_remove_style_all(bar);
+    lv_obj_set_size(bar, vertical ? thick : length, vertical ? length : thick);
+    lv_obj_set_style_radius(bar, thick / 2, 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(bar, ui_color(UI_COLOR_SEPARATOR), 0);
+    lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(bar, aligns[edge], sx[edge] * inset, sy[edge] * inset);
+
+    lv_obj_t *glyph = lv_label_create(parent);
+    lv_label_set_text(glyph, icon);
+    lv_obj_set_style_text_font(glyph, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(glyph, ui_color(UI_COLOR_TEXT_DIM), 0);
+    lv_obj_set_style_text_align(glyph, LV_TEXT_ALIGN_CENTER, 0);
+    int32_t gap = inset + thick + 8;
+    lv_obj_align(glyph, aligns[edge], sx[edge] * gap, sy[edge] * gap);
+    return bar;
 }
 
 static void mouse_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
-    panel_t *panel = panel_create(screen, "Mouse");
     mouse_t *mouse = calloc(1, sizeof(*mouse));
     if (mouse == NULL)
     {
@@ -584,63 +718,64 @@ static void mouse_create(lv_obj_t *screen, void *arg)
         return;
     }
     s_mouse = mouse;
+    lv_obj_set_scrollable(screen, false);
     lv_obj_add_event_cb(screen, mouse_knob, lv_port_knob_event(), mouse);
-    int32_t w = board_info()->width, h = board_info()->height;
-    int32_t size = (w < h ? w : h) * 49 / 100;
-    if (panel != NULL)
-    {
-        lv_obj_set_pos(panel->status, w / 2 - 90, h * 22 / 100 + size - 38);
-        lv_obj_set_width(panel->status, 180);
-    }
+    int32_t w = remote_screen_w(), h = remote_screen_h();
+    bool round = board_info()->round;
+
     mouse->pad = lv_obj_create(screen);
     lv_obj_remove_style_all(mouse->pad);
-    lv_obj_set_size(mouse->pad, size, size);
-    lv_obj_set_pos(mouse->pad, (w - size) / 2, h * 22 / 100);
-    lv_obj_set_style_radius(mouse->pad, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_size(mouse->pad, w, h);
+    lv_obj_set_style_radius(mouse->pad, round ? LV_RADIUS_CIRCLE : 0, 0);
     lv_obj_set_style_bg_opa(mouse->pad, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(mouse->pad, ui_color(UI_COLOR_CARD), 0);
-    lv_obj_set_style_border_width(mouse->pad, 2, 0);
-    lv_obj_set_style_border_color(mouse->pad, ui_color(UI_COLOR_TEAL), 0);
     lv_obj_set_scrollable(mouse->pad, false);
-    /* Dedicated scroll buttons flank the touchpad on every screen shape. */
-    static const char *const scroll_names[] = {LV_SYMBOL_UP, LV_SYMBOL_DOWN, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT};
-    for (int i = 0; i < 4; i++)
-    {
-        int32_t x = w * (i < 2 ? 80 : 8) / 100;
-        int32_t y = h * (i % 2 == 0 ? 32 : 45) / 100;
-        ui_key_rect_t rect = {x, y, w * 12 / 100, h * 12 / 100};
-        lv_obj_t *button = button_at(screen, rect, scroll_names[i], UI_COLOR_TEAL, mouse_extra, LV_EVENT_CLICKED,
-                                     (void *)(intptr_t)(i + 4));
-        lv_obj_add_event_cb(button, mouse_extra, LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)(i + 4));
-    }
     lv_obj_set_press_lock(mouse->pad, true);
     lv_obj_set_gesture_bubble(mouse->pad, false);
     lv_obj_add_event_cb(mouse->pad, mouse_touch, LV_EVENT_PRESSED, mouse);
     lv_obj_add_event_cb(mouse->pad, mouse_touch, LV_EVENT_PRESSING, mouse);
     lv_obj_add_event_cb(mouse->pad, mouse_touch, LV_EVENT_RELEASED, mouse);
     lv_obj_add_event_cb(mouse->pad, mouse_touch, LV_EVENT_PRESS_LOST, mouse);
-    lv_obj_t *hint = lv_label_create(mouse->pad);
-    lv_label_set_text(hint, "Muovi\nTocca: click");
-    lv_obj_set_style_text_font(hint, UI_FONT_BODY, 0);
-    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(hint);
-    if (panel != NULL)
-    {
-        lv_obj_move_to_index(panel->status, -1);
-    }
-    ui_key_rect_t band = ui_keyboard_band(w, h, board_info()->round, h * 73 / 100, h * 11 / 100, 8);
-    static const char *const names[] = {"Sinistro", "Trascina", "Destro"};
-    for (int i = 0; i < 3; i++)
-    {
-        int32_t x0 = band.w * i / 3, x1 = band.w * (i + 1) / 3;
-        lv_obj_t *button = button_at(screen, (ui_key_rect_t){band.x + x0, band.y, x1 - x0, band.h}, names[i],
-                                     UI_COLOR_CARD_HI, mouse_button, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        lv_obj_set_style_text_font(lv_obj_get_child(button, 0), UI_FONT_SMALL, 0);
-        if (i == 1)
-            mouse->drag_label = lv_obj_get_child(button, 0);
-    }
-    button_at(screen, (ui_key_rect_t){w / 2 - 36, h * 85 / 100, 72, h * 8 / 100}, "Altro", UI_COLOR_TEAL, mouse_more,
-              LV_EVENT_CLICKED, NULL);
+
+    mouse->marks[EDGE_RIGHT] = edge_mark(mouse->pad, EDGE_RIGHT, LV_SYMBOL_UP "\n" LV_SYMBOL_DOWN);
+    mouse->marks[EDGE_BOTTOM] = edge_mark(mouse->pad, EDGE_BOTTOM, LV_SYMBOL_LEFT "  " LV_SYMBOL_RIGHT);
+    mouse->marks[EDGE_LEFT] = edge_mark(mouse->pad, EDGE_LEFT, LV_SYMBOL_VOLUME_MAX);
+    mouse->marks[EDGE_TOP] = edge_mark(mouse->pad, EDGE_TOP, LV_SYMBOL_IMAGE);
+
+    mouse->hint = lv_label_create(mouse->pad);
+    lv_label_set_text(mouse->hint, "Tocca: clic\nTieni premuto: destro\nTocca e trascina: sposta");
+    lv_obj_set_width(mouse->hint, w * 62 / 100);
+    lv_obj_set_style_text_font(mouse->hint, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(mouse->hint, ui_color(UI_COLOR_TEXT_DIM), 0);
+    lv_obj_set_style_text_align(mouse->hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_line_space(mouse->hint, 6, 0);
+    lv_obj_center(mouse->hint);
+
+    /* What the current touch does, in place of the hint while it lasts */
+    mouse->pill = lv_obj_create(mouse->pad);
+    lv_obj_remove_style_all(mouse->pill);
+    lv_obj_set_size(mouse->pill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(mouse->pill, 18, 0);
+    lv_obj_set_style_pad_ver(mouse->pill, 8, 0);
+    lv_obj_set_style_radius(mouse->pill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(mouse->pill, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(mouse->pill, ui_accent(), 0);
+    lv_obj_remove_flag(mouse->pill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *pill_text = lv_label_create(mouse->pill);
+    lv_label_set_text(pill_text, "");
+    lv_obj_set_style_text_font(pill_text, UI_FONT_BODY, 0);
+    lv_obj_set_style_text_color(pill_text, lv_color_black(), 0);
+    lv_obj_center(mouse->pill);
+    lv_obj_add_flag(mouse->pill, LV_OBJ_FLAG_HIDDEN);
+
+    /* Header over the pad: switcher on the left, more commands on the right */
+    ui_key_rect_t head = remote_header_band();
+    remote_switcher_button(screen);
+    lv_obj_t *more = button_at(screen, (ui_key_rect_t){head.x + head.w - 50, head.y, 50, head.h}, LV_SYMBOL_BARS,
+                               UI_COLOR_CARD_HI, mouse_more, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_style_radius(more, 14, 0);
+    lv_obj_set_style_text_color(lv_obj_get_child(more, 0), ui_accent(), 0);
+
     mouse->version = hid_link_version();
     mouse->timer = lv_timer_create(mouse_tick, 20, mouse);
     lv_obj_add_event_cb(screen, mouse_deleted, LV_EVENT_DELETE, mouse);
@@ -766,7 +901,9 @@ static void gamepad_clear(void)
 static void gamepad_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
-    panel_create(screen, "Gamepad");
+    panel_t *panel = panel_create(screen, "Gamepad");
+    if (panel != NULL && remote_landscape())
+        lv_obj_add_flag(panel->status, LV_OBJ_FLAG_HIDDEN); /* its line holds L/R/Select/Start */
     gamepad_t *pad = calloc(1, sizeof(*pad));
     if (pad == NULL)
     {
@@ -776,12 +913,17 @@ static void gamepad_create(lv_obj_t *screen, void *arg)
     s_gamepad = pad;
     static const char *const names[] = {
         LV_SYMBOL_UP, LV_SYMBOL_DOWN, LV_SYMBOL_LEFT, LV_SYMBOL_RIGHT, "A", "B", "X", "Y", "L", "R", "Select", "Start"};
-    int32_t w = board_info()->width, h = board_info()->height;
-    int32_t size = w * 13 / 100;
-    pad->mode = button_at(screen, (ui_key_rect_t){w / 2 - w * 24 / 100, h * 19 / 100, w * 48 / 100, h * 9 / 100},
+    int32_t w = remote_screen_w(), h = remote_screen_h();
+    bool landscape = remote_landscape();
+    /* Sizes follow the short side; in landscape L/R/Select/Start share one row. */
+    int32_t unit = LV_MIN(w, h), size = unit * 13 / 100;
+    ui_key_rect_t head = remote_header_band();
+    int32_t mode_y = head.y + head.h + 2, mode_h = 38;
+    int32_t cy = landscape ? (mode_y + mode_h + h * 80 / 100) / 2 : h * 46 / 100;
+    pad->mode = button_at(screen, (ui_key_rect_t){w / 2 - unit * 24 / 100, mode_y, unit * 48 / 100, mode_h},
                           "Direzioni: premute", UI_COLOR_CARD, gamepad_center, LV_EVENT_CLICKED, pad);
     lv_obj_set_style_text_font(lv_obj_get_child(pad->mode, 0), UI_FONT_SMALL, 0);
-    button_at(screen, (ui_key_rect_t){w * 29 / 100 - size / 2, h * 46 / 100 - size / 2, size, size}, LV_SYMBOL_STOP,
+    button_at(screen, (ui_key_rect_t){w * 29 / 100 - size / 2, cy - size / 2, size, size}, LV_SYMBOL_STOP,
               UI_COLOR_CARD, gamepad_center, LV_EVENT_CLICKED, NULL);
     for (int i = 0; i < 12; i++)
     {
@@ -790,17 +932,21 @@ static void gamepad_create(lv_obj_t *screen, void *arg)
         {
             static const int8_t dx[] = {0, 0, -1, 1};
             static const int8_t dy[] = {-1, 1, 0, 0};
-            rect = (ui_key_rect_t){w * 29 / 100 - size / 2 + dx[i] * size, h * 46 / 100 - size / 2 + dy[i] * size, size,
-                                   size};
+            rect = (ui_key_rect_t){w * 29 / 100 - size / 2 + dx[i] * size, cy - size / 2 + dy[i] * size, size, size};
         }
         else if (i < 8)
         {
             /* Familiar diamond: Y above, A below, X left, B right. */
             static const int8_t dx[] = {0, 1, -1, 0};
             static const int8_t dy[] = {1, 0, 0, -1};
-            int32_t face = w * 14 / 100, step = w * 12 / 100;
-            rect = (ui_key_rect_t){w * 70 / 100 - face / 2 + dx[i - 4] * step,
-                                   h * 46 / 100 - face / 2 + dy[i - 4] * step, face, face};
+            int32_t face = unit * 14 / 100, step = unit * 12 / 100;
+            rect = (ui_key_rect_t){w * 70 / 100 - face / 2 + dx[i - 4] * step, cy - face / 2 + dy[i - 4] * step, face,
+                                   face};
+        }
+        else if (landscape)
+        {
+            ui_key_rect_t band = ui_keyboard_band(w, h, false, h * 83 / 100, h - 4 - h * 83 / 100, 8);
+            rect = (ui_key_rect_t){band.x + (i - 8) * band.w / 4, band.y, band.w / 4, band.h};
         }
         else
         {

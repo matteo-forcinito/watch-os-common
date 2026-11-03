@@ -1,6 +1,8 @@
 #include "hid_private.h"
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "host/ble_hs.h"
 
 #include <string.h>
@@ -10,6 +12,7 @@
  * Bluetooth connection and bond. The PC agent (tools/deck_agent) writes JSON
  * messages to RX and subscribes to TX; keys, mouse and media stay HID reports.
  * Both characteristics require an encrypted link, so only a paired host can use them.
+ * On USB the same messages travel in vendor HID report 5 (hid_usb.c).
  */
 
 static const char *TAG = "hid_deck";
@@ -120,13 +123,49 @@ void hid_deck_set_receiver(hid_deck_rx_t receiver)
     s_receiver = receiver;
 }
 
+/* USB: reassemble [length | 0x80 last] + data chunks into one message. */
+void hid_deck_usb_frame(const uint8_t *chunk, uint16_t length)
+{
+    static char message[HID_DECK_MAX + 1];
+    static size_t used;
+    static TickType_t last;
+
+    /* The chunks of one message arrive back to back: a part older than a second
+     * belongs to a message cut by an unplugged cable and must not prefix this one. */
+    TickType_t now = xTaskGetTickCount();
+    if (now - last > pdMS_TO_TICKS(1000))
+        used = 0;
+    last = now;
+    if (length < 1)
+        return;
+    size_t n = chunk[0] & 0x3F;
+    if (n > (size_t)length - 1 || used + n > HID_DECK_MAX)
+    {
+        used = 0; /* malformed or too long: start over */
+        return;
+    }
+    memcpy(message + used, chunk + 1, n);
+    used += n;
+    if (chunk[0] & 0x80)
+    {
+        message[used] = '\0';
+        if (s_receiver != NULL)
+            s_receiver(message, used);
+        used = 0;
+    }
+}
+
 bool hid_deck_connected(void)
 {
+    if (hid_link_transport() == HID_LINK_USB)
+        return hid_link_state() == HID_LINK_CONNECTED;
     return s_subscribed;
 }
 
 bool hid_deck_send(const char *line)
 {
+    if (hid_link_transport() == HID_LINK_USB)
+        return line != NULL && hid_usb_deck_send(line);
     if (!s_subscribed || s_conn == BLE_HS_CONN_HANDLE_NONE || line == NULL)
     {
         return false;
