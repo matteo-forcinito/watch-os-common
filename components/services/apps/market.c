@@ -4,6 +4,7 @@
 #include "services/storage.h"
 #include "core/app.h"
 #include "core/power.h"
+#include "core/settings.h"
 #include "core/sys.h"
 #include "hardware/sdcard.h"
 
@@ -653,7 +654,7 @@ static esp_err_t stream_to_slot(const market_entry_t *entry, const esp_partition
             err = check_header(header, IMAGE_HEADER, entry);
             if (err != ESP_OK) break;
             err = ESP_FAIL;
-            extapp_slot_forget();
+            extapp_slot_forget(slot);
             if (esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &ota) != ESP_OK) break;
             writing = true;
             if (esp_ota_write(ota, header, IMAGE_HEADER) != ESP_OK) break;
@@ -671,12 +672,32 @@ done:
     return err;
 }
 
+/* A newly installed app also appears on the home ring, if a favourite place is free. */
+static void add_to_home(const char *id)
+{
+    char key[24];
+    snprintf(key, sizeof(key), "ext:%.19s", id);
+    settings_t s = *settings_get();
+    int free_slot = -1;
+    for (int i = 0; i < (int)(sizeof(s.favorites) / sizeof(s.favorites[0])); i++)
+    {
+        if (strcmp(s.favorites[i], key) == 0) return;
+        if (s.favorites[i][0] == '\0' && free_slot < 0) free_slot = i;
+    }
+    if (free_slot < 0) return;
+    snprintf(s.favorites[free_slot], sizeof(s.favorites[free_slot]), "%s", key);
+    settings_save(&s);
+}
+
 static esp_err_t install_direct(const market_entry_t *entry)
 {
-    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
-    if (slot == NULL || entry->binary_size > slot->size) return ESP_ERR_INVALID_SIZE;
+    /* The bay boots apps from slots beyond ota_1: only apps that return to the
+     * launcher through NVS (extapp_sdk >= 2) may live there. */
+    if (extapp_bay_size() > 0 && entry->sdk < 2) return ESP_ERR_NOT_SUPPORTED;
+    const esp_partition_t *slot = extapp_slot_for(entry->id, entry->binary_size);
+    if (slot == NULL) return extapp_bay_size() > 0 ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_SIZE;
     extapp_t previous;
-    bool had = extapp_slot_app(&previous);
+    bool had = extapp_slot_read(slot, &previous);
     esp_err_t err = stream_to_slot(entry, slot);
     if (err != ESP_OK)
     {
@@ -702,18 +723,28 @@ static esp_err_t install_direct(const market_entry_t *entry)
         }
     }
     status_set(MARKET_PUBLISHING, 98, "Aggiunta al launcher");
-    err = extapp_slot_note(entry->id, entry->name, entry->version, icon);
+    err = extapp_slot_note(slot, entry->id, entry->name, entry->version, icon);
+    if (err == ESP_OK)
+    {
+        extapp_slot_drop_others(slot, entry->id);
+        if (!had || strcasecmp(previous.id, entry->id) != 0) add_to_home(entry->id);
+    }
     refresh_installed_catalog();
     return err;
 }
 
 static esp_err_t remove_direct(const market_entry_t *entry)
 {
-    extapp_t current;
-    if (!extapp_slot_app(&current) || strcmp(current.id, entry->id) != 0) return ESP_ERR_NOT_FOUND;
+    int room = extapp_bay_size() > 0 ? extapp_bay_size() : 1;
+    extapp_t *apps = malloc(sizeof(extapp_t) * room);
+    const esp_partition_t *slot = NULL;
+    int count = apps != NULL ? extapp_slot_apps(apps, room) : 0;
+    for (int i = 0; i < count && slot == NULL; i++)
+        if (strcasecmp(apps[i].id, entry->id) == 0) slot = extapp_slot_of(&apps[i]);
+    free(apps);
+    if (slot == NULL) return ESP_ERR_NOT_FOUND;
     status_set(MARKET_PUBLISHING, 0, "Rimozione dell'app");
-    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
-    extapp_slot_forget();
+    extapp_slot_forget(slot);
     /* Erasing the first sector is enough: the slot no longer holds a valid image. */
     esp_err_t err = esp_partition_erase_range(slot, 0, slot->erase_size);
     drop_flash_icon(entry->id);
@@ -724,7 +755,7 @@ static esp_err_t remove_direct(const market_entry_t *entry)
 
 static esp_err_t remove_entry(const market_entry_t *entry)
 {
-    if (!sdcard_is_mounted()) return remove_direct(entry);
+    if (!sdcard_is_mounted() || extapp_bay_size() > 0) return remove_direct(entry);
     char folder[80];
     snprintf(folder, sizeof(folder), SDCARD_MOUNT "/apps/%s", entry->id);
     status_set(MARKET_PUBLISHING, 0, "Rimozione dell'app");
@@ -755,7 +786,7 @@ static esp_err_t remove_entry(const market_entry_t *entry)
 
 static esp_err_t install_entry(const market_entry_t *entry)
 {
-    if (!sdcard_is_mounted()) return install_direct(entry);
+    if (!sdcard_is_mounted() || extapp_bay_size() > 0) return install_direct(entry);   /* bay: apps live in slots */
     const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
     if (slot == NULL || entry->binary_size > slot->size) return ESP_ERR_INVALID_SIZE;
     uint32_t total, available;
@@ -824,7 +855,10 @@ static void worker(void *arg)
                                       sdcard_is_mounted() ? "App salvata. Puoi aprirla dalla libreria." :
                                                             "App installata. La trovi nel launcher.");
     else if (err == ESP_ERR_INVALID_SIZE) status_set(MARKET_FAILED, 0, "App troppo grande per questo dispositivo.");
-    else if (err == ESP_ERR_NO_MEM) status_set(MARKET_FAILED, 0, "Memoria o spazio insufficienti.");
+    else if (err == ESP_ERR_NO_MEM) status_set(MARKET_FAILED, 0, extapp_bay_size() > 0 ?
+                                               "Baia app piena: rimuovi un'app per fare spazio." :
+                                               "Memoria o spazio insufficienti.");
+    else if (err == ESP_ERR_NOT_SUPPORTED) status_set(MARKET_FAILED, 0, "Questa versione dell'app non è ancora pronta per la baia.");
     else status_set(MARKET_FAILED, 0, job->remove ? "Rimozione non completata. Riprova." :
                                                 "Download non completato. Controlla rete e riprova.");
     power_keep_screen_on(false);

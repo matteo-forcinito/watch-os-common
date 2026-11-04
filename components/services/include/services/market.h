@@ -38,6 +38,7 @@ typedef struct
     size_t binary_size;
     size_t icon_size;
     uint32_t color;
+    int sdk;                      /* extapp_sdk generation the app was built with (1 if not stated) */
     bool installed;
     char installed_version[32];
     extapp_t local;

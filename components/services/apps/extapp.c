@@ -172,9 +172,64 @@ esp_err_t extapp_upload_manifest(const char *folder, const char *binary_name)
     return ESP_OK;
 }
 
-bool extapp_slot_app(extapp_t *out)
+/* ------------------------------------------------------------ app slots */
+
+#define BAY_MAX 14   /* ota_2 .. ota_15 */
+
+static const esp_partition_t *bay_slot(int index)
 {
-    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    if (index < 0 || index >= BAY_MAX)
+    {
+        return NULL;
+    }
+    return esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                    (esp_partition_subtype_t)(ESP_PARTITION_SUBTYPE_APP_OTA_0 + 2 + index), NULL);
+}
+
+int extapp_bay_size(void)
+{
+    int count = 0;
+    while (bay_slot(count) != NULL)
+    {
+        count++;
+    }
+    return count;
+}
+
+const esp_partition_t *extapp_os_update_slot(void)
+{
+    if (extapp_bay_size() == 0)
+    {
+        return esp_ota_get_next_update_partition(NULL);
+    }
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_partition_subtype_t other = (running != NULL && running->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0)
+                                        ? ESP_PARTITION_SUBTYPE_APP_OTA_1 : ESP_PARTITION_SUBTYPE_APP_OTA_0;
+    return esp_partition_find_first(ESP_PARTITION_TYPE_APP, other, NULL);
+}
+
+/* Where card apps are copied before they run (classic layout only: with a bay,
+ * every slot belongs to a market app and the market installs there instead). */
+static const esp_partition_t *copy_slot(void)
+{
+    return extapp_bay_size() > 0 ? NULL : esp_ota_get_next_update_partition(NULL);
+}
+
+/* NVS key of a slot's note: "slotapp" in the classic layout (as before), "n_<label>" in the bay. */
+static void note_key(const esp_partition_t *slot, char *key, size_t size)
+{
+    if (extapp_bay_size() == 0)
+    {
+        snprintf(key, size, "slotapp");
+    }
+    else
+    {
+        snprintf(key, size, "n_%.12s", slot->label);
+    }
+}
+
+bool extapp_slot_read(const esp_partition_t *slot, extapp_t *out)
+{
     esp_app_desc_t desc;
     if (slot == NULL || esp_ota_get_partition_description(slot, &desc) != ESP_OK)
     {
@@ -191,11 +246,13 @@ bool extapp_slot_app(extapp_t *out)
     snprintf(out->bin, sizeof(out->bin), "slot:%s", slot->label);
     slot_note_t note = {0};
     size_t size = sizeof(note);
+    char key[16];
+    note_key(slot, key, sizeof(key));
     nvs_handle_t nvs;
     bool noted = false;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK)
     {
-        noted = nvs_get_blob(nvs, "slotapp", &note, &size) == ESP_OK && size == sizeof(note) &&
+        noted = nvs_get_blob(nvs, key, &note, &size) == ESP_OK && size == sizeof(note) &&
                 strncmp(note.project, desc.project_name, sizeof(note.project)) == 0;
         nvs_close(nvs);
     }
@@ -208,8 +265,22 @@ bool extapp_slot_app(extapp_t *out)
     }
     else
     {
-        /* Flashed by hand: the image's own project name, capitalised. */
+        /* Flashed by hand: the image's own project name, capitalised, without
+         * this board's suffix ("solco_amoled175c" on amoled175c_watch -> "Solco"). */
         snprintf(out->id, sizeof(out->id), "%.31s", desc.project_name);
+        char board[32];
+        snprintf(board, sizeof(board), "%.31s", esp_app_get_description()->project_name);
+        char *cut = strrchr(board, '_');
+        if (cut != NULL && extapp_bay_size() > 0)
+        {
+            *cut = '\0';   /* "amoled175c_watch" -> "amoled175c" */
+            size_t id_len = strlen(out->id), board_len = strlen(board);
+            if (board_len > 0 && id_len > board_len + 1 && out->id[id_len - board_len - 1] == '_' &&
+                strcmp(out->id + id_len - board_len, board) == 0)
+            {
+                out->id[id_len - board_len - 1] = '\0';
+            }
+        }
         out->id[0] = (char)toupper((unsigned char)out->id[0]);
         snprintf(out->name, sizeof(out->name), "%s", out->id);
         snprintf(out->version, sizeof(out->version), "%.31s", desc.version);
@@ -217,9 +288,94 @@ bool extapp_slot_app(extapp_t *out)
     return true;
 }
 
-esp_err_t extapp_slot_note(const char *id, const char *name, const char *version, const char *icon)
+int extapp_slot_apps(extapp_t *out, int max)
 {
-    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    int bay = extapp_bay_size();
+    int count = 0;
+    if (bay == 0)
+    {
+        return max > 0 && extapp_slot_read(esp_ota_get_next_update_partition(NULL), &out[0]) ? 1 : 0;
+    }
+    for (int i = 0; i < bay && count < max; i++)
+    {
+        if (extapp_slot_read(bay_slot(i), &out[count]))
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+bool extapp_slot_app(extapp_t *out)
+{
+    return extapp_slot_apps(out, 1) == 1;
+}
+
+const esp_partition_t *extapp_slot_of(const extapp_t *app)
+{
+    if (app == NULL || !app->in_slot || strncmp(app->bin, "slot:", 5) != 0)
+    {
+        return NULL;
+    }
+    const esp_partition_t *slot = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY,
+                                                           app->bin + 5);
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    return slot != NULL && slot != running ? slot : NULL;
+}
+
+const esp_partition_t *extapp_slot_for(const char *id, size_t size)
+{
+    int bay = extapp_bay_size();
+    if (bay == 0)
+    {
+        const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+        return slot != NULL && size <= slot->size ? slot : NULL;
+    }
+    extapp_t app;
+    /* An update replaces the app where it already is, if the new image fits. */
+    for (int i = 0; i < bay; i++)
+    {
+        const esp_partition_t *slot = bay_slot(i);
+        if (extapp_slot_read(slot, &app) && strcasecmp(app.id, id) == 0)
+        {
+            if (size <= slot->size)
+            {
+                return slot;
+            }
+            break;   /* grown past its slot: look for a larger free one */
+        }
+    }
+    /* Otherwise the smallest free slot that fits, keeping large slots for large apps. */
+    const esp_partition_t *best = NULL;
+    for (int i = 0; i < bay; i++)
+    {
+        const esp_partition_t *slot = bay_slot(i);
+        if (size <= slot->size && !extapp_slot_read(slot, &app) && (best == NULL || slot->size < best->size))
+        {
+            best = slot;
+        }
+    }
+    return best;
+}
+
+void extapp_slot_drop_others(const esp_partition_t *keep, const char *id)
+{
+    extapp_t app;
+    for (int i = 0; i < extapp_bay_size(); i++)
+    {
+        const esp_partition_t *slot = bay_slot(i);
+        if (slot != keep && extapp_slot_read(slot, &app) && strcasecmp(app.id, id) == 0)
+        {
+            extapp_slot_forget(slot);
+            esp_partition_erase_range(slot, 0, slot->erase_size);   /* no valid image any more */
+            ESP_LOGI(TAG, "%s moved: old copy in %s removed", id, slot->label);
+        }
+    }
+}
+
+esp_err_t extapp_slot_note(const esp_partition_t *slot, const char *id, const char *name, const char *version,
+                           const char *icon)
+{
     esp_app_desc_t desc;
     if (slot == NULL || esp_ota_get_partition_description(slot, &desc) != ESP_OK)
     {
@@ -231,13 +387,15 @@ esp_err_t extapp_slot_note(const char *id, const char *name, const char *version
     snprintf(note.version, sizeof(note.version), "%s", version);
     snprintf(note.project, sizeof(note.project), "%.31s", desc.project_name);
     snprintf(note.icon, sizeof(note.icon), "%s", icon != NULL ? icon : "");
+    char key[16];
+    note_key(slot, key, sizeof(key));
     nvs_handle_t nvs;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
     if (err != ESP_OK)
     {
         return err;
     }
-    err = nvs_set_blob(nvs, "slotapp", &note, sizeof(note));
+    err = nvs_set_blob(nvs, key, &note, sizeof(note));
     if (err == ESP_OK)
     {
         err = nvs_commit(nvs);
@@ -246,17 +404,22 @@ esp_err_t extapp_slot_note(const char *id, const char *name, const char *version
     return err;
 }
 
-void extapp_slot_forget(void)
+void extapp_slot_forget(const esp_partition_t *slot)
 {
     nvs_handle_t nvs;
-    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
+    if (slot != NULL && nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
     {
-        nvs_erase_key(nvs, "slotapp");
+        char key[16];
+        note_key(slot, key, sizeof(key));
+        nvs_erase_key(nvs, key);
         nvs_commit(nvs);
         nvs_close(nvs);
     }
-    /* The slot no longer holds the card app it was copied from either. */
-    extapp_forget_cache();
+    /* The card app copied into the copy slot is gone too, if this was that slot. */
+    if (slot == NULL || slot == copy_slot())
+    {
+        extapp_forget_cache();
+    }
 }
 
 int extapp_scan(extapp_t *out, int max)
@@ -267,16 +430,17 @@ int extapp_scan(extapp_t *out, int max)
     DIR *dir = root != NULL ? opendir(apps_dir) : NULL;
     int count = 0;
 
-    /* No card: the app written straight into the slot is the library. */
-    if (!sdcard_is_mounted() && max > 0 && extapp_slot_app(&out[0]))
+    /* No card: the apps written straight into the slots are the library. */
+    if (!sdcard_is_mounted())
     {
-        count = 1;
+        count = extapp_slot_apps(out, max);
     }
+    int resident = count;
 
     if (dir == NULL)
     {
         /* A USB-installed development app is usable with a card inserted too. */
-        if (count == 0 && max > 0 && extapp_slot_app(&out[0])) count = 1;
+        if (count == 0) count = extapp_slot_apps(out, max);
         return count;
     }
 
@@ -316,8 +480,13 @@ int extapp_scan(extapp_t *out, int max)
 
         app->size = (size_t)st.st_size;
 
-        /* The slot app may also have a folder (an icon kept in flash): list it once. */
-        if (count > 0 && out[0].in_slot && strcasecmp(out[0].id, app->id) == 0)
+        /* A slot app may also have a folder (an icon kept in flash): list it once. */
+        bool listed = false;
+        for (int i = 0; i < resident; i++)
+        {
+            if (strcasecmp(out[i].id, app->id) == 0) listed = true;
+        }
+        if (listed)
         {
             continue;
         }
@@ -344,12 +513,19 @@ int extapp_scan(extapp_t *out, int max)
     closedir(dir);
     /* Keep manually flashed apps launchable on development boards with SD.
      * Prefer a real SD package with the same id, so updates there still work. */
-    if (sdcard_is_mounted() && count < max && extapp_slot_app(&out[count]))
+    if (sdcard_is_mounted() && count < max)
     {
-        bool listed = false;
-        for (int i = 0; i < count; i++)
-            if (!strcasecmp(out[i].id, out[count].id) || !strcasecmp(out[i].name, out[count].name)) listed = true;
-        if (!listed) count++;
+        int room = extapp_bay_size() > 0 ? extapp_bay_size() : 1;
+        extapp_t *slots = malloc(sizeof(extapp_t) * room);
+        int found = slots != NULL ? extapp_slot_apps(slots, room) : 0;
+        for (int k = 0; k < found && count < max; k++)
+        {
+            bool listed = false;
+            for (int i = 0; i < count; i++)
+                if (!strcasecmp(out[i].id, slots[k].id) || !strcasecmp(out[i].name, slots[k].name)) listed = true;
+            if (!listed) out[count++] = slots[k];
+        }
+        free(slots);
     }
     ESP_LOGI(TAG, "%d external apps in %s", count, apps_dir);
 
@@ -378,7 +554,7 @@ bool extapp_is_cached(const extapp_t *app)
     if (app->in_slot)
     {
         extapp_t current;
-        return extapp_slot_app(&current) && strcmp(current.id, app->id) == 0;
+        return extapp_slot_read(extapp_slot_of(app), &current) && strcmp(current.id, app->id) == 0;
     }
 
     cache_t now;
@@ -400,7 +576,11 @@ bool extapp_is_cached(const extapp_t *app)
     }
 
     /* The slot must still hold a valid image (not erased by a USB flash). */
-    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    const esp_partition_t *slot = copy_slot();
+    if (slot == NULL)
+    {
+        return false;
+    }
     esp_app_desc_t desc;
 
     return slot != NULL && esp_ota_get_partition_description(slot, &desc) == ESP_OK;
@@ -413,8 +593,27 @@ static esp_err_t fail(const char *message, esp_err_t err)
     return err;
 }
 
+void extapp_note_launcher(void)
+{
+    const char *label = esp_ota_get_running_partition()->label;
+    char saved[17] = "";
+    size_t size = sizeof(saved);
+    nvs_handle_t nvs;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
+    {
+        if (nvs_get_str(nvs, "launcher", saved, &size) != ESP_OK || strcmp(saved, label) != 0)
+        {
+            nvs_set_str(nvs, "launcher", label);
+            nvs_commit(nvs);
+        }
+        nvs_close(nvs);
+    }
+}
+
 static void boot_into(const esp_partition_t *slot)
 {
+    extapp_note_launcher();   /* where the app returns (extapp_sdk >= 2) */
+
     esp_err_t err = esp_ota_set_boot_partition(slot);
 
     if (err == ESP_OK)
@@ -459,7 +658,12 @@ void extapp_forget_cache(void)
 
 static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int percent, void *ctx), void *ctx)
 {
-    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    const esp_partition_t *slot = app->in_slot ? extapp_slot_of(app) : copy_slot();
+
+    if (slot == NULL && !app->in_slot && extapp_bay_size() > 0)
+    {
+        return fail("Con la baia app installala dal Market", ESP_ERR_NOT_SUPPORTED);
+    }
 
     s_error[0] = '\0';
 
@@ -530,7 +734,7 @@ static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int perc
     }
 
     /* The slot is about to change: the old "already installed" notes are wrong from now on. */
-    extapp_slot_forget();
+    extapp_slot_forget(slot);
 
     /* Sequential writes: each sector is erased just before it is written, so the
        progress bar moves from the start instead of waiting for a long erase. */

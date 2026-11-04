@@ -3,8 +3,42 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 
 static const char *TAG = "extapp_sdk";
+
+/*
+ * The launcher's slot. The OS writes its label to NVS ("extapp"/"launcher")
+ * just before booting an app; with an app bay (slots beyond ota_1) the "other"
+ * slot is not the launcher. Without the key: the classic two-slot rule.
+ * NVS is shared with the OS: opened, never erased.
+ */
+static const esp_partition_t *launcher_slot(void)
+{
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open("extapp", NVS_READONLY, &nvs);
+    if (err == ESP_ERR_NVS_NOT_INITIALIZED && nvs_flash_init() == ESP_OK)
+    {
+        err = nvs_open("extapp", NVS_READONLY, &nvs);
+    }
+    if (err == ESP_OK)
+    {
+        char label[17] = "";
+        size_t size = sizeof(label);
+        err = nvs_get_str(nvs, "launcher", label, &size);
+        nvs_close(nvs);
+        const esp_partition_t *slot = err == ESP_OK ?
+            esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label) : NULL;
+        esp_app_desc_t desc;
+        if (slot != NULL && slot != esp_ota_get_running_partition() &&
+            esp_ota_get_partition_description(slot, &desc) == ESP_OK)   /* still holds an image */
+        {
+            return slot;
+        }
+    }
+    return esp_ota_get_next_update_partition(NULL);
+}
 
 esp_err_t extapp_sdk_init(void)
 {
@@ -25,7 +59,7 @@ esp_err_t extapp_sdk_init(void)
         }
     }
 
-    const esp_partition_t *launcher = esp_ota_get_next_update_partition(NULL);
+    const esp_partition_t *launcher = launcher_slot();
 
     if (launcher == NULL)
     {

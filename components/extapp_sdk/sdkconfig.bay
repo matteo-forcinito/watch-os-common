@@ -1,0 +1,9 @@
+# Extra sdkconfig defaults for apps that run from an app bay slot above 16 MB
+# (AMOLED 1.75C, 32 MB quad GD25Q256). Add after the app's own defaults:
+#   idf.py -B build-bay -D SDKCONFIG=build-bay/sdkconfig \
+#          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;<watch-os-common>/components/extapp_sdk/sdkconfig.bay" build
+# Publish the result with "sdk": 2 in the market catalog.
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="32MB"
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_BOOTLOADER_CACHE_32BIT_ADDR_QUAD_FLASH=y

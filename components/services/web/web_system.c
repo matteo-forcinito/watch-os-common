@@ -268,10 +268,13 @@ static esp_err_t apps_get(httpd_req_t *req)
         cJSON_AddStringToObject(j, "version", ext[i].version);
         cJSON_AddNumberToObject(j, "size", (double)ext[i].size);
         cJSON_AddBoolToObject(j, "slot", ext[i].in_slot);
+        const esp_partition_t *part = extapp_slot_of(&ext[i]);
+        if (part != NULL) cJSON_AddStringToObject(j, "partition", part->label);
         cJSON_AddBoolToObject(j, "ready", extapp_is_cached(&ext[i]));
         cJSON_AddItemToArray(external, j);
     }
     free(ext);
+    cJSON_AddNumberToObject(out, "app_bay", extapp_bay_size());
     const settings_t *s = settings_get();
     cJSON *fav = cJSON_AddArrayToObject(out, "favorites");
     for (int i = 0; i < 6; i++)

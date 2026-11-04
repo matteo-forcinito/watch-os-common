@@ -2,5 +2,5 @@
 idf_component_register(
     SRCS "extapp_sdk.c"
     INCLUDE_DIRS "include"
-    PRIV_REQUIRES app_update esp_system
+    PRIV_REQUIRES app_update esp_system nvs_flash
 )

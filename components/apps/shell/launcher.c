@@ -1087,7 +1087,24 @@ static void details_create(lv_obj_t *screen, void *arg)
         ui_text(page, m->summary, false);
     }
     ui_section(page, "INFORMAZIONI");
-    ui_row(page, LV_SYMBOL_DIRECTORY, UI_COLOR_PURPLE, "Tipo", item->ext.in_slot ? "esterna (memoria app)" : "esterna", NULL, NULL);
+    int bay = extapp_bay_size();
+    ui_row(page, LV_SYMBOL_DIRECTORY, UI_COLOR_PURPLE, "Tipo",
+           !item->ext.in_slot ? "esterna" : bay > 0 ? "esterna (baia app)" : "esterna (memoria app)", NULL, NULL);
+    const esp_partition_t *slot = extapp_slot_of(&item->ext);
+    if (slot != NULL)
+    {
+        /* Where it lives: the partition and its room, e.g. "ota_3 · 5 MB". */
+        snprintf(text, sizeof(text), "%s · %u MB", slot->label, (unsigned)(slot->size / (1024 * 1024)));
+        ui_row(page, LV_SYMBOL_DRIVE, UI_COLOR_GRAY, "Partizione", text, NULL, NULL);
+    }
+    if (bay > 0)
+    {
+        extapp_t *apps = heap_caps_malloc(sizeof(extapp_t) * bay, MALLOC_CAP_SPIRAM);
+        int used = apps != NULL ? extapp_slot_apps(apps, bay) : 0;
+        free(apps);
+        snprintf(text, sizeof(text), "%d di %d slot occupati", used, bay);
+        ui_row(page, LV_SYMBOL_LIST, UI_COLOR_GRAY, "Baia app", text, NULL, NULL);
+    }
     ui_row(page, LV_SYMBOL_OK, UI_COLOR_GREEN, "Installata", item->ext.version[0] ? item->ext.version : "?", NULL, NULL);
     if (listed)
     {

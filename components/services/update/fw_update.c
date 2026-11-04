@@ -299,7 +299,7 @@ static esp_err_t begin(size_t total_size)
         return ESP_ERR_INVALID_STATE;   /* another update is running */
     }
 
-    s_slot = esp_ota_get_next_update_partition(NULL);
+    s_slot = extapp_os_update_slot();   /* never a bay slot */
 
     if (s_slot == NULL || total_size < HEAD_SIZE || total_size > s_slot->size)
     {
@@ -894,4 +894,5 @@ void fw_update_confirm_boot(void)
     }
 
     esp_ota_mark_app_valid_cancel_rollback();
+    extapp_note_launcher();
 }

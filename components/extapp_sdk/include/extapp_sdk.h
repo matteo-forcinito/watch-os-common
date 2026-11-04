@@ -15,9 +15,14 @@
  * app runs only once: whatever happens next - return, crash, watchdog,
  * battery pulled - the next start is the launcher. No way to get stuck.
  *
- * Works with any app slot layout where the launcher is "the other" slot
- * (the same rule the old Arduino apps used).
+ * The launcher is the slot the OS recorded in NVS ("extapp"/"launcher"),
+ * so apps can live in any slot of an app bay (ota_2, ota_3...). Without that
+ * key it is "the other" slot (the rule the old Arduino apps used).
+ *
+ * EXTAPP_SDK_VERSION 2 = bay-aware: publish with "sdk": 2 in the market catalog.
  */
+
+#define EXTAPP_SDK_VERSION 2
 
 #include "esp_err.h"
 

@@ -21,12 +21,19 @@
  * straight into the app slot and notes its name, version and icon here: the
  * scan then lists that one app ("in_slot"), and launching it only boots the
  * slot. Nothing is kept on a card.
+ *
+ * App bay: a partition table with app slots beyond ota_1 (ota_2, ota_3...)
+ * keeps one market app per slot, all installed together, and the OS stays in
+ * ota_0/ota_1. Launching a bay app only boots its slot. Each slot has its own
+ * note in NVS. Bay apps must find the launcher through the NVS key that
+ * boot_into() writes (extapp_sdk >= 2): the market only installs those.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 
 #include "esp_err.h"
+#include "esp_partition.h"
 
 #define EXTAPP_MAX       24
 #define EXTAPP_PATH_MAX  200
@@ -59,14 +66,31 @@ esp_err_t extapp_launch(const extapp_t *app, void (*progress)(int percent, void 
 /* The app slot is being overwritten (e.g. firmware update): no app is cached any more. */
 void extapp_forget_cache(void);
 
-/* An app was written straight into the app slot: remember what it is.
+/* App slots beyond ota_1 (0 = classic layout: one app slot shared with OS updates). */
+int extapp_bay_size(void);
+/* Where an OS update goes: the OS's other slot, never a bay slot. */
+const esp_partition_t *extapp_os_update_slot(void);
+/* Where the market writes app `id` of `size` bytes: its current slot, else a free
+ * one that fits. NULL if none (bay full, or too large). */
+const esp_partition_t *extapp_slot_for(const char *id, size_t size);
+/* The slot an in_slot app lives in ("slot:<label>"), or NULL. */
+const esp_partition_t *extapp_slot_of(const extapp_t *app);
+/* The app held by `slot`, if it holds one (not an OS image). */
+bool extapp_slot_read(const esp_partition_t *slot, extapp_t *out);
+/* Every app held by app slots (one in the classic layout, one per bay slot). */
+int extapp_slot_apps(extapp_t *out, int max);
+/* An app was written straight into `slot`: remember what it is.
  * icon: LVGL path ("F:/apps/x/icon.png") or "". */
-esp_err_t extapp_slot_note(const char *id, const char *name, const char *version, const char *icon);
-/* The slot app was removed (or replaced by something else). */
-void extapp_slot_forget(void);
-/* The app currently in the app slot, if the slot holds one (not an OS image). */
+esp_err_t extapp_slot_note(const esp_partition_t *slot, const char *id, const char *name, const char *version,
+                           const char *icon);
+/* Remove app `id` from every bay slot but `keep` (an update moved it to a larger slot). */
+void extapp_slot_drop_others(const esp_partition_t *keep, const char *id);
+/* The app in `slot` was removed (or replaced by something else). */
+void extapp_slot_forget(const esp_partition_t *slot);
+/* Record the running OS slot as the launcher apps return to (boot and launch). */
+void extapp_note_launcher(void);
+/* The first app in an app slot (classic layout: the only one). */
 bool extapp_slot_app(extapp_t *out);
-
 /* Error text of the last failed launch. */
 const char *extapp_last_error(void);
 

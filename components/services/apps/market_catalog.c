@@ -126,6 +126,8 @@ esp_err_t market_parse_catalog(const char *text, const char *board,
             strcmp(entry->project, "amoled175_watch") == 0 || strcmp(entry->project, "amoled175c_watch") == 0 ||
             strcmp(entry->project, "knob_os") == 0) goto invalid;
         entry->color = 0x7B6CFF;
+        cJSON *sdk = cJSON_GetObjectItemCaseSensitive(app, "sdk");
+        entry->sdk = cJSON_IsNumber(sdk) && sdk->valueint >= 1 && sdk->valueint <= 99 ? sdk->valueint : 1;
         const char *color = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(app, "color"));
         if (color != NULL)
         {
