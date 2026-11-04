@@ -179,3 +179,26 @@ dispositivo, revisione del diff, flash + push. Pubblicazione sul Market solo qua
   (heap), notifica al telefono via companion, raffica/timer/flash LED.
 - Lezione: le app esterne erano compilate con -Og; con -O2 servono `-Wno-error` per alcuni avvisi del
   codice OS (vedi `external_apps/orbit/CMakeLists.txt`). Il rendering su 2 core rompe il band mode.
+
+---
+
+## Stato al 4/11/2026 sera
+
+Pubblicati: firmware 1.17.4 (cataloghi Market per board, Sorveglianza Watcher), Orbit 2.0 (5 board),
+Remote 1.5.0 (Git e CI) e 1.5.1 (Agente PC: stato, versione, riavvia, esci; installazione dalla microSD
+come chiavetta USB sulle board con USB nativa). In uscita: firmware 1.17.5 e Remote 1.5.2 (8 computer
+associati invece di uno).
+
+Watch Deck (agente PC, `tools/deck_agent`): cause dei blocchi trovate e corrette, vedi `docs/DECK.md`
+(crash COM del microfono, chiusure WinRT nel loop, servizio aperto in esclusiva, chiamate WinRT sincrone).
+Ora un watchdog riavvia l'agente se il loop resta fermo 45 s. Installer per Windows/macOS/Linux:
+`python tools/deck_agent/make_sd_bundle.py` -> cartella `deck` da mettere sulla microSD.
+
+Da verificare / aperto:
+- riavvio automatico dell'agente su un blocco vero di Windows (provato solo simulato);
+- installer macOS e Linux mai provati su un Mac o un PC Linux;
+- microSD di Watcher e Guition: cartella `deck` da copiare a mano (lettore o app Web, che chiede login);
+- uso multi-computer reale dopo la 1.17.5: associare due PC e passare dall'uno all'altro;
+- agente su PC aziendale: serve firma del codice o approvazione IT (scheda tecnica da preparare);
+- dalla lista originale restano: Orbit su Knob/Watcher misurato, sessione 30 min con suono, allarme
+  Sorveglianza con persona reale e prova di 1 ora, raffica/timer/flash LED della camera.
