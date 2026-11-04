@@ -153,35 +153,75 @@ if WINDOWS:
         playing = session.get_playback_info().playback_status == 4  # Playing
         return {"title": props.title or "", "artist": props.artist or "", "playing": int(playing)}
 
+    # Microphone through Core Audio (pycaw/comtypes). Every COM object lives on ONE thread with COM
+    # initialised: created once, reused, and any leftover collected there. Released by Python's
+    # garbage collector on another thread (CI, git, actions), a comtypes pointer crashed the whole
+    # agent with an access violation after a few minutes (faulthandler trace in agent.log).
+    import concurrent.futures
+    import gc
+
+    def _com_init() -> None:
+        sys.coinit_flags = 0  # COINIT_MULTITHREADED, read by comtypes when it is first imported
+        import comtypes
+
+        comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+
+    _COM = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="audio_com", initializer=_com_init)
+    _MIC: dict = {}  # "volume": IAudioEndpointVolume, touched only on the audio_com thread
+
     def _mic():
+        if "volume" in _MIC:
+            return _MIC["volume"]
         try:
             from pycaw.pycaw import AudioUtilities
         except ImportError:
             return None
         device = AudioUtilities.GetMicrophone()
-        if device is None:
-            return None
-        from ctypes import POINTER, cast
+        volume = None
+        if device is not None:
+            from ctypes import POINTER, cast
 
-        from comtypes import CLSCTX_ALL
-        from pycaw.pycaw import IAudioEndpointVolume
+            from comtypes import CLSCTX_ALL
+            from pycaw.pycaw import IAudioEndpointVolume
 
-        interface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        return cast(interface, POINTER(IAudioEndpointVolume))
+            interface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+        device = None
+        gc.collect()  # the enumerator's leftovers die here, on the COM thread
+        _MIC["volume"] = volume
+        return volume
 
-    def mic_state() -> int:
+    def _mic_forget() -> None:
+        _MIC.clear()
+        gc.collect()
+
+    def _mic_state_com() -> int:
         try:
             volume = _mic()
             return -1 if volume is None else int(not volume.GetMute())
+        except OSError:  # microphone unplugged or default device changed: open it again next time
+            _mic_forget()
+            return -1
+
+    def _mic_toggle_com() -> str:
+        try:
+            volume = _mic()
+            if volume is None:
+                return "Installa pycaw sul PC"
+            volume.SetMute(not volume.GetMute(), None)
+            return "Microfono muto" if volume.GetMute() else "Microfono attivo"
         except OSError:
+            _mic_forget()
+            raise
+
+    def mic_state() -> int:
+        try:
+            return _COM.submit(_mic_state_com).result(timeout=2)
+        except Exception:
             return -1
 
     def mic_toggle() -> str:
-        volume = _mic()
-        if volume is None:
-            return "Installa pycaw sul PC"
-        volume.SetMute(not volume.GetMute(), None)
-        return "Microfono muto" if volume.GetMute() else "Microfono attivo"
+        return _COM.submit(_mic_toggle_com).result(timeout=5)
 
     def lock() -> str:
         user32.LockWorkStation()
