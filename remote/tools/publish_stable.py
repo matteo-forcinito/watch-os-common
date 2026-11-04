@@ -2,16 +2,19 @@
 
 Uploads the app images of the chosen boards (release remote-vVERSION of
 watch-firmware-releases) and replaces only those boards' Remote entries in
-market/catalog.json; other boards keep the version they have. Dry run by
+the Market catalogues (tools/market_catalog.py); other boards keep the version they have. Dry run by
 default: --publish uploads and edits the catalogue.
 
 Build first with <board repo>/tools/build_remote.ps1 -Board <board>, without
 -Development: the checks below reject a build with the development console.
 """
-import argparse, base64, hashlib, json, subprocess, urllib.error, urllib.request
+import argparse, base64, hashlib, json, subprocess, sys, urllib.error, urllib.request
 from pathlib import Path
 
-VERSION = "1.4.1"
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import market_catalog  # noqa: E402
+
+VERSION = "1.5.0"
 TAG = f"remote-v{VERSION}"
 REPO = "matteo-forcinito/watch-firmware-releases"
 BOARDS = {  # Market board id -> board repo
@@ -22,12 +25,12 @@ BOARDS = {  # Market board id -> board repo
     "watcher_os": "SenseCap-Watcher-W1-A",
     "guition4848_panel": "ESP32-4848S040C-I",
 }
-# Short summary and asset names: the catalogue is close to the 48 KB that older firmware accepts.
+# Short summary and asset names: the shared catalogue (older firmware) is close to 48 KB.
 SUMMARY = "Mouse, tastiera, media e Deck per il PC."
 COLOR = "45C8D8"
-NOTES = ("Remote 1.4.1: inversione dello scorrimento verticale e orizzontale (Opzioni). Watcher: la rotella "
-         "risponde a ogni scatto. Dalla 1.4.0: scelta del computer a caldo, batteria su ogni schermata, Deck a "
-         "sezioni con avvio di app e siti, App aperte, Cambia app. Serve Watch Deck aggiornato sul PC.")
+NOTES = ("Remote 1.5.0: sezioni Git (con VS Code davanti: pull, push, commit, branch) e CI (stato di "
+         "GitHub Actions, avviso a fine run) nel Deck. Il Deck resta attivo se l'agente tarda qualche secondo. "
+         "Serve Watch Deck aggiornato sul PC.")
 
 p = argparse.ArgumentParser()
 p.add_argument("--publish", action="store_true")
@@ -88,21 +91,5 @@ for name, data in sorted(assets.items()):
     print("Uploaded", name, flush=True)
 req(api + f"/releases/{release['id']}", "PATCH", {"draft": False, "prerelease": False, "make_latest": "false"})
 
-path = api + "/contents/market/catalog.json"
-for attempt in range(5):
-    old = req(path + "?ref=main")
-    previous = json.loads(base64.b64decode(old["content"]))
-    replaced = {(x["id"], x["board"]) for x in entries}
-    merged = {"schema": 2, "apps": [x for x in previous["apps"] if (x["id"], x["board"]) not in replaced] + entries}
-    encoded = json.dumps(merged, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
-    assert len(encoded) <= 48 * 1024, f"catalogue {len(encoded)} bytes: older firmware rejects it"
-    try:
-        result = req(path, "PUT", {"message": f"Remote {VERSION} on the stable channel", "branch": "main",
-                                   "sha": old["sha"], "content": base64.b64encode(encoded).decode()})
-        print("Catalogue", len(encoded), "bytes, commit", result["commit"]["sha"][:12])
-        break
-    except urllib.error.HTTPError as e:
-        if e.code != 409:
-            raise
-else:
-    raise SystemExit("catalogue changed five times while publishing")
+market_catalog.publish(req, entries, f"Remote {VERSION} on the stable channel")
+print("PUBLISHED", release["html_url"], flush=True)

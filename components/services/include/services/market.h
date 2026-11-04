@@ -16,7 +16,11 @@
 #define MARKET_URL_MAX 320
 #define MARKET_CATALOG_MAX (128 * 1024)   /* PSRAM; the tools still cap catalogues at 48 KB for older firmware */
 #define MARKET_ICON_MAX (64 * 1024)
-#define MARKET_CATALOG_URL "https://raw.githubusercontent.com/matteo-forcinito/watch-firmware-releases/main/market/catalog.json"
+#define MARKET_CATALOG_BASE "https://raw.githubusercontent.com/matteo-forcinito/watch-firmware-releases/main/market/"
+/* Shared catalogue: every board, capped at 48 KB for firmware before 1.17.4. */
+#define MARKET_CATALOG_URL MARKET_CATALOG_BASE "catalog.json"
+/* Since 1.17.4 each board reads market/<project>.json first (only its apps, up to MARKET_CATALOG_MAX)
+ * and falls back to the shared catalogue when its own is missing. */
 
 typedef struct
 {

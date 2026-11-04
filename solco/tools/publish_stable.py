@@ -6,6 +6,10 @@ the Solco entries (any channel) of market/catalog.json. Dry run by default.
 """
 import argparse, base64, hashlib, json, subprocess, urllib.error, urllib.request
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import market_catalog  # noqa: E402  board catalogues + shared one
 
 VERSION = "0.2.0"
 TAG = f"solco-v{VERSION}"
@@ -80,22 +84,6 @@ for name, data in sorted(assets.items()):
     print("Uploaded", name, flush=True)
 req(api + f"/releases/{release['id']}", "PATCH", {"draft": False, "prerelease": False, "make_latest": "false"})
 
-path = api + "/contents/market/catalog.json"
-for attempt in range(5):
-    old = req(path + "?ref=main")
-    previous = json.loads(base64.b64decode(old["content"]))
-    preserved = [x for x in previous["apps"] if x["id"] != "Solco"]
-    merged = {"schema": 2, "apps": preserved + entries}
-    encoded = json.dumps(merged, ensure_ascii=False, separators=(",", ":")).encode() + b"\n"
-    assert len(encoded) <= 48 * 1024
-    for board in {x["board"] for x in merged["apps"]}:
-        assert sum(x["board"] == board for x in merged["apps"]) <= 32, board
-    try:
-        result = req(path, "PUT", {"message": f"Solco {VERSION} on the stable channel", "branch": "main",
-                                   "sha": old["sha"], "content": base64.b64encode(encoded).decode()})
-        break
-    except urllib.error.HTTPError as e:
-        if e.code != 409 or attempt == 4:
-            raise
-assert base64.b64decode(req(path + "?ref=main")["content"]) == encoded
-print("PUBLISHED", release["html_url"], "catalog", result["commit"]["sha"][:10], "entries", len(merged["apps"]), flush=True)
+# Board catalogues and the shared one (tools/market_catalog.py); older Solco entries of any channel go.
+market_catalog.publish(req, entries, f"Solco {VERSION} on the stable channel", drop=lambda x: x["id"] == "Solco")
+print("PUBLISHED", release["html_url"], flush=True)

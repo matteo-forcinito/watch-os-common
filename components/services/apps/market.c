@@ -260,11 +260,11 @@ static esp_err_t open_connection(const char *url, connection_t **out)
     return err == ESP_OK ? ESP_ERR_INVALID_RESPONSE : err;
 }
 
-static esp_err_t read_catalog(char **out)
+static esp_err_t read_catalog(const char *url, char **out)
 {
     *out = NULL;
     connection_t *connection;
-    esp_err_t err = open_connection(MARKET_CATALOG_URL, &connection);
+    esp_err_t err = open_connection(url, &connection);
     if (err != ESP_OK) return err;
     char *text = heap_caps_malloc(MARKET_CATALOG_MAX + 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (text == NULL)
@@ -328,12 +328,17 @@ static void installed_entries(market_entry_t *entries, int count)
 static esp_err_t refresh_catalog(void)
 {
     char *text;
-    esp_err_t err = read_catalog(&text);
+    const char *board = esp_app_get_description()->project_name;
+    char url[MARKET_URL_MAX];
+    snprintf(url, sizeof(url), MARKET_CATALOG_BASE "%s.json", board);
+    esp_err_t err = read_catalog(url, &text);
+    if (err == ESP_ERR_INVALID_RESPONSE && !atomic_load(&s_cancel))
+        err = read_catalog(MARKET_CATALOG_URL, &text); /* no catalogue of its own (yet): the shared one */
     if (err != ESP_OK) return err;
     market_entry_t *entries = heap_caps_calloc(MARKET_MAX_APPS, sizeof(*entries), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     int count = 0;
     if (entries == NULL) err = ESP_ERR_NO_MEM;
-    else err = market_parse_catalog(text, esp_app_get_description()->project_name, entries, MARKET_MAX_APPS, &count);
+    else err = market_parse_catalog(text, board, entries, MARKET_MAX_APPS, &count);
     free(text);
     if (err != ESP_OK)
     {
