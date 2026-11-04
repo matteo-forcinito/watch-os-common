@@ -72,7 +72,7 @@ def autostart(enabled: bool | None = None) -> bool:
 QUIT_EVENT = "Local\\WatchOsDeckAgentQuit"
 
 
-def stop_running(timeout: float = 10) -> bool:
+def stop_running(timeout: float = 25) -> bool:
     """Ask a running agent to quit like "Esci" does (it gives the Deck service back to Windows).
     Never taskkill: a killed agent leaves the watches' GATT service busy until bthserv restarts."""
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -102,12 +102,12 @@ def install() -> None:
         if not stop_running():
             message(f"{NAME} in esecuzione non si chiude: usa Esci dal menu dell'icona e riprova.", 0x30)
             raise SystemExit(1)
-        for attempt in range(40):  # the old exe's launcher process lets go of the file a moment later
+        for attempt in range(120):  # the old exe's launcher process lets go of the file a moment later
             try:
                 shutil.copy2(sys.executable, INSTALLED_EXE)
                 break
             except PermissionError:
-                if attempt == 39:
+                if attempt == 119:
                     raise
                 threading.Event().wait(0.25)
     shortcut(START_MENU, INSTALLED_EXE)
@@ -236,12 +236,13 @@ class Tray:
         self.icon.stop()
         if self.loop is not None:  # give the watches' Deck service back to Windows first
             try:
-                asyncio.run_coroutine_threadsafe(deck_agent.shutdown(), self.loop).result(timeout=4)
+                asyncio.run_coroutine_threadsafe(deck_agent.shutdown(), self.loop).result(timeout=14)
             except Exception:
                 pass
         os._exit(0)  # the agent loop and radio threads end with the process
 
     def run(self) -> None:
+        deck_agent.NOTIFIER = lambda title, text: self.icon.notify(text, title)
         threading.Thread(target=self.agent, daemon=True).start()
         threading.Thread(target=self.watch_status, daemon=True).start()
         threading.Thread(target=self.quit_requests, daemon=True).start()

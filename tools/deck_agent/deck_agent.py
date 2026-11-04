@@ -435,6 +435,45 @@ async def bounded(awaitable, seconds: float):
 
 
 _RETRY: dict = {}
+_DENIED: set = set()
+
+
+_CLOSERS: list = []  # threads still closing WinRT objects; shutdown waits for them
+
+
+def notify_pc(title: str, text: str) -> None:
+    """Toast on the PC (tray balloon) via the tray, if it registered a notifier."""
+    if NOTIFIER is not None:
+        try:
+            NOTIFIER(title, text)
+        except Exception:
+            pass
+
+
+NOTIFIER = None  # set by deck_tray: icon.notify
+
+
+def _close_later(*objects) -> None:
+    """Close WinRT objects on a throwaway thread. Closing a device whose link just dropped can block
+    inside Windows for hours: on the event loop that froze the agent (no ping, no reconnection)."""
+    def run() -> None:
+        for obj in objects:
+            try:
+                obj.close()
+            except Exception:
+                pass
+    thread = threading.Thread(target=run, name="winrt_close", daemon=True)
+    _CLOSERS.append(thread)
+    thread.start()
+
+
+def wait_closers(seconds: float) -> bool:
+    """Wait (blocking) until the pending closes finish; False if Windows is still busy after `seconds`."""
+    deadline = time.monotonic() + seconds
+    for thread in list(_CLOSERS):
+        thread.join(max(0.0, deadline - time.monotonic()))
+    _CLOSERS[:] = [t for t in _CLOSERS if t.is_alive()]
+    return not _CLOSERS
 
 
 class WinLink:
@@ -447,6 +486,7 @@ class WinLink:
         self.watches = {}  # device id -> (name, device, rx, tx, tokens)
         self.retry = _RETRY  # device id -> (next try, delay): kept across sessions, a new one starts every 3 s
         self.opening = {}  # device id -> BluetoothLEDevice being opened (closed if the attempt fails)
+        self.denied = _DENIED  # device ids whose Deck service Windows refused: kept across sessions (one notice)
 
     async def _connect(self, name: str) -> list[str]:
         from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice
@@ -466,26 +506,27 @@ class WinLink:
             due, delay = self.retry.get(info.id, (0.0, 0.0))
             if time.monotonic() < due:
                 continue
+            stalled = False
             try:
                 found = await bounded(self._open_one(info, BluetoothLEDevice, BluetoothConnectionStatus,
                                                      BluetoothCacheMode, Cccd), 10)
             except (asyncio.TimeoutError, OSError) as error:
-                found = False
+                found, stalled = False, True
                 if delay == 0.0:
                     print(f"{info.name}: non risponde ({type(error).__name__}), riprovo con pause crescenti")
             finally:
                 device = self.opening.pop(info.id, None)
                 if device is not None and info.id not in self.watches:
-                    try:  # an abandoned attempt must not keep a GATT session inside Windows
-                        device.close()
-                    except Exception:
-                        pass
+                    _close_later(device)  # an abandoned attempt must not keep a GATT session inside Windows
             if found:
                 self.retry.pop(info.id, None)
                 added.append(info.name)
-            else:
-                delay = min(300.0, delay * 2 if delay else 15.0)
+            elif stalled or info.id in self.denied:
+                # Hung or refused (state 3): wait longer each time, at most a minute.
+                delay = min(60.0, delay * 2 if delay else 10.0)
                 self.retry[info.id] = (time.monotonic() + delay, delay)
+            else:
+                self.retry.pop(info.id, None)  # simply not connected: checking it again is cheap
         return added
 
     async def _open_one(self, info, BluetoothLEDevice, BluetoothConnectionStatus, BluetoothCacheMode, Cccd) -> bool:
@@ -499,13 +540,32 @@ class WinLink:
         service = next((s for s in services.services if str(s.uuid) == SERVICE), None)
         if service is None:
             return False  # an older Remote without the Deck service
+        from winrt.windows.devices.bluetooth.genericattributeprofile import GattOpenStatus, GattSharingMode
+
+        # Shared, never exclusive: an exclusive open held by a session Windows did not release kept the
+        # service refused ("stato 3") for every later agent until the watch was paired again.
+        opened = await service.open_async(GattSharingMode.SHARED_READ_AND_WRITE)
+        if opened not in (GattOpenStatus.SUCCESS, GattOpenStatus.ALREADY_OPENED):
+            if info.id not in self.denied:
+                busy = opened in (GattOpenStatus.SHARING_VIOLATION, GattOpenStatus.ACCESS_DENIED)
+                print(f"{info.name}: servizio Deck {'occupato da una sessione precedente' if busy else 'non apribile'}"
+                      f" ({opened.name})", flush=True)
+                if busy:
+                    notify_pc(f"{info.name}: Windows tiene occupato il Deck",
+                              "Rimuovi il watch dal Bluetooth di Windows e riassocialo.")
+            self.denied.add(info.id)
+            _close_later(service)
+            return False
         result = await service.get_characteristics_async(BluetoothCacheMode.UNCACHED)
         if not result.characteristics:  # Windows may refuse a fresh read: its cache is as good
             result = await service.get_characteristics_async(BluetoothCacheMode.CACHED)
         by_uuid = {str(c.uuid): c for c in result.characteristics}
         if RX not in by_uuid or TX not in by_uuid:  # GATT read failed: the next refresh tries again
-            print(f"{info.name}: servizio Deck non leggibile (stato {result.status})")
+            if info.id not in self.denied:
+                print(f"{info.name}: servizio Deck non leggibile (stato {result.status})")
+            self.denied.add(info.id)
             return False
+        self.denied.discard(info.id)
         rx, tx = by_uuid[RX], by_uuid[TX]
         tokens = [tx.add_value_changed(self._changed), device.add_connection_status_changed(self._status)]
         await tx.write_client_characteristic_configuration_descriptor_with_result_async(Cccd.NOTIFY)
@@ -545,11 +605,7 @@ class WinLink:
 
     def _release(self, watch, unsubscribe: bool = True) -> None:
         _, device, _, tx, _ = watch
-        try:
-            tx.service.close()
-        except Exception:
-            pass
-        device.close()
+        _close_later(tx.service, device)
 
     async def send(self, data: bytes) -> None:
         from winrt.windows.devices.bluetooth.genericattributeprofile import GattCommunicationStatus, GattWriteOption
@@ -584,11 +640,7 @@ class WinLink:
                     tx.write_client_characteristic_configuration_descriptor_with_result_async(Cccd.NONE), 2)
             except Exception:  # the watch may be gone already
                 pass
-            try:
-                tx.service.close()
-            except Exception:
-                pass
-            device.close()
+            _close_later(tx.service, device)
         self.watches.clear()
 
 
@@ -682,7 +734,7 @@ class UsbLink:
         if self.reader is not None:
             self.reader.join(timeout=1)
         if self.device is not None:
-            self.device.close()
+            _close_later(self.device)  # hidapi close can wait on a pending read: never on the event loop
             self.device = None
 
 
@@ -730,6 +782,10 @@ async def shutdown() -> None:
             await bounded(LINK.close(), 6)
         except asyncio.TimeoutError:
             print("Chiusura del collegamento non completata da Windows")
+    # The closes run on helper threads: exiting before they finish left the Deck service busy.
+    done = await asyncio.to_thread(wait_closers, 5)
+    if not done:
+        print("Windows non ha completato la chiusura del Deck in 5 s", flush=True)
 
 
 class Links:
@@ -944,9 +1000,11 @@ async def session(name: str, selftest: bool = False) -> bool:
     RESTART._loop = loop
 
     async def keepalive() -> None:
+        global HEARTBEAT
         """The watch shows the Deck only while it hears the agent (6 s): the ping never waits on
         git, media, CI or the search for other watches."""
         while True:
+            HEARTBEAT = time.monotonic()
             try:
                 await send({"t": "ping"})
             except Exception as error:  # the session ends on its own when the link is gone
@@ -1041,14 +1099,19 @@ async def session(name: str, selftest: bool = False) -> bool:
             except asyncio.TimeoutError:
                 pass
     finally:
+        global HEARTBEAT
+        HEARTBEAT = 0.0  # no session: the watchdog has nothing to watch
         for task in tasks:
             task.cancel()
         STATUS.update(connected=False, device="", via="", app="")
         try:
-            await send({"t": "bye"})
-        except Exception:  # link already gone
+            await bounded(send({"t": "bye"}), 3)
+        except Exception:  # link already gone, or Windows does not answer
             pass
-        await link.close()
+        try:
+            await bounded(link.close(), 8)
+        except asyncio.TimeoutError:
+            print("Chiusura del collegamento non completata da Windows: riparto comunque")
     print("Scollegato")
     return True
 
@@ -1089,9 +1152,29 @@ class _Stamped:
         return self.raw.fileno()
 
 
+HEARTBEAT = 0.0  # last turn of the keepalive task (monotonic); 0 = no session
+
+
+def _watchdog() -> None:
+    """If the event loop stops for more than 30 s, write every thread's stack to the log once."""
+    import faulthandler
+    reported = 0.0
+    while True:
+        time.sleep(10)
+        beat = HEARTBEAT
+        if beat and time.monotonic() - beat > 30 and beat != reported:
+            reported = beat
+            print(f"Ciclo dell'agente fermo da {int(time.monotonic() - beat)} s: ecco dove", flush=True)
+            try:
+                faulthandler.dump_traceback(file=sys.stdout, all_threads=True)
+            except Exception:
+                traceback.print_stack()
+
+
 async def run(name: str = "Remote", selftest: bool = False) -> None:
     """Find the watch, serve it, and start over whenever the link drops."""
     global COMMANDS
+    threading.Thread(target=_watchdog, name="watchdog", daemon=True).start()
     COMMANDS = asyncio.Queue()
     print(f"Cerco \"{name}\" via USB e tra i dispositivi Bluetooth associati...")
     waiting = False
