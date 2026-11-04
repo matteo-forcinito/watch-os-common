@@ -102,7 +102,14 @@ def install() -> None:
         if not stop_running():
             message(f"{NAME} in esecuzione non si chiude: usa Esci dal menu dell'icona e riprova.", 0x30)
             raise SystemExit(1)
-        shutil.copy2(sys.executable, INSTALLED_EXE)
+        for attempt in range(40):  # the old exe's launcher process lets go of the file a moment later
+            try:
+                shutil.copy2(sys.executable, INSTALLED_EXE)
+                break
+            except PermissionError:
+                if attempt == 39:
+                    raise
+                threading.Event().wait(0.25)
     shortcut(START_MENU, INSTALLED_EXE)
     autostart(True)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as key:

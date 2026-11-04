@@ -372,6 +372,9 @@ async def bounded(awaitable, seconds: float):
     return task.result()
 
 
+_RETRY: dict = {}
+
+
 class WinLink:
     """Deck service of every paired watch Windows holds connected (several Remote at once)."""
 
@@ -380,7 +383,7 @@ class WinLink:
     def __init__(self, loop, on_receive, on_lost):
         self.loop, self.on_receive, self.on_lost = loop, on_receive, on_lost
         self.watches = {}  # device id -> (name, device, rx, tx, tokens)
-        self.retry = {}  # device id -> (monotonic time of the next try, current delay)
+        self.retry = _RETRY  # device id -> (next try, delay): kept across sessions, a new one starts every 3 s
         self.opening = {}  # device id -> BluetoothLEDevice being opened (closed if the attempt fails)
 
     async def _connect(self, name: str) -> list[str]:
@@ -657,9 +660,14 @@ LINK = None  # the open link, closed by shutdown() before the process quits
 
 
 async def shutdown() -> None:
-    """Close the link cleanly: Windows keeps a killed agent's GATT session busy."""
+    """Close the link cleanly: Windows keeps a killed agent's GATT session busy. Bounded: a close
+    that Windows never completes must not keep the process alive (seen: test agents stuck for hours,
+    holding every watch's Deck service)."""
     if LINK is not None:
-        await LINK.close()
+        try:
+            await bounded(LINK.close(), 6)
+        except asyncio.TimeoutError:
+            print("Chiusura del collegamento non completata da Windows")
 
 
 class Links:
