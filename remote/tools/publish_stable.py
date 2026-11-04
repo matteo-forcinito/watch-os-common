@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import market_catalog  # noqa: E402
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 TAG = f"remote-v{VERSION}"
 REPO = "matteo-forcinito/watch-firmware-releases"
 BOARDS = {  # Market board id -> board repo
@@ -28,9 +28,8 @@ BOARDS = {  # Market board id -> board repo
 # Short summary and asset names: the shared catalogue (older firmware) is close to 48 KB.
 SUMMARY = "Mouse, tastiera, media e Deck per il PC."
 COLOR = "45C8D8"
-NOTES = ("Remote 1.5.1: pagina Agente PC nel Deck (tocca il titolo > Agente PC) con stato, versione, Riavvia "
-         "ed Esci di Watch Deck. Installa sul PC: sulle board con USB nativa la microSD si apre sul PC come "
-         "chiavetta e avvii l'installer dalla cartella deck (Windows, macOS, Linux). Dalla 1.5.0: Git e CI.")
+NOTES = ("Remote 1.5.2: ricorda fino a 8 computer associati (prima associandone uno nuovo si perdeva il "
+         "vecchio) e la pagina Computer li elenca tutti. Dalla 1.5.1: Agente PC con installazione dalla microSD.")
 
 p = argparse.ArgumentParser()
 p.add_argument("--publish", action="store_true")
