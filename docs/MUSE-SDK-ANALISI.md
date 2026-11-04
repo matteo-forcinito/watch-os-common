@@ -110,6 +110,26 @@ Nessuna di queste modifiche è nella release 1.17.0.
    Diventa obbligatoria se Muse gira come app esterna sul Watcher: tornando al
    nostro OS i codec resterebbero aperti (~33 mA).
 
+## Stato al 04/11/2026
+
+2. **Fatto sul Watcher** (`SenseCap-Watcher-W1-A` `44bf7ea`): `audio_park()` in
+   `board_init`, subito dopo l'expander, scrive le sequenze di standby di
+   `esp_codec_dev` 1.6.2 su ES8311 (0x18) ed ES7243E (0x14). Il rail CODEC_PA
+   resta acceso (nessun ritardo al boot, nessun pop). Verificato sul device:
+   "Codecs in standby" al boot, "Prova suono" riapre e richiude il codec.
+   Corrente non misurata (manca un PPK2): il guadagno atteso viene dalle misure Meta.
+   Non abbiamo spento del tutto il rail a riposo: un codec senza alimentazione
+   sul bus I2C condiviso potrebbe assorbire corrente dai pull-up.
+
+**Stesso difetto sulle board AXP2101, da verificare con la scheda collegata:**
+AMOLED 1.8 (`pmu.c`, `audio_supply_acquire`) e 1.75/1.75C (`audio.c`,
+`analog_power`) accendono ALDO per l'audio solo se era spento e alla chiusura
+"ripristinano lo stato iniziale". L'AXP2101 conserva i rail a un reset del solo
+ESP32: se il reset arriva durante la riproduzione, o se ALDO1 è acceso di
+fabbrica all'accensione, il rail analogico del codec resta acceso per sempre.
+Prima di spegnerlo al boot va confermato dal log ("Audio supply: ALDO1 …") che
+ALDO1/ALDO2 alimentino solo codec e microfono.
+
 ## Muse come app esterna (fase 1)
 
 - Supporto ufficiale: AMOLED 1.75, 1.75C, Watcher (non AMOLED 1.8, Knob, Guition).
