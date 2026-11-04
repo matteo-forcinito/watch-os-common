@@ -90,5 +90,5 @@ for name, data in sorted(assets.items()):
     print("Uploaded", name, flush=True)
 req(api + f"/releases/{release['id']}", "PATCH", {"draft": False, "prerelease": False, "make_latest": "false"})
 
-market_catalog.publish(req, entries, f"Orbit {VERSION} on the stable channel")
+market_catalog.publish(market_catalog.make_req(token), entries, f"Orbit {VERSION} on the stable channel")
 print("PUBLISHED", release["html_url"], flush=True)

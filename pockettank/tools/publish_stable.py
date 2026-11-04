@@ -108,5 +108,5 @@ if a.model_only:
 release = release_with(TAG, f"Pocket Tank {VERSION}", NOTES, assets)
 
 # Board catalogues and the shared one (tools/market_catalog.py); older Pocket Tank entries of any channel go.
-market_catalog.publish(req, entries, f"Pocket Tank {VERSION} on the stable channel", drop=lambda x: x["id"] == "PocketTank")
+market_catalog.publish(market_catalog.make_req(token), entries, f"Pocket Tank {VERSION} on the stable channel", drop=lambda x: x["id"] == "PocketTank")
 print("PUBLISHED", release["html_url"], flush=True)

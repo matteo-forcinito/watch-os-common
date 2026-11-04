@@ -17,6 +17,7 @@ import argparse
 import base64
 import json
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
@@ -43,9 +44,15 @@ def make_req(tok: str):
         if data is not None:
             headers["Content-Type"] = "application/octet-stream" if binary else "application/json"
             body = data if binary else json.dumps(data).encode()
-        with urllib.request.urlopen(urllib.request.Request(url, body, headers, method=method), timeout=120) as r:
-            raw = r.read()
-        return json.loads(raw) if raw else {}
+        for attempt in range(4):  # GitHub answers 500/502/503 now and then
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, body, headers, method=method), timeout=120) as r:
+                    raw = r.read()
+                return json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as e:
+                if e.code < 500 or attempt == 3:
+                    raise
+                time.sleep(5 * (attempt + 1))
     return req
 
 

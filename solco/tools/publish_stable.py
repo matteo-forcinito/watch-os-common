@@ -85,5 +85,5 @@ for name, data in sorted(assets.items()):
 req(api + f"/releases/{release['id']}", "PATCH", {"draft": False, "prerelease": False, "make_latest": "false"})
 
 # Board catalogues and the shared one (tools/market_catalog.py); older Solco entries of any channel go.
-market_catalog.publish(req, entries, f"Solco {VERSION} on the stable channel", drop=lambda x: x["id"] == "Solco")
+market_catalog.publish(market_catalog.make_req(token), entries, f"Solco {VERSION} on the stable channel", drop=lambda x: x["id"] == "Solco")
 print("PUBLISHED", release["html_url"], flush=True)
