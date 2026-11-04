@@ -37,6 +37,7 @@ SERVICE = "7a3e0000-5c1d-4e8b-9f2a-d3c0de0decc0"
 RX = "7a3e0001-5c1d-4e8b-9f2a-d3c0de0decc0"  # PC -> watch
 TX = "7a3e0002-5c1d-4e8b-9f2a-d3c0de0decc0"  # watch -> PC
 MAX_BYTES = 240  # HID_DECK_MAX on the watch
+VERSION = "1.5.0"  # shown on the watch (Gestione agente); match deck_tray.VERSION
 WINDOWS = sys.platform == "win32"
 
 try:
@@ -318,6 +319,26 @@ CURRENT_APP = ""  # process in front, for the user's own shortcuts
 RECENT_APPS: list[str] = []  # offered by the window when adding shortcuts
 
 
+RESTART = None  # asyncio.Event: the session ends and run() reconnects
+QUIT_EVENT_NAME = "Local\\WatchOsDeckAgentQuit"  # the tray's quit_requests thread waits on it
+
+
+def restart(_: str = "") -> str:
+    """Drop the link so run() starts a fresh session (clears a stuck Bluetooth state)."""
+    if RESTART is not None:
+        RESTART._loop.call_soon_threadsafe(RESTART.set)
+    return "Riavvio Watch Deck"
+
+
+def quit_agent(_: str = "") -> str:
+    """Ask the whole agent to stop, the same signal the installer uses (tray only)."""
+    if WINDOWS:
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.SetEvent(k.CreateEventW(None, True, False, QUIT_EVENT_NAME))
+        return "Chiudo Watch Deck"
+    return "Esci dall'icona sul PC"
+
+
 def launch(index: str) -> str:
     item = CONFIG["launch"][int(index)]
     deck_config.launch(item["target"])
@@ -387,7 +408,8 @@ def ci_action(index: str) -> str:
 
 ACTIONS = {"lock": lock, "display_off": display_off, "mic": mic_toggle, "taskmgr": taskmgr,
            "windows": windows, "focus": focus, "sleep": sleep,
-           "launch": launch, "ck": press_own, "git": git_action, "ci": ci_action}  # "name:arg" passes arg
+           "launch": launch, "ck": press_own, "git": git_action, "ci": ci_action,
+           "restart": restart, "quit": quit_agent}  # "name:arg" passes arg
 
 
 # ---------------------------------------------------------------- link
@@ -822,6 +844,7 @@ async def session(name: str, selftest: bool = False) -> bool:
     print(f"Collegato a {found} via {via}")
     STATUS.update(connected=True, device=found, via=via)
     await send({"t": "host", "name": clean(platform.node(), 23)})  # the watch lists hosts by name
+    await send({"t": "agent", "v": VERSION})  # shown on the watch under Gestione agente
 
     def fit(text: str, size: int) -> str:  # the watch keeps `size` bytes: cut on UTF-8 boundaries
         return clean(text, size).encode()[:size].decode(errors="ignore")
@@ -915,7 +938,10 @@ async def session(name: str, selftest: bool = False) -> bool:
         await link.close()
         print("Selftest superato" if not failed else f"Selftest: {failed} errori")
         raise SystemExit(1 if failed else 0)
+    global RESTART
     resend = asyncio.Event()  # a watch joined: send it the whole state
+    RESTART = asyncio.Event()
+    RESTART._loop = loop
 
     async def keepalive() -> None:
         """The watch shows the Deck only while it hears the agent (6 s): the ping never waits on
@@ -953,7 +979,7 @@ async def session(name: str, selftest: bool = False) -> bool:
         last_ctx = last_media = last_sys = last_git = None
         tick = 0
         beat = time.monotonic()
-        while not disconnected.is_set():
+        while not disconnected.is_set() and not RESTART.is_set():
             if resend.is_set():
                 resend.clear()
                 last_ctx = last_media = last_sys = last_git = None  # the new watch needs the whole state

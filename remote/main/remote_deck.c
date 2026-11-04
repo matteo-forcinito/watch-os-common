@@ -671,6 +671,72 @@ static const app_t s_branches_app = {.id = "remote.deck.branches",
                                      .flags = APP_FLAG_HIDDEN | APP_FLAG_KEEP_SCREEN_ON,
                                      .create = branches_create};
 
+/* ---- Agent management ----
+ *
+ * Shows whether Watch Deck runs on the PC and its version, and over the Deck
+ * channel can restart or stop it. On boards with a native USB port it can also
+ * install the agent from the SD card (deck_install.c), so nothing is typed on
+ * the PC. Reachable from the sections index and from the connection guide. */
+
+static void restart_confirmed(bool ok, void *arg)
+{
+    (void)arg;
+    if (ok)
+        send_action("restart");
+}
+
+static void quit_confirmed(bool ok, void *arg)
+{
+    (void)arg;
+    if (ok)
+        send_action("quit");
+}
+
+static void manage_restart(lv_event_t *e)
+{
+    (void)e;
+    ui_confirm("Riavvia agente", "Riavviare Watch Deck sul PC?", "Riavvia", UI_COLOR_ORANGE, restart_confirmed, NULL);
+}
+
+static void manage_quit(lv_event_t *e)
+{
+    (void)e;
+    ui_confirm("Esci agente", "Chiudere Watch Deck sul PC? Il Deck resta senza agente finché non lo riavvii dal PC.",
+               "Esci", UI_COLOR_RED, quit_confirmed, NULL);
+}
+
+static void manage_create(lv_obj_t *screen, void *arg)
+{
+    (void)arg;
+    lv_obj_t *page = remote_page(screen, "Agente PC");
+    bool alive = deck_agent_alive();
+    char version[16] = "";
+    deck_agent_version(version, sizeof(version));
+    char line[96];
+    if (alive)
+        snprintf(line, sizeof(line), "Watch Deck attivo%s%s.", version[0] ? " · v" : "", version);
+    else
+        snprintf(line, sizeof(line), "Watch Deck non in esecuzione sul PC.");
+    ui_section(page, "Stato");
+    ui_text(page, line, false);
+    if (alive)
+    {
+        ui_button(page, "Riavvia agente", UI_COLOR_ORANGE, manage_restart, NULL);
+        ui_button(page, "Esci agente", UI_COLOR_RED, manage_quit, NULL);
+    }
+    if (!alive)
+    {
+        ui_section(page, "Installazione");
+        ui_text(page, "Avvia Watch Deck sul PC: resta nella barra di Windows e si collega da solo, via cavo USB "
+                      "o Bluetooth.", true);
+    }
+}
+
+static const app_t s_manage_app = {.id = "remote.deck.agent",
+                                   .name = "Agente PC",
+                                   .flags = APP_FLAG_HIDDEN | APP_FLAG_KEEP_SCREEN_ON,
+                                   .create = manage_create};
+
 static void git_clicked(deck_page_t *page, int key)
 {
     static char text[128];
@@ -795,6 +861,11 @@ static void section_chosen(lv_event_t *e)
         app_open_app(&s_windows_app, NULL);
         return;
     }
+    if (choice == SEC_COUNT + 1)
+    {
+        app_open_app(&s_manage_app, NULL);
+        return;
+    }
     if (s_page != NULL && s_page->profile != NULL)
     {
         s_page->page = section_first_page(s_page, (deck_section_t)choice);
@@ -820,6 +891,8 @@ static void sections_create(lv_obj_t *screen, void *arg)
                section_name(s_page, (deck_section_t)i), value, section_chosen, (void *)(intptr_t)i);
     }
     ui_row(page, LV_SYMBOL_LIST, UI_COLOR_BLUE, "App aperte", NULL, section_chosen, (void *)(intptr_t)SEC_COUNT);
+    ui_row(page, LV_SYMBOL_SETTINGS, UI_COLOR_GRAY, "Agente PC", deck_agent_alive() ? LV_SYMBOL_OK : NULL,
+           section_chosen, (void *)(intptr_t)(SEC_COUNT + 1));
     ui_text(page,
             "Le mie, Avvio e i repository CI si scelgono nell'app Watch Deck sul PC (tasto destro sull'icona > "
             "Apri Watch Deck). Git compare con VS Code davanti.",

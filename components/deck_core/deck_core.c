@@ -42,11 +42,19 @@ static list_t *s_lists;
  * (any message, or its 2 s ping) within the last few seconds. */
 static volatile TickType_t s_last_rx;
 static volatile bool s_heard;
+static char s_agent_version[16]; /* reported by the agent ({"t":"agent","v":...}); under s_lock */
 #define AGENT_TIMEOUT pdMS_TO_TICKS(15000) /* pings every 2 s; one slow GATT write may hold one for 5 s */
 
 bool deck_agent_alive(void)
 {
     return hid_deck_connected() && s_heard && xTaskGetTickCount() - s_last_rx < AGENT_TIMEOUT;
+}
+
+void deck_agent_version(char *out, size_t size)
+{
+    taskENTER_CRITICAL(&s_lock);
+    snprintf(out, size, "%s", s_agent_version);
+    taskEXIT_CRITICAL(&s_lock);
 }
 
 /* ---- minimal JSON field reader: flat objects, string or integer values ---- */
@@ -165,6 +173,13 @@ static void receive(const char *json, size_t length)
         char name[24];
         deck_json_text(json, "name", name, sizeof(name));
         hid_link_name_host(name); /* shown in the host list of the watch */
+        return;
+    }
+    if (strcmp(type, "agent") == 0)
+    {
+        taskENTER_CRITICAL(&s_lock);
+        deck_json_text(json, "v", s_agent_version, sizeof(s_agent_version));
+        taskEXIT_CRITICAL(&s_lock);
         return;
     }
 

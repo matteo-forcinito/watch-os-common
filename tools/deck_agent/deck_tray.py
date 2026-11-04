@@ -29,7 +29,7 @@ import deck_agent
 
 APP = "WatchDeck"
 NAME = "Watch Deck"
-VERSION = "1.2.0"
+VERSION = "1.5.0"
 INSTALL_DIR = os.path.join(os.environ["LOCALAPPDATA"], "Programs", APP)
 INSTALLED_EXE = os.path.join(INSTALL_DIR, APP + ".exe")
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"

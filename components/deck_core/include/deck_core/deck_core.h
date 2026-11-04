@@ -46,6 +46,8 @@ typedef struct
 void deck_core_init(void (*command)(const char *json));
 /* The agent spoke within the last seconds over a subscribed channel. */
 bool deck_agent_alive(void);
+/* Version the agent reported ("" if unknown). */
+void deck_agent_version(char *out, size_t size);
 /* Copy of the state; its message is cleared, so it is shown once. */
 void deck_state_take(deck_state_t *out);
 
