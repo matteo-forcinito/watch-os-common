@@ -137,4 +137,10 @@ ui_key_rect_t remote_header_band(void);
 lv_obj_t *remote_page(lv_obj_t *screen, const char *title);
 void remote_home_create(lv_obj_t *screen);
 
+/* USB drive to install Watch Deck from the microSD (remote_drive.c). */
+bool remote_drive_supported(void);  /* native USB port on this board */
+int remote_drive_installers(void);  /* bit 0 Windows, 1 macOS, 2 Linux: installers in /sdcard/deck */
+void remote_drive_request(void);    /* restart as a USB drive; does not return */
+bool remote_drive_boot(void);       /* at boot: true if this start is the drive */
+
 #endif

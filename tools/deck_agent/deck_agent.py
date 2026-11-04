@@ -238,6 +238,79 @@ if WINDOWS:
 
 # ---------------------------------------------------------------- Linux
 
+elif sys.platform == "darwin":
+    # macOS: System Events (needs the Accessibility permission for Terminal/Python the first time).
+
+    def _run(*args: str) -> str:
+        try:
+            return subprocess.run(args, capture_output=True, text=True, timeout=3).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    def _osa(script: str) -> str:
+        return _run("osascript", "-e", script)
+
+    def foreground() -> tuple[str, str]:
+        app = _osa('tell application "System Events" to get name of first process whose frontmost is true')
+        title = _osa('tell application "System Events" to tell (first process whose frontmost is true) '
+                     'to get name of front window') if app else ""
+        return app.lower(), title
+
+    async def now_playing() -> dict | None:
+        for player in ("Spotify", "Music"):
+            if _osa(f'application "{player}" is running') != "true":
+                continue
+            out = _osa(f'tell application "{player}" to (player state as string) & tab & '
+                       f'(name of current track) & tab & (artist of current track)')
+            state, _, rest = out.partition("\t")
+            title, _, artist = rest.partition("\t")
+            if title:
+                return {"title": title, "artist": artist, "playing": int(state == "playing")}
+        return None
+
+    def mic_state() -> int:
+        out = _osa("input volume of (get volume settings)")
+        return -1 if not out.isdigit() else int(int(out) > 0)
+
+    _mic_level = {"value": "75"}
+
+    def mic_toggle() -> str:
+        level = _osa("input volume of (get volume settings)")
+        if level.isdigit() and int(level) > 0:
+            _mic_level["value"] = level
+            _osa("set volume input volume 0")
+            return "Microfono muto"
+        _osa(f"set volume input volume {_mic_level['value']}")
+        return "Microfono attivo"
+
+    def lock() -> str:
+        _run("pmset", "displaysleepnow")  # with "require password" the Mac locks
+        return "PC bloccato"
+
+    def display_off() -> str:
+        _run("pmset", "displaysleepnow")
+        return "Schermo spento"
+
+    _windows: list = []
+
+    def windows(_: str = "") -> list:
+        names = _osa('tell application "System Events" to get name of every process whose visible is true')
+        apps = [n.strip() for n in names.split(",") if n.strip()][:12]
+        _windows[:] = apps
+        return [(n.lower(), n) for n in apps]
+
+    def focus(index: str = "") -> str:
+        _run("open", "-a", _windows[int(index)])
+        return "Finestra in primo piano"
+
+    def sleep(_: str = "") -> str:
+        _run("pmset", "sleepnow")
+        return "PC in sospensione"
+
+    def taskmgr() -> str:
+        _run("open", "-a", "Activity Monitor")
+        return "Monitoraggio Attività"
+
 else:
 
     def _run(*args: str) -> str:
@@ -1026,6 +1099,7 @@ async def session(name: str, selftest: bool = False) -> bool:
             if added:
                 print(f"Collegato anche a {' + '.join(added)}")
                 await send({"t": "host", "name": clean(platform.node(), 23)})
+                await send({"t": "agent", "v": VERSION})  # a watch that reconnects shows the version too
                 await send_launch()
                 await send_own_keys()
                 resend.set()

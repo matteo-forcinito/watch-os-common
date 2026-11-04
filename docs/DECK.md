@@ -286,3 +286,26 @@ modificato per ultimo; altrimenti la cartella si indica nella scheda «Git e CI�
 Deck. Ogni comando git ha un limite di tempo (8 s locali, 45 s rete), mai `--force` né reset. CI: token
 da `git credential fill`, controllo ogni 60 s (15 s con una run in corso), repository dalla scheda
 «Git e CI» più quello aperto in VS Code se ha un remote GitHub. GitLab non ancora supportato.
+
+## Remote 1.5.1 e Watch Deck 1.5.0 — gestione dell'agente e connessione stabile
+
+**Agente PC sul watch.** Nel Deck, indice delle sezioni (tocca il titolo) > *Agente PC*: stato e
+versione di Watch Deck (l'agente manda `{"t":"agent","v":"1.5.0"}` alla connessione), *Riavvia agente*
+(azione `restart`: nuova sessione dell'agente) ed *Esci agente* (azione `quit`: stesso segnale di
+chiusura dell'installer, l'evento `Local\WatchOsDeckAgentQuit`). L'installazione dell'agente dal
+watch (SD come disco USB, solo board con USB nativo) non è ancora fatta.
+
+**Perché il Deck cadeva (risolto, 04/11/2026).**
+1. Crash nativo dell'agente (access violation): oggetti COM del microfono (pycaw) liberati dal garbage
+   collector in thread senza COM. Ora vivono in un solo thread `audio_com`.
+2. Blocco dell'agente: `device.close()` di WinRT chiamato nel loop asyncio non tornava. Ora ogni
+   chiusura va su un thread a parte, la fine sessione ha un limite e un watchdog scrive gli stack nel
+   log se il loop si ferma per più di 30 s.
+3. Servizio Deck bloccato in Windows (SHARING_VIOLATION, «stato 3») dopo la fine di un agente: era
+   aperto in modo implicito, quindi in esclusiva. Ora `open_async(SHARED_READ_AND_WRITE)` e uscita solo
+   dopo le chiusure. Un blocco lasciato dalle versioni vecchie si toglie solo riassociando il watch.
+   Verificato: l'agente si chiude e il nuovo si ricollega a due watch in 4 s.
+4. Ping nello stesso ciclo della ricerca degli altri watch: ora task separati; il watch considera
+   perso l'agente dopo 15 s invece di 6.
+
+Il log (`%LOCALAPPDATA%\DeckAgent\agent.log`) ha data e ora per ogni riga.

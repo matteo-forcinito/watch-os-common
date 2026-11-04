@@ -705,6 +705,22 @@ static void manage_quit(lv_event_t *e)
                "Esci", UI_COLOR_RED, quit_confirmed, NULL);
 }
 
+static void drive_confirmed(bool ok, void *arg)
+{
+    (void)arg;
+    if (ok)
+        remote_drive_request(); /* restarts Remote as a USB drive; does not return */
+}
+
+static void manage_install(lv_event_t *e)
+{
+    (void)e;
+    ui_confirm("Apri la SD sul PC",
+               "Remote si riavvia come chiavetta USB: sul PC apri la cartella deck e avvia l'installer. "
+               "Tastiera e mouse tornano quando tocchi Fine.",
+               "Apri", UI_COLOR_BLUE, drive_confirmed, NULL);
+}
+
 static void manage_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
@@ -724,12 +740,24 @@ static void manage_create(lv_obj_t *screen, void *arg)
         ui_button(page, "Riavvia agente", UI_COLOR_ORANGE, manage_restart, NULL);
         ui_button(page, "Esci agente", UI_COLOR_RED, manage_quit, NULL);
     }
-    if (!alive)
+    ui_section(page, "Installazione");
+    int found = remote_drive_installers();
+    char list[96];
+    if (found)
+        snprintf(list, sizeof(list), "Installer sulla microSD:%s%s%s.", found & 1 ? " Windows" : "",
+                 found & 2 ? " macOS" : "", found & 4 ? " Linux" : "");
+    else
+        snprintf(list, sizeof(list), "Nessun installer sulla microSD (cartella deck).");
+    ui_text(page, list, false);
+    if (remote_drive_supported())
     {
-        ui_section(page, "Installazione");
-        ui_text(page, "Avvia Watch Deck sul PC: resta nella barra di Windows e si collega da solo, via cavo USB "
-                      "o Bluetooth.", true);
+        ui_button(page, alive ? "Reinstalla sul PC" : "Installa sul PC", UI_COLOR_BLUE, manage_install, NULL);
+        ui_text(page, "Collega il watch al PC con il cavo USB: la microSD compare come chiavetta, tu avvii "
+                      "l'installer. Il watch non avvia niente da solo.", true);
     }
+    else
+        ui_text(page, "Questo dispositivo non ha una porta USB per i dati: prendi l'installer dalla cartella "
+                      "deck della microSD (lettore SD) o dall'app Web di Watch OS (File).", true);
 }
 
 static const app_t s_manage_app = {.id = "remote.deck.agent",
@@ -932,7 +960,7 @@ static void show_guide(deck_page_t *page, deck_view_t view)
                        "Bluetooth del PC > Aggiungi dispositivo. Se era già associato, rimuovilo e riassocialo.",
                        UI_COLOR_BLUE},
         [VIEW_AGENT] = {LV_SYMBOL_REFRESH, "Avvia Watch Deck",
-                        "Installa WatchDeck.exe sul PC: resta nella barra di Windows e si collega da solo.",
+                        "Avvia Watch Deck sul PC. Non è installato? Tocca il pulsante qui sotto.",
                         UI_COLOR_GREEN},
     };
     ui_icon_bubble_set_color(page->guide_icon, guides[view].color);
@@ -941,7 +969,12 @@ static void show_guide(deck_page_t *page, deck_view_t view)
     lv_label_set_text(page->guide_text, guides[view].text);
     /* The other transport is one tap away (USB only on boards with a native port). */
     bool usb = remote_settings()->transport == HID_LINK_USB;
-    if (view != VIEW_AGENT && (usb || board_info()->has_usb_otg))
+    if (view == VIEW_AGENT)
+    {
+        lv_label_set_text(lv_obj_get_child(page->guide_button, 0), "Installa Watch Deck");
+        lv_obj_remove_flag(page->guide_button, LV_OBJ_FLAG_HIDDEN);
+    }
+    else if (usb || board_info()->has_usb_otg)
     {
         lv_label_set_text(lv_obj_get_child(page->guide_button, 0), usb ? "Usa il Bluetooth" : "Usa il cavo USB");
         lv_obj_remove_flag(page->guide_button, LV_OBJ_FLAG_HIDDEN);
@@ -1107,6 +1140,17 @@ static void deleted(lv_event_t *e)
     free(page);
 }
 
+/* The guide's button: install the agent when it is missing, otherwise switch the transport. */
+static void guide_clicked(lv_event_t *e)
+{
+    if (s_page != NULL && s_page->view == VIEW_AGENT)
+    {
+        app_open_app(&s_manage_app, NULL);
+        return;
+    }
+    remote_change_transport(e);
+}
+
 static void build_guide(deck_page_t *page, lv_obj_t *screen, int32_t h)
 {
     page->guide = layer(screen);
@@ -1123,7 +1167,7 @@ static void build_guide(deck_page_t *page, lv_obj_t *screen, int32_t h)
     lv_obj_set_style_text_color(page->guide_text, ui_color(UI_COLOR_TEXT_DIM), 0);
     lv_label_set_long_mode(page->guide_text, LV_LABEL_LONG_MODE_WRAP);
     r = strip(h * 80 / 100, h * 12 / 100);
-    page->guide_button = tile(page->guide, r, "", remote_change_transport, NULL);
+    page->guide_button = tile(page->guide, r, "", guide_clicked, NULL);
     lv_obj_set_style_border_color(page->guide_button, ui_accent(), 0);
 }
 

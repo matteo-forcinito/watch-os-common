@@ -40,6 +40,8 @@ void app_main(void)
     ESP_ERROR_CHECK(settings_init());
     ESP_ERROR_CHECK(board_init());
     ESP_ERROR_CHECK(lv_port_init());
+    if (remote_drive_boot())
+        return; /* started as a USB drive to install Watch Deck: nothing else runs */
 
     clock_init();
     remote_alarm_prepare();

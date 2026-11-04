@@ -1,0 +1,22 @@
+WATCH DECK - agente per il PC
+
+Fa vedere sul watch l'app in primo piano, la musica, Git e CI, e permette le azioni
+del Deck. Si collega da solo al watch (Remote) via cavo USB o Bluetooth.
+
+WINDOWS
+  Doppio clic su WatchDeck.exe e conferma "Installa".
+  Resta nella barra di Windows (icona) e parte a ogni accensione.
+  Il primo avvio di un programma scaricato puo mostrare l'avviso di SmartScreen:
+  "Ulteriori informazioni" > "Esegui comunque".
+
+MACOS
+  Estrai WatchDeck-macos.zip, poi doppio clic su install_macos.command
+  (se macOS lo blocca: tasto destro > Apri). Serve python3.
+  Al primo avvio consenti Bluetooth e Accessibilita a Python.
+
+LINUX
+  Estrai WatchDeck-linux.zip e da terminale: sh install.sh
+  Serve python3. Facoltativi: xdotool, wmctrl, playerctl, pactl (X11).
+
+Sul watch: Remote > PC > tocca il titolo > Agente PC, per vedere versione, riavviarlo
+o chiuderlo. Il watch non installa e non avvia niente da solo sul PC.
