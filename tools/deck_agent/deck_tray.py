@@ -40,6 +40,16 @@ FROZEN = getattr(sys, "frozen", False)
 # ------------------------------------------------------------------ installation
 
 
+def fresh_env() -> dict:
+    """Environment for starting WatchDeck.exe again from inside it. A PyInstaller one-file program
+    passes its unpack folder (_MEI...) to its children through these variables: the new process then
+    ran from the old one's folder, which the old one deleted on exit ("No module named '_sqlite3'"
+    after the automatic restart of 04/11 21:01). Reset: the new process unpacks its own copy."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("_PYI_", "_MEIPASS"))}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
 def message(text: str, flags: int = 0x40) -> int:
     return ctypes.windll.user32.MessageBoxW(None, text, NAME, flags)
 
@@ -198,7 +208,7 @@ class Tray:
     def open_window(self) -> None:
         """Settings window in its own process: tkinter and the tray loop never share a thread."""
         command = [sys.executable, "--ui"] if FROZEN else [sys.executable, os.path.abspath(__file__), "--ui"]
-        subprocess.Popen(command, close_fds=True)
+        subprocess.Popen(command, close_fds=True, env=fresh_env())
 
     def watch_status(self) -> None:
         """Repaint the icon when the connection changes (pystray polls nothing by itself)."""
@@ -244,7 +254,8 @@ class Tray:
     def restart(self) -> None:
         """A new agent process (it waits until this one is gone), then this one ends."""
         command = [sys.executable, "--restart"] if FROZEN else [sys.executable, os.path.abspath(__file__), "--restart"]
-        subprocess.Popen(command, creationflags=0x00000008 | 0x00000200, close_fds=True)  # detached, new group
+        subprocess.Popen(command, creationflags=0x00000008 | 0x00000200, close_fds=True,  # detached, new group
+                         env=fresh_env())
         try:
             self.icon.stop()
         except Exception:
@@ -277,7 +288,7 @@ def main() -> None:
                     "il watch via USB o Bluetooth.", 0x24) == 6  # Yes
     ):
         install()
-        subprocess.Popen([INSTALLED_EXE], creationflags=0x00000008, close_fds=True)
+        subprocess.Popen([INSTALLED_EXE], creationflags=0x00000008, close_fds=True, env=fresh_env())
         return
     if "--restart" in sys.argv:  # started by a stuck agent: wait until it has gone
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)

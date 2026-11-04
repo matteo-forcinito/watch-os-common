@@ -1079,10 +1079,15 @@ async def session(name: str, selftest: bool = False) -> bool:
 
     async def keepalive() -> None:
         global HEARTBEAT
+        stall_at = float(os.environ.pop("WATCHDECK_TEST_STALL", "0") or 0)  # test only: freeze once
+        started = time.monotonic()
         """The watch shows the Deck only while it hears the agent (6 s): the ping never waits on
         git, media, CI or the search for other watches."""
         while True:
             HEARTBEAT = time.monotonic()
+            if stall_at and HEARTBEAT - started > stall_at:
+                print("Test: blocco simulato del ciclo", flush=True)
+                time.sleep(3600)  # a Windows call that never returns, on the event loop
             try:
                 await send({"t": "ping"})
             except Exception as error:  # the session ends on its own when the link is gone
