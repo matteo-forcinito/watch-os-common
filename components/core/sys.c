@@ -9,6 +9,7 @@
 #endif
 #include "esp_heap_caps.h"
 #include "esp_mac.h"
+#include "esp_pm.h"
 #include "esp_system.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -273,6 +274,11 @@ void sys_health_log(void)
         ESP_LOGI(TAG, "[health] battery %d%% %d mV%s%s", pmu_battery_percent(), pmu_battery_mv(),
                  pmu_is_charging() ? ", charging" : "", pmu_usb_present() ? ", USB" : "");
     }
+
+#if CONFIG_PM_ENABLE
+    /* Who keeps the chip awake or fast: a held NO_LIGHT_SLEEP lock costs battery. */
+    esp_pm_dump_locks(stdout);
+#endif
 
 #if configUSE_TRACE_FACILITY
     UBaseType_t room = uxTaskGetNumberOfTasks() + 4;   /* a few may start meanwhile */
