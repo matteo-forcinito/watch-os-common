@@ -29,6 +29,7 @@ import sys
 from bleak import BleakClient, BleakScanner
 
 import deck_config
+import deck_dev
 
 SERVICE = "7a3e0000-5c1d-4e8b-9f2a-d3c0de0decc0"
 RX = "7a3e0001-5c1d-4e8b-9f2a-d3c0de0decc0"  # PC -> watch
@@ -301,9 +302,50 @@ def write_status() -> None:
         pass
 
 
+CURRENT_REPO = ""  # git repository of the VS Code window in front ("" otherwise)
+GIT_REFRESH = threading.Event()  # set after a git action: send the new state at once
+CI_RUNS: list[dict] = []  # last CI state sent to the watch, same order as its list
+GIT_BRANCHES: list[str] = []  # branches as last sent to the watch: "br:N" indexes this list
+
+
+def git_action(what: str) -> str:
+    """git:pull|push|fetch|commit|stash|pop|diff|br:N on the repository in front."""
+    repo = CURRENT_REPO
+    if not repo:
+        raise RuntimeError("Nessun repository in VS Code")
+    try:
+        if what == "diff":  # Source Control view of VS Code, which is in front
+            deck_config.press("cmd+shift+g" if deck_config.MAC else "ctrl+shift+g")
+            return "Modifiche in VS Code"
+        if what.startswith("br:"):  # by name, as the watch saw the list: the order may have changed since
+            branches = list(GIT_BRANCHES)
+            i = int(what[3:])
+            if not 0 <= i < len(branches):
+                raise RuntimeError("Elenco cambiato: riprova")
+            return deck_dev.switch_to(repo, branches[i])
+        work = {"pull": deck_dev.pull, "push": deck_dev.push, "fetch": deck_dev.fetch, "commit": deck_dev.commit,
+                "stash": deck_dev.stash, "pop": deck_dev.pop}.get(what)
+        if work is None:
+            raise RuntimeError("Azione sconosciuta")
+        return work(repo)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Git non risponde (tempo scaduto)") from None
+    finally:
+        GIT_REFRESH.set()
+
+
+def ci_action(index: str) -> str:
+    """ci:N restarts the latest run of the N-th repository of the CI list."""
+    runs = list(CI_RUNS)
+    i = int(index)
+    if not 0 <= i < len(runs):
+        raise RuntimeError("Elenco CI cambiato: riprova")
+    return deck_dev.ci_rerun(runs[i])
+
+
 ACTIONS = {"lock": lock, "display_off": display_off, "mic": mic_toggle, "taskmgr": taskmgr,
            "windows": windows, "focus": focus, "sleep": sleep,
-           "launch": launch, "ck": press_own}  # "name:arg" passes arg
+           "launch": launch, "ck": press_own, "git": git_action, "ci": ci_action}  # "name:arg" passes arg
 
 
 # ---------------------------------------------------------------- link
@@ -687,10 +729,13 @@ async def session(name: str, selftest: bool = False) -> bool:
 
             loop.create_task(run())
 
-    async def send(message: dict) -> None:
-        await link.send(encode(message))
+    sending = asyncio.Lock()  # the CI task and the main loop: never two messages interleaved
 
-    global LINK, CURRENT_APP, CONFIG, CONFIG_STAMP
+    async def send(message: dict) -> None:
+        async with sending:
+            await link.send(encode(message))
+
+    global LINK, CURRENT_APP, CONFIG, CONFIG_STAMP, CURRENT_REPO, GIT_BRANCHES
     try:
         link, found, via = await bounded(open_link(name, loop, received, disconnected.set), 45)
     except asyncio.TimeoutError:
@@ -717,6 +762,64 @@ async def session(name: str, selftest: bool = False) -> bool:
     async def send_own_keys() -> None:
         await send_list("ck", CURRENT_APP, [item["label"] for item in own_keys(CURRENT_APP)])
 
+    async def send_items(kind: str, items: list[tuple[str, str]]) -> None:
+        for i, (a, n) in enumerate(items):
+            await send({"t": kind, "i": i, "a": fit(a, 15), "n": fit(n, 47)})
+        await send({"t": kind, "i": -1})
+
+    def git_items(app: str, title: str) -> tuple[str, list[tuple[str, str]]]:
+        """(repository, rows of the watch's Git section); empty unless VS Code is in front on a repository.
+        Runs in a thread: the caller sets CURRENT_REPO, so a late thread never overwrites a newer one."""
+        repo = deck_dev.repo_for_title(title, CONFIG) if app == "code" else ""
+        if not repo:
+            return "", []
+        st = deck_dev.status(repo)
+        numbers = ",".join(str(st[k]) for k in ("changed", "ahead", "behind", "conflicts", "stash", "untracked"))
+        rows = [("repo", st["repo"]), ("branch", st["branch"]), ("state", numbers),
+                ("msg", deck_dev.quick_message(repo) if st["changed"] else "")]
+        return repo, rows + [("br", b) for b in st["branches"][: deck_dev.BRANCHES_MAX]]
+
+    async def ci_loop() -> None:
+        """Latest GitHub Actions run of each chosen repository; beeps when one finishes."""
+        global CI_RUNS
+        while True:
+            try:
+                running = await ci_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # never let the CI task die silently
+                print(f"CI: {error}")
+                running = False
+            await asyncio.sleep(15 if running else 60)
+
+    async def ci_once() -> bool:
+        """One CI check; True while a run is in progress."""
+        global CI_RUNS
+        slugs = [s for s in CONFIG.get("ci_repos", []) if isinstance(s, str) and "/" in s]
+        if CURRENT_REPO:
+            mine = await asyncio.to_thread(deck_dev.github_slug, CURRENT_REPO)
+            if mine and mine not in slugs:
+                slugs.append(mine)
+        try:
+            runs = await bounded(asyncio.to_thread(deck_dev.ci_runs, slugs), 90) if slugs else []
+        except asyncio.TimeoutError:
+            runs = CI_RUNS
+        before = {r["slug"]: r["state"] for r in CI_RUNS}
+        def shown(items: list[dict]) -> list[tuple]:
+            return [(r["slug"], r["state"], r["time"], r["branch"]) for r in items]
+
+        if shown(runs) != shown(CI_RUNS):
+            CI_RUNS = runs
+            await send_items("ci", [(r["state"], f"{r['slug'].split('/')[-1]} · {r['branch']} · {r['time']}")
+                                    for r in runs])
+        for r in runs:
+            if before.get(r["slug"]) == "run" and r["state"] != "run":
+                name = r["slug"].split("/")[-1]
+                text = {"ok": "CI ok", "ko": "CI fallita", "stop": "CI annullata"}.get(r["state"], "CI")
+                await send({"t": "res", "ok": int(r["state"] == "ok"), "beep": 1, "msg": clean(f"{text}: {name}", 46)})
+                print(f"{text}: {r['slug']} {r['branch']}")
+        return any(r["state"] == "run" for r in runs)
+
     await send_launch()
     if SWITCH:
         await send({"t": "cmd", "c": SWITCH})
@@ -737,8 +840,11 @@ async def session(name: str, selftest: bool = False) -> bool:
         await link.close()
         print("Selftest superato" if not failed else f"Selftest: {failed} errori")
         raise SystemExit(1 if failed else 0)
+    ci_task = None
     try:
-        last_ctx = last_media = last_sys = None
+        CI_RUNS.clear()
+        ci_task = loop.create_task(ci_loop())
+        last_ctx = last_media = last_sys = last_git = None
         tick = 0
         while not disconnected.is_set():
             while COMMANDS is not None and not COMMANDS.empty():
@@ -755,6 +861,18 @@ async def session(name: str, selftest: bool = False) -> bool:
                     await send_own_keys()
                 last_ctx = ctx
                 print(f"Contesto: {app} | {title[:50]}")
+                GIT_REFRESH.set()
+            if GIT_REFRESH.is_set() or (tick % 8 == 0 and CURRENT_REPO):
+                GIT_REFRESH.clear()
+                try:  # git on a network drive or a huge repository: never hold the loop
+                    CURRENT_REPO, git = await bounded(asyncio.to_thread(git_items, app, title), 12)
+                except (asyncio.TimeoutError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+                    print(f"Git: {error}")
+                    CURRENT_REPO, git = "", []
+                GIT_BRANCHES = [n for a, n in git if a == "br"]
+                if git != last_git:
+                    await send_items("git", git)
+                    last_git = git
             if tick % 4 == 0:
                 if deck_config.stamp() != CONFIG_STAMP:  # saved from the Watch Deck window
                     CONFIG_STAMP, CONFIG = deck_config.stamp(), deck_config.load()
@@ -785,13 +903,16 @@ async def session(name: str, selftest: bool = False) -> bool:
                     await send({"t": "host", "name": clean(platform.node(), 23)})
                     await send_launch()
                     await send_own_keys()
-                    last_ctx = last_media = last_sys = None  # the new watch needs the whole state
+                    last_ctx = last_media = last_sys = last_git = None  # the new watch needs the whole state
+                    CI_RUNS.clear()
             tick += 1
             try:
                 await bounded(disconnected.wait(), 0.5)
             except asyncio.TimeoutError:
                 pass
     finally:
+        if ci_task is not None:
+            ci_task.cancel()
         STATUS.update(connected=False, device="", via="", app="")
         try:
             await send({"t": "bye"})

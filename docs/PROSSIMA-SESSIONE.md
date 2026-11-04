@@ -157,3 +157,25 @@ suono ambientale senza crash né glitch audio, guide leggibili sui round, consum
 
 Ogni lavoro: progetto breve con l'utente se ci sono scelte di gusto, implementazione, prova sul
 dispositivo, revisione del diff, flash + push. Pubblicazione sul Market solo quando l'utente lo chiede.
+
+---
+
+## Stato al 4/11/2026 (fine sessione)
+
+- **Orbit 2.0** (non pubblicata): pianeta disegnato in un solo oggetto (nucleo a sfumatura fisso, bordo
+  e alone opachi che respirano), animazione sul tempo reale, -O2 e band mode per Orbit. Misurato su
+  AMOLED 1.8 ruotato: frame medio 6 ms, massimo 33-35 ms (prima 22 ms e 104 ms). Ritmi 5-5, 4-4-4-4,
+  4-7-8, 4-8; 4 meditazioni guidate; suoni generati (pioggia, onde, vento, rumore rosa/marrone/
+  bianco) con timer di spegnimento e volume (rotella sulla scena); toni guida anche a schermo spento;
+  minuti per giorno (7 giorni) in NVS "orbit". Da fare: misura su Knob/Watcher, sessione 30 min con
+  suono, audio parlato da SD.
+- **Git + CI nel Deck** (Remote 1.5.0, solo flash AMOLED 1.8): Fetch/Pull/Branch provati dal watch su
+  watch-os-common, CI GitHub con stato reale. Da provare: Push/Commit su un repo di prova, avviso a
+  fine run, Guition, Deck Bar (deck_core ha le liste, la UI della barra no). Nuovo agente: utente deve
+  fare «Esci» dal tray e installare `tools/deck_agent/dist/WatchDeck.exe`.
+- **Watcher**: app «Sorveglianza» (firmware sistema, flash ota_0): modello persona del Himax (id 4)
+  a ~3,4 controlli/s, movimento come ripiego, zone 3x3, orari, webhook Home Assistant, miniature;
+  anteprima Fotocamera senza pausa da 1 s. Da fare: allarme con persona reale, prova di 1 ora armato
+  (heap), notifica al telefono via companion, raffica/timer/flash LED.
+- Lezione: le app esterne erano compilate con -Og; con -O2 servono `-Wno-error` per alcuni avvisi del
+  codice OS (vedi `external_apps/orbit/CMakeLists.txt`). Il rendering su 2 core rompe il band mode.

@@ -38,6 +38,7 @@ typedef struct
     char message[48];
     int8_t cpu, ram, mic; /* -1 unknown */
     bool playing;
+    uint8_t alerts;   /* grows with every message that asks for a sound (CI finished) */
     uint32_t version; /* grows with every change */
 } deck_state_t;
 
@@ -67,6 +68,13 @@ bool deck_run_key(const deck_key_t *key, bool mac);
  *   DECK_LIST_APPS     "app"  quick launch (apps and sites chosen in the agent); tap: "launch:N"
  *   DECK_LIST_KEYS     "ck"   the user's own shortcuts for the app in front (`app` of the
  *                             items = that app); tap: "ck:N", the agent presses the keys
+ *   DECK_LIST_GIT      "git"  repository of the VS Code window in front, empty otherwise:
+ *                             rows "repo", "branch", "state" ("changed,ahead,behind,conflicts,
+ *                             stash,untracked"), "msg" (proposed commit message), then "br"
+ *                             local branches; actions "git:pull|push|fetch|commit|stash|pop|
+ *                             diff|br:N"
+ *   DECK_LIST_CI       "ci"   latest CI run per repository: app = "run"|"ok"|"ko"|"stop"|"off",
+ *                             title = "repo · branch · 3m12s"; tap: "ci:N" restarts it
  */
 #define DECK_LIST_MAX 16
 typedef enum
@@ -74,6 +82,8 @@ typedef enum
     DECK_LIST_WINDOWS,
     DECK_LIST_APPS,
     DECK_LIST_KEYS,
+    DECK_LIST_GIT,
+    DECK_LIST_CI,
     DECK_LIST_COUNT,
 } deck_list_t;
 typedef struct

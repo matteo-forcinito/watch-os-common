@@ -252,3 +252,37 @@ comuni trovate e i siti di streaming. La finestra (`deck_ui.py`, «Apri Watch De
 L'agente serve tutti i Remote collegati al PC; uscendo restituisce il servizio Deck a Windows
 (una sessione GATT lasciata aperta da un processo terminato a forza blocca il servizio fino al
 riavvio di `bthserv`).
+
+## Stato implementazione (Remote 1.5.0) — Git e CI
+
+**Sezioni nuove.** *Git* compare subito dopo *App* solo con VS Code davanti su un repository;
+*CI* compare quando l'agente segue almeno un repository GitHub. Ordine: Le mie, App, Git, CI,
+Avvio, Sistema.
+
+- **Git** (8 tasti): Pull (`--ff-only`), Push (chiede conferma; rifiutato con conflitti, HEAD
+  staccato o commit da ricevere; primo push di un branch con `-u origin`), Fetch (`--prune`),
+  Commit (chiede conferma e mostra il messaggio proposto «Update a.c, b.c (+3)»; solo file tracciati,
+  `git commit -a`), Metti da parte / Riprendi (stash push/pop), Branch (pagina con i branch locali,
+  tocco = `git switch`), Modifiche (vista Source Control di VS Code, Ctrl+Shift+G). I tasti utili in
+  quel momento (Push con commit da inviare, Pull con commit da ricevere...) hanno il bordo chiaro.
+  La riga sotto il titolo dice branch, modifiche, commit da inviare/ricevere, conflitti.
+- **CI**: un riquadro per repository con l'ultima run di GitHub Actions (bordo arancio in corso,
+  verde ok, rosso fallita); tocco = «Riavvia run» con conferma (`rerun-failed-jobs` se fallita).
+  Quando una run finisce il watch suona e mostra l'avviso.
+
+**Messaggi** (stesso formato delle altre liste, chiuse da `i = -1`; una lista vuota nasconde la sezione):
+
+| Verso | Messaggio | Significato |
+|---|---|---|
+| PC → watch | `{"t":"git","i","a","n"}` | righe `repo`, `branch`, `state` (`modifiche,avanti,indietro,conflitti,stash,nuovi`), `msg`, poi `br` (branch locali) |
+| PC → watch | `{"t":"ci","i","a","n"}` | `a` = `run`/`ok`/`ko`/`stop`/`off`, `n` = `repo · branch · durata` |
+| PC → watch | `{"t":"res",...,"beep":1}` | avviso con suono (fine di una run CI) |
+| watch → PC | `act` `git:pull|push|fetch|commit|stash|pop|diff|br:N`, `ci:N` | azioni |
+
+**Agente** (`tools/deck_agent/deck_dev.py`): il repository si ricava dal titolo della finestra di VS Code
+(`file - cartella - Visual Studio Code`) cercando la cartella tra quelle recenti di VS Code
+(`storage.json` e `state.vscdb`); una cartella che contiene più repository (workspace) usa quello
+modificato per ultimo; altrimenti la cartella si indica nella scheda «Git e CI» della finestra Watch
+Deck. Ogni comando git ha un limite di tempo (8 s locali, 45 s rete), mai `--force` né reset. CI: token
+da `git credential fill`, controllo ogni 60 s (15 s con una run in corso), repository dalla scheda
+«Git e CI» più quello aperto in VS Code se ha un remote GitHub. GitLab non ancora supportato.

@@ -237,10 +237,32 @@ static void copy_native_rows(const band_t *b, int nx1, int nx2, int ny1, int row
     }
 
     int w = board_info()->width, h = board_info()->height;
-    int lx, ly, lx_next, ly_next;
+    int lx, ly, lx_next, ly_next, lx_down, ly_down;
     orientation_logical(s_rotation, w, h, nx1, ny1, &lx, &ly);
     orientation_logical(s_rotation, w, h, nx1 + 1, ny1, &lx_next, &ly_next);
+    orientation_logical(s_rotation, w, h, nx1, ny1 + 1, &lx_down, &ly_down);
     int step = (ly_next - ly) * stride + (lx_next - lx);
+    int down = (ly_down - ly) * stride + (lx_down - lx);
+
+    if (step != 1 && step != -1 && (down == 1 || down == -1))
+    {
+        /* Quarter turn: a native row is a logical column. Walking it reads one
+         * PSRAM cache line per pixel (a 300x300 redraw cost ~50 ms in copies).
+         * Read along logical rows instead: the `rows` pixels of each one are
+         * adjacent in the band, and the scattered writes land in internal RAM. */
+        const uint16_t *base = src + (ly - b->y1) * stride + (lx - b->x1);
+        for (int i = 0; i < nw; i++)
+        {
+            const uint16_t *sp = base + i * step;
+            uint16_t *dp = dst + i;
+            for (int r = 0; r < rows; r++)
+            {
+                *dp = sp[r * down];
+                dp += nw;
+            }
+        }
+        return;
+    }
 
     for (int r = 0; r < rows; r++)
     {

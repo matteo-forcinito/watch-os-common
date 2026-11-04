@@ -19,6 +19,7 @@
 #include "remote.h"
 #include "core/lv_port.h"
 #include "hardware/board.h"
+#include "services/sound.h"
 #include "ui/ui.h"
 #include "ui/keyboard_layout.h"
 
@@ -211,6 +212,17 @@ typedef struct
     deck_item_t *mine, *launch;
     int mine_count, launch_count;
     uint32_t mine_seen, launch_seen;
+    /* Git (VS Code in front) and CI lists, parsed when they change. */
+    deck_item_t *git, *ci;
+    int git_count, ci_count;
+    uint32_t git_seen, ci_seen;
+    char git_repo[48], git_branch[48], git_msg[48];
+    int git_changed, git_ahead, git_behind, git_conflicts, git_stash, git_untracked;
+    int branch_first; /* index of the first "br" row in `git` */
+    char ci_label[DECK_LIST_MAX][64];
+    char window_title[64];
+    uint8_t alerts_seen;
+    bool alerts_known;
 } deck_page_t;
 
 /* Sections, in page order. Swipes run through all of them; a tap on the header opens the index. */
@@ -218,12 +230,62 @@ typedef enum
 {
     SEC_MINE,   /* the user's shortcuts for this app (agent UI) */
     SEC_APP,    /* built-in profile of the app in front */
+    SEC_GIT,    /* repository of the VS Code window in front */
+    SEC_CI,     /* latest CI run of the chosen repositories */
     SEC_LAUNCH, /* quick launch: apps and sites */
     SEC_SYSTEM, /* switch app, windows, desktops, lock... */
     SEC_COUNT,
 } deck_section_t;
 
 static deck_page_t *s_page;
+
+/* Git section keys, in tile order: the actions are "git:<action>". */
+typedef enum
+{
+    GIT_PULL,
+    GIT_PUSH,
+    GIT_FETCH,
+    GIT_COMMIT,
+    GIT_STASH,
+    GIT_POP,
+    GIT_BRANCH,
+    GIT_DIFF,
+    GIT_KEYS,
+} git_key_t;
+static const char *const s_git_labels[GIT_KEYS] = {"Pull", "Push", "Fetch", "Commit", "Metti da parte",
+                                                   "Riprendi", "Branch", "Modifiche"};
+static const char *const s_git_actions[GIT_KEYS] = {"pull", "push", "fetch", "commit", "stash", "pop", NULL, "diff"};
+
+static uint32_t section_color(const deck_page_t *page, deck_section_t section)
+{
+    static const uint32_t colors[] = {UI_COLOR_PINK, 0, UI_COLOR_ORANGE, UI_COLOR_GREEN, UI_COLOR_TEAL, UI_COLOR_GRAY};
+    return section == SEC_APP ? page->profile->color : colors[section];
+}
+
+static const char *section_icon(const deck_page_t *page, deck_section_t section)
+{
+    static const char *const icons[] = {LV_SYMBOL_EDIT, NULL, LV_SYMBOL_SHUFFLE, LV_SYMBOL_REFRESH, LV_SYMBOL_PLAY,
+                                        LV_SYMBOL_SETTINGS};
+    return section == SEC_APP ? page->profile->icon : icons[section];
+}
+
+/* CI state of an item: tile border and word. */
+static uint32_t ci_color(const deck_item_t *item)
+{
+    return strcmp(item->app, "run") == 0  ? UI_COLOR_ORANGE
+           : strcmp(item->app, "ok") == 0 ? UI_COLOR_GREEN
+           : strcmp(item->app, "ko") == 0 ? UI_COLOR_RED
+                                          : UI_COLOR_GRAY;
+}
+
+static const char *ci_word(const deck_item_t *item)
+{
+    return strcmp(item->app, "run") == 0    ? "In corso"
+           : strcmp(item->app, "ok") == 0   ? "OK"
+           : strcmp(item->app, "ko") == 0   ? "Fallita"
+           : strcmp(item->app, "stop") == 0 ? "Annullata"
+                                            : "Nessuna run";
+}
 
 
 static int system_count(void)
@@ -246,6 +308,10 @@ static int section_items(const deck_page_t *page, deck_section_t section)
         return page->mine_count;
     case SEC_APP:
         return page->profile->count;
+    case SEC_GIT:
+        return page->git_count > 0 ? GIT_KEYS : 0;
+    case SEC_CI:
+        return page->ci_count;
     case SEC_LAUNCH:
         return page->launch_count;
     default:
@@ -317,14 +383,20 @@ static const char *label_of(const deck_page_t *page, deck_section_t section, int
         return page->mine[i].title;
     if (section == SEC_LAUNCH)
         return page->launch[i].title;
+    if (section == SEC_GIT)
+        return s_git_labels[i];
+    if (section == SEC_CI)
+        return page->ci_label[i];
     return key_of(page, section, i)->label;
 }
 
 static const char *section_name(const deck_page_t *page, deck_section_t section)
 {
-    static const char *const names[] = {"Le mie", NULL, "Avvio", "Sistema"};
+    static const char *const names[] = {"Le mie", NULL, "Git", "CI", "Avvio", "Sistema"};
     if (section == SEC_APP)
         return page->profile->name[0] ? page->profile->name : page->app_name;
+    if (section == SEC_GIT && page->git_repo[0])
+        return page->git_repo;
     return names[section];
 }
 
@@ -428,8 +500,7 @@ static void show_page(deck_page_t *page)
     const deck_profile_t *p = page->profile;
     page->page = LV_MIN(page->page, page_count(page) - 1);
     deck_section_t section = current_section(page, NULL);
-    static const uint32_t colors[] = {UI_COLOR_PINK, 0, UI_COLOR_TEAL, UI_COLOR_SEPARATOR};
-    uint32_t color = section == SEC_APP ? p->color : colors[section];
+    uint32_t color = section == SEC_SYSTEM ? UI_COLOR_SEPARATOR : section_color(page, section);
 
     for (int i = 0; i < page->per_page; i++)
     {
@@ -442,16 +513,55 @@ static void show_page(deck_page_t *page)
         }
         lv_obj_remove_flag(page->keys[i], LV_OBJ_FLAG_HIDDEN);
         fit_label(lv_obj_get_child(page->keys[i], 0), label_of(page, at, item));
-        lv_obj_set_style_border_color(page->keys[i], ui_color(color), 0);
+        uint32_t border = color;
+        if (at == SEC_CI)
+            border = ci_color(&page->ci[item]);
+        else if (at == SEC_GIT && ((item == GIT_PUSH && page->git_ahead) || (item == GIT_PULL && page->git_behind) ||
+                                   (item == GIT_COMMIT && page->git_changed) || (item == GIT_POP && page->git_stash)))
+            border = UI_COLOR_TEXT; /* what is worth doing now stands out */
+        lv_obj_set_style_border_color(page->keys[i], ui_color(border), 0);
         lv_obj_set_style_border_width(page->keys[i], section == SEC_SYSTEM ? 1 : 2, 0);
     }
 
-    static const char *const icons[] = {LV_SYMBOL_EDIT, NULL, LV_SYMBOL_PLAY, LV_SYMBOL_SETTINGS};
-    static const uint32_t bubbles[] = {UI_COLOR_PINK, 0, UI_COLOR_TEAL, UI_COLOR_GRAY};
     lv_label_set_text(page->app, section_name(page, section));
-    lv_label_set_text(lv_obj_get_child(page->icon, 0), section == SEC_APP ? p->icon : icons[section]);
-    ui_icon_bubble_set_color(page->icon, section == SEC_APP ? p->color : bubbles[section]);
+    lv_label_set_text(lv_obj_get_child(page->icon, 0), section_icon(page, section));
+    ui_icon_bubble_set_color(page->icon, section_color(page, section));
     lv_label_set_text_fmt(page->pager, "%d/%d", page->page + 1, page_count(page));
+    (void)p;
+
+    /* The line under the header: window title, or the state of the section shown. */
+    char line[160];
+    if (section == SEC_GIT)
+    {
+        /* Branch (47 bytes at most) plus four short parts: fits the 160 bytes. */
+        char parts[4][24] = {"", "", "", ""};
+        if (page->git_conflicts)
+            snprintf(parts[0], sizeof(parts[0]), " · %d conflitti", page->git_conflicts);
+        if (page->git_changed)
+            snprintf(parts[1], sizeof(parts[1]), " · %d modifiche", page->git_changed);
+        else
+            snprintf(parts[1], sizeof(parts[1]), " · pulito");
+        if (page->git_ahead)
+            snprintf(parts[2], sizeof(parts[2]), " · %d da inviare", page->git_ahead);
+        if (page->git_behind)
+            snprintf(parts[3], sizeof(parts[3]), " · %d da ricevere", page->git_behind);
+        snprintf(line, sizeof(line), "%.47s%s%s%s%s", page->git_branch, parts[0], parts[1], parts[2], parts[3]);
+    }
+    else if (section == SEC_CI)
+    {
+        int ok = 0, running = 0, failed = 0;
+        for (int i = 0; i < page->ci_count; i++)
+        {
+            ok += strcmp(page->ci[i].app, "ok") == 0;
+            running += strcmp(page->ci[i].app, "run") == 0;
+            failed += strcmp(page->ci[i].app, "ko") == 0;
+        }
+        snprintf(line, sizeof(line), "%d ok · %d in corso · %d fallite", ok, running, failed);
+    }
+    else
+        snprintf(line, sizeof(line), "%s", page->window_title);
+    if (strcmp(lv_label_get_text(page->title), line) != 0)
+        lv_label_set_text(page->title, line);
 }
 
 static void set_profile(deck_page_t *page, const deck_profile_t *profile, const char *app)
@@ -504,6 +614,97 @@ static void track_drags(lv_obj_t *obj)
     lv_obj_add_event_cb(obj, drag_event, LV_EVENT_RELEASED, NULL);
 }
 
+/* ---- Git and CI ----
+ *
+ * Commit and Push ask first; the branch list is a page of its own. The agent
+ * runs every command with a time limit and answers with a toast. */
+
+static void git_confirmed(bool ok, void *arg)
+{
+    if (ok)
+        send_action(arg);
+}
+
+static void ci_confirmed(bool ok, void *arg)
+{
+    char action[16];
+    snprintf(action, sizeof(action), "ci:%d", (int)(intptr_t)arg);
+    if (ok)
+        send_action(action);
+}
+
+typedef struct
+{
+    deck_item_t rows[DECK_LIST_MAX];
+    int first, count;
+} branches_ui_t;
+
+static void branch_clicked(lv_event_t *e)
+{
+    char action[24];
+    snprintf(action, sizeof(action), "git:br:%d", (int)(intptr_t)lv_event_get_user_data(e));
+    send_action(action);
+    app_back();
+}
+
+static void branches_create(lv_obj_t *screen, void *arg)
+{
+    (void)arg;
+    lv_obj_t *page = remote_page(screen, "Branch");
+    if (s_page == NULL || s_page->git_count == 0)
+    {
+        ui_text(page, "Nessun repository in VS Code.", true);
+        return;
+    }
+    ui_text(page, "Tocca il branch su cui passare.", true);
+    for (int i = s_page->branch_first, n = 0; i < s_page->git_count; i++, n++)
+    {
+        const char *name = s_page->git[i].title;
+        bool current = strcmp(name, s_page->git_branch) == 0;
+        ui_row(page, current ? LV_SYMBOL_OK : LV_SYMBOL_SHUFFLE, current ? UI_COLOR_GREEN : UI_COLOR_ORANGE, name,
+               current ? "attuale" : NULL, current ? NULL : branch_clicked, (void *)(intptr_t)n);
+    }
+}
+
+static const app_t s_branches_app = {.id = "remote.deck.branches",
+                                     .name = "Branch",
+                                     .flags = APP_FLAG_HIDDEN | APP_FLAG_KEEP_SCREEN_ON,
+                                     .create = branches_create};
+
+static void git_clicked(deck_page_t *page, int key)
+{
+    static char text[128];
+    if (key == GIT_BRANCH)
+    {
+        app_open_app(&s_branches_app, NULL);
+        return;
+    }
+    if (key == GIT_COMMIT)
+    {
+        if (page->git_changed == 0)
+        {
+            ui_toast("Niente da salvare");
+            return;
+        }
+        snprintf(text, sizeof(text), "%d file in %s.\n«%s»", page->git_changed, page->git_branch,
+                 page->git_msg[0] ? page->git_msg : "Update");
+        ui_confirm("Commit", text, "Commit", UI_COLOR_ORANGE, git_confirmed, (void *)"git:commit");
+        return;
+    }
+    if (key == GIT_PUSH)
+    {
+        if (page->git_ahead == 0)
+            snprintf(text, sizeof(text), "Inviare %s?", page->git_branch);
+        else
+            snprintf(text, sizeof(text), "Inviare %d commit di %s?", page->git_ahead, page->git_branch);
+        ui_confirm("Push", text, "Push", UI_COLOR_ORANGE, git_confirmed, (void *)"git:push");
+        return;
+    }
+    char action[24];
+    snprintf(action, sizeof(action), "git:%s", s_git_actions[key]);
+    send_action(action);
+}
+
 static void key_clicked(lv_event_t *e)
 {
     if (s_dragged)
@@ -518,6 +719,18 @@ static void key_clicked(lv_event_t *e)
     if (i < 0)
         return;
     char action[24];
+    if (section == SEC_GIT)
+    {
+        git_clicked(s_page, i);
+        return;
+    }
+    if (section == SEC_CI)
+    {
+        static char text[96];
+        snprintf(text, sizeof(text), "%s", s_page->ci[i].title);
+        ui_confirm("Riavvia run", text, "Riavvia", UI_COLOR_GREEN, ci_confirmed, (void *)(intptr_t)i);
+        return;
+    }
     if (section == SEC_MINE || section == SEC_LAUNCH)
     {
         /* The agent presses the keys or starts the app: it knows the PC better than HID codes. */
@@ -596,8 +809,6 @@ static void sections_create(lv_obj_t *screen, void *arg)
     if (s_page == NULL || s_page->profile == NULL)
         return;
     deck_section_t now = current_section(s_page, NULL);
-    static const char *const icons[] = {LV_SYMBOL_EDIT, NULL, LV_SYMBOL_PLAY, LV_SYMBOL_SETTINGS};
-    static const uint32_t colors[] = {UI_COLOR_PINK, 0, UI_COLOR_TEAL, UI_COLOR_GRAY};
     for (int i = 0; i < SEC_COUNT; i++)
     {
         int items = section_items(s_page, (deck_section_t)i);
@@ -605,12 +816,13 @@ static void sections_create(lv_obj_t *screen, void *arg)
             continue;
         char value[32];
         snprintf(value, sizeof(value), "%s%d", i == (int)now ? LV_SYMBOL_OK " " : "", items);
-        ui_row(page, i == SEC_APP ? s_page->profile->icon : icons[i], i == SEC_APP ? s_page->profile->color : colors[i],
+        ui_row(page, section_icon(s_page, (deck_section_t)i), section_color(s_page, (deck_section_t)i),
                section_name(s_page, (deck_section_t)i), value, section_chosen, (void *)(intptr_t)i);
     }
     ui_row(page, LV_SYMBOL_LIST, UI_COLOR_BLUE, "App aperte", NULL, section_chosen, (void *)(intptr_t)SEC_COUNT);
     ui_text(page,
-            "Le mie e Avvio si scelgono nell'app Watch Deck sul PC: tasto destro sull'icona > Apri Watch Deck.",
+            "Le mie, Avvio e i repository CI si scelgono nell'app Watch Deck sul PC (tasto destro sull'icona > "
+            "Apri Watch Deck). Git compare con VS Code davanti.",
             true);
 }
 
@@ -727,8 +939,62 @@ static void tick(lv_timer_t *timer)
             page->mine_count = 0; /* shortcuts of another app: the new list is on its way */
         lists = true;
     }
+    deck_list(DECK_LIST_GIT, page->git, 0, &version);
+    if (version != page->git_seen)
+    {
+        page->git_seen = version;
+        page->git_count = deck_list(DECK_LIST_GIT, page->git, DECK_LIST_MAX, &version);
+        page->git_repo[0] = page->git_branch[0] = page->git_msg[0] = '\0';
+        page->git_changed = page->git_ahead = page->git_behind = 0;
+        page->git_conflicts = page->git_stash = page->git_untracked = 0;
+        page->branch_first = page->git_count;
+        for (int i = 0; i < page->git_count; i++)
+        {
+            const deck_item_t *row = &page->git[i];
+            if (strcmp(row->app, "repo") == 0)
+                snprintf(page->git_repo, sizeof(page->git_repo), "%s", row->title);
+            else if (strcmp(row->app, "branch") == 0)
+                snprintf(page->git_branch, sizeof(page->git_branch), "%s", row->title);
+            else if (strcmp(row->app, "msg") == 0)
+                snprintf(page->git_msg, sizeof(page->git_msg), "%s", row->title);
+            else if (strcmp(row->app, "state") == 0)
+                sscanf(row->title, "%d,%d,%d,%d,%d,%d", &page->git_changed, &page->git_ahead, &page->git_behind,
+                       &page->git_conflicts, &page->git_stash, &page->git_untracked);
+            else if (strcmp(row->app, "br") == 0 && page->branch_first == page->git_count)
+                page->branch_first = i;
+        }
+        lists = true;
+    }
+    deck_list(DECK_LIST_CI, page->ci, 0, &version);
+    if (version != page->ci_seen)
+    {
+        page->ci_seen = version;
+        page->ci_count = deck_list(DECK_LIST_CI, page->ci, DECK_LIST_MAX, &version);
+        for (int i = 0; i < page->ci_count; i++)
+        {
+            /* "repo · branch · 3m12s" -> "repo" + new line + "OK 3m12s" on the tile */
+            char repo[48];
+            snprintf(repo, sizeof(repo), "%s", page->ci[i].title);
+            char *cut = strstr(repo, " · ");
+            const char *time = strrchr(page->ci[i].title, ' ');
+            if (cut != NULL)
+                *cut = '\0';
+            bool timed = cut != NULL && time != NULL && strcmp(page->ci[i].app, "off") != 0;
+            snprintf(page->ci_label[i], sizeof(page->ci_label[i]), "%s\n%s%s", repo, ci_word(&page->ci[i]),
+                     timed ? time : "");
+        }
+        lists = true;
+    }
     if (lists && page->profile != NULL && st.version == page->seen)
         show_page(page);
+    /* A CI run finished: the agent asks for a sound along with its message. */
+    if (!page->alerts_known || st.alerts != page->alerts_seen)
+    {
+        if (page->alerts_known)
+            sound_notification();
+        page->alerts_seen = st.alerts;
+        page->alerts_known = true;
+    }
 
     if (st.message[0])
         ui_toast(st.message);
@@ -736,8 +1002,8 @@ static void tick(lv_timer_t *timer)
         return;
     page->seen = st.version;
 
+    snprintf(page->window_title, sizeof(page->window_title), "%s", st.title);
     set_profile(page, deck_profile_for(st.app, st.title), st.app);
-    lv_label_set_text(page->title, st.title);
 
     if (st.track[0])
         lv_label_set_text_fmt(page->media, "%s  %s%s%s", st.playing ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE, st.track,
@@ -763,6 +1029,8 @@ static void deleted(lv_event_t *e)
     if (s_page == page) s_page = NULL;
     heap_caps_free(page->mine);
     heap_caps_free(page->launch);
+    heap_caps_free(page->git);
+    heap_caps_free(page->ci);
     free(page);
 }
 
@@ -794,14 +1062,18 @@ static void deck_create(lv_obj_t *screen, void *arg)
         return;
     page->mine = heap_caps_calloc(DECK_LIST_MAX, sizeof(deck_item_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     page->launch = heap_caps_calloc(DECK_LIST_MAX, sizeof(deck_item_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (page->mine == NULL || page->launch == NULL)
+    page->git = heap_caps_calloc(DECK_LIST_MAX, sizeof(deck_item_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    page->ci = heap_caps_calloc(DECK_LIST_MAX, sizeof(deck_item_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (page->mine == NULL || page->launch == NULL || page->git == NULL || page->ci == NULL)
     {
         heap_caps_free(page->mine);
         heap_caps_free(page->launch);
+        heap_caps_free(page->git);
+        heap_caps_free(page->ci);
         free(page);
         return;
     }
-    page->mine_seen = page->launch_seen = UINT32_MAX;
+    page->mine_seen = page->launch_seen = page->git_seen = page->ci_seen = UINT32_MAX;
     s_page = page;
     page->seen = UINT32_MAX;
     lv_obj_set_scrollable(screen, false);

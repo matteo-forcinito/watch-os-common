@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import deck_config
 
@@ -38,6 +38,7 @@ class Window:
         tabs.add(self.status_tab(tabs), text="Stato")
         tabs.add(self.launch_tab(tabs), text="Avvio rapido")
         tabs.add(self.keys_tab(tabs), text="Scorciatoie")
+        tabs.add(self.dev_tab(tabs), text="Git e CI")
         threading.Thread(target=self.find_apps, daemon=True).start()
         self.refresh_status()
 
@@ -54,6 +55,8 @@ class Window:
             "Sul watch, nella pagina PC (Deck), tocca il titolo per le sezioni:\n"
             "  Le mie - le tue scorciatoie per l'app in primo piano (scheda Scorciatoie)\n"
             "  App - i tasti già pronti per l'app in primo piano\n"
+            "  Git - con VS Code davanti: pull, push, commit, branch del repository aperto\n"
+            "  CI - stato delle GitHub Actions dei repository scelti (scheda Git e CI)\n"
             "  Avvio - app e siti da aprire con un tocco (scheda Avvio rapido)\n"
             "  Sistema - cambia app, finestre aperte, desktop, blocco, sospensione\n\n"
             "Le modifiche arrivano al watch da sole in un paio di secondi.")).pack(anchor="w", pady=(PAD * 2, 0))
@@ -278,6 +281,84 @@ class Window:
         if deck_config.valid_keys(keys):
             messagebox.showinfo(TITLE, "Dopo OK clicca la finestra dell'app: premo i tasti tra 2 secondi.")
             self.root.after(2000, lambda: deck_config.press(keys))  # time to click the target window
+
+    # -------------------------------------------------------------- git and CI
+
+    def dev_tab(self, parent) -> ttk.Frame:
+        frame = ttk.Frame(parent, padding=PAD)
+        frame.columnconfigure(0, weight=1)
+        ttk.Label(frame, text="Repository GitHub da seguire (proprietario/nome)").grid(row=0, column=0, sticky="w")
+        self.ci_list = tk.Listbox(frame, height=6, activestyle="none")
+        self.ci_list.grid(row=1, column=0, sticky="nsew")
+        row = ttk.Frame(frame, padding=(0, 4, 0, 0))
+        row.grid(row=2, column=0, sticky="ew")
+        self.ci_entry = ttk.Entry(row)
+        self.ci_entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(row, text="Aggiungi", command=self.add_ci).pack(side="left", padx=4)
+        ttk.Button(row, text="Rimuovi", command=self.remove_ci).pack(side="left")
+        ttk.Label(frame, style="Dim.TLabel", wraplength=700, justify="left", text=(
+            "Il repository aperto in VS Code si segue da solo se ha un remote GitHub. Il token è quello "
+            "che usa git (git credential): nessuna password da scrivere qui. Controllo ogni 60 s, ogni "
+            "15 s mentre una run è in corso; il watch suona quando una run finisce.")).grid(
+            row=3, column=0, sticky="w", pady=(4, PAD * 2))
+        ttk.Label(frame, text="Cartelle di VS Code (se il watch non trova il repository)").grid(row=4, column=0, sticky="w")
+        self.path_list = tk.Listbox(frame, height=5, activestyle="none")
+        self.path_list.grid(row=5, column=0, sticky="nsew")
+        buttons = ttk.Frame(frame, padding=(0, 4, 0, 0))
+        buttons.grid(row=6, column=0, sticky="ew")
+        ttk.Button(buttons, text="Aggiungi cartella...", command=self.add_path).pack(side="left")
+        ttk.Button(buttons, text="Rimuovi", command=self.remove_path).pack(side="left", padx=4)
+        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(5, weight=1)
+        self.fill_dev()
+        return frame
+
+    def fill_dev(self) -> None:
+        self.ci_list.delete(0, "end")
+        for slug in self.config.get("ci_repos", []):
+            self.ci_list.insert("end", slug)
+        self.path_list.delete(0, "end")
+        for folder, path in sorted((self.config.get("git_paths") or {}).items()):
+            self.path_list.insert("end", f"{folder}  →  {path}")
+
+    def add_ci(self) -> None:
+        slug = self.ci_entry.get().strip().removeprefix("https://github.com/").strip("/")
+        if slug.endswith(".git"):
+            slug = slug[:-4]
+        if slug.count("/") != 1 or " " in slug:
+            messagebox.showinfo(TITLE, "Scrivi proprietario/nome, per esempio matteo-forcinito/watch-os-common")
+            return
+        repos = self.config.setdefault("ci_repos", [])
+        if slug not in repos:
+            if len(repos) >= 8:
+                messagebox.showinfo(TITLE, "Il watch segue al massimo 8 repository.")
+                return
+            repos.append(slug)
+            self.save()
+        self.ci_entry.delete(0, "end")
+        self.fill_dev()
+
+    def remove_ci(self) -> None:
+        picked = self.ci_list.curselection()
+        if picked:
+            del self.config["ci_repos"][picked[0]]
+            self.save()
+            self.fill_dev()
+
+    def add_path(self) -> None:
+        path = filedialog.askdirectory(title="Cartella aperta in VS Code")
+        if path:
+            self.config.setdefault("git_paths", {})[path.replace("\\", "/").rstrip("/").split("/")[-1]] = path
+            self.save()
+            self.fill_dev()
+
+    def remove_path(self) -> None:
+        picked = self.path_list.curselection()
+        if picked:
+            folder = sorted(self.config.get("git_paths") or {})[picked[0]]
+            del self.config["git_paths"][folder]
+            self.save()
+            self.fill_dev()
 
     def run(self) -> None:
         self.root.mainloop()

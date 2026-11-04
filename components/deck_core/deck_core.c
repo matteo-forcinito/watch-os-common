@@ -34,6 +34,7 @@ typedef struct
     deck_item_t items[DECK_LIST_MAX];
     int count;
     uint32_t version;
+    bool open; /* an item 0 arrived since the last end mark */
 } list_t;
 static list_t *s_lists;
 /* Windows restores a bonded host's notification subscription by itself, so a
@@ -128,6 +129,8 @@ static void receive(const char *json, size_t length)
     int kind = strcmp(type, "win") == 0 ? DECK_LIST_WINDOWS
                : strcmp(type, "app") == 0 ? DECK_LIST_APPS
                : strcmp(type, "ck") == 0  ? DECK_LIST_KEYS
+               : strcmp(type, "git") == 0 ? DECK_LIST_GIT
+               : strcmp(type, "ci") == 0  ? DECK_LIST_CI
                                           : -1;
     if (kind >= 0)
     {
@@ -141,11 +144,19 @@ static void receive(const char *json, size_t length)
         list_t *list = &s_lists[kind];
         taskENTER_CRITICAL(&s_lock);
         if (i == 0)
+        {
             list->count = 0;
+            list->open = true;
+        }
         if (i >= 0 && i < DECK_LIST_MAX && i == list->count)
             list->items[list->count++] = item;
         if (i < 0)
+        {
+            if (!list->open)
+                list->count = 0; /* only the end mark: the list is now empty */
+            list->open = false;
             list->version++;
+        }
         taskEXIT_CRITICAL(&s_lock);
         return;
     }
@@ -188,6 +199,8 @@ static void receive(const char *json, size_t length)
     {
         next.message[0] = '\0';
         deck_json_text(json, "msg", next.message, sizeof(next.message));
+        if (deck_json_number(json, "beep", 0))
+            next.alerts++;
     }
     else
     {
