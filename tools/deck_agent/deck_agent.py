@@ -607,10 +607,14 @@ class WinLink:
         if device is None:
             return False
         self.opening[info.id] = device
-        if device.connection_status != BluetoothConnectionStatus.CONNECTED:
+        # Every plain WinRT call below runs on a worker thread: on a watch whose link is dropping it can
+        # block inside Windows indefinitely, and on the event loop that froze the whole agent.
+        status = await asyncio.to_thread(lambda: device.connection_status)
+        if status != BluetoothConnectionStatus.CONNECTED:
             return False
         services = await device.get_gatt_services_async(BluetoothCacheMode.UNCACHED)
-        service = next((s for s in services.services if str(s.uuid) == SERVICE), None)
+        service = await asyncio.to_thread(
+            lambda: next((s for s in services.services if str(s.uuid) == SERVICE), None))
         if service is None:
             return False  # an older Remote without the Deck service
         from winrt.windows.devices.bluetooth.genericattributeprofile import GattOpenStatus, GattSharingMode
@@ -632,7 +636,7 @@ class WinLink:
         result = await service.get_characteristics_async(BluetoothCacheMode.UNCACHED)
         if not result.characteristics:  # Windows may refuse a fresh read: its cache is as good
             result = await service.get_characteristics_async(BluetoothCacheMode.CACHED)
-        by_uuid = {str(c.uuid): c for c in result.characteristics}
+        by_uuid = await asyncio.to_thread(lambda: {str(c.uuid): c for c in result.characteristics})
         if RX not in by_uuid or TX not in by_uuid:  # GATT read failed: the next refresh tries again
             if info.id not in self.denied:
                 print(f"{info.name}: servizio Deck non leggibile (stato {result.status})")
@@ -640,7 +644,8 @@ class WinLink:
             return False
         self.denied.discard(info.id)
         rx, tx = by_uuid[RX], by_uuid[TX]
-        tokens = [tx.add_value_changed(self._changed), device.add_connection_status_changed(self._status)]
+        tokens = await asyncio.to_thread(
+            lambda: [tx.add_value_changed(self._changed), device.add_connection_status_changed(self._status)])
         await tx.write_client_characteristic_configuration_descriptor_with_result_async(Cccd.NOTIFY)
         self.watches[info.id] = (info.name, device, rx, tx, tokens)
         return True
@@ -1227,6 +1232,8 @@ class _Stamped:
 
 
 HEARTBEAT = 0.0  # last turn of the keepalive task (monotonic); 0 = no session
+RESTARTER = None  # set by deck_tray: start a fresh agent process, then end this one
+STALL_RESTART_S = 45
 
 
 def _watchdog() -> None:
@@ -1243,6 +1250,13 @@ def _watchdog() -> None:
                 faulthandler.dump_traceback(file=sys.stdout, all_threads=True)
             except Exception:
                 traceback.print_stack()
+        if beat and beat == reported and time.monotonic() - beat > STALL_RESTART_S:
+            # Windows never returned from a Bluetooth call: this process cannot recover by itself.
+            # The Deck service is opened shared, so a new process can take the watches over at once.
+            print(f"Ciclo fermo da {int(time.monotonic() - beat)} s: riavvio l'agente", flush=True)
+            if RESTARTER is not None:
+                RESTARTER()
+            os._exit(3)
 
 
 async def run(name: str = "Remote", selftest: bool = False) -> None:

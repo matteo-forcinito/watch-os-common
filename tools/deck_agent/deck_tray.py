@@ -241,8 +241,19 @@ class Tray:
                 pass
         os._exit(0)  # the agent loop and radio threads end with the process
 
+    def restart(self) -> None:
+        """A new agent process (it waits until this one is gone), then this one ends."""
+        command = [sys.executable, "--restart"] if FROZEN else [sys.executable, os.path.abspath(__file__), "--restart"]
+        subprocess.Popen(command, creationflags=0x00000008 | 0x00000200, close_fds=True)  # detached, new group
+        try:
+            self.icon.stop()
+        except Exception:
+            pass
+        os._exit(3)
+
     def run(self) -> None:
         deck_agent.NOTIFIER = lambda title, text: self.icon.notify(text, title)
+        deck_agent.RESTARTER = self.restart
         threading.Thread(target=self.agent, daemon=True).start()
         threading.Thread(target=self.watch_status, daemon=True).start()
         threading.Thread(target=self.quit_requests, daemon=True).start()
@@ -268,6 +279,15 @@ def main() -> None:
         install()
         subprocess.Popen([INSTALLED_EXE], creationflags=0x00000008, close_fds=True)
         return
+    if "--restart" in sys.argv:  # started by a stuck agent: wait until it has gone
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        for _ in range(120):
+            mutex = kernel32.OpenMutexW(0x00100000, False, "Local\\WatchOsDeckAgent")
+            if not mutex:
+                break
+            kernel32.CloseHandle(mutex)
+            threading.Event().wait(0.25)
+        print("Agente riavviato dopo un blocco")
     if not deck_agent.single_instance():
         message(f"{NAME} e gia in esecuzione: cerca l'icona nella barra di Windows.")
         return
