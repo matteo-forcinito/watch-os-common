@@ -25,6 +25,8 @@ import shutil
 import threading
 import subprocess
 import sys
+import time
+import traceback
 
 from bleak import BleakClient, BleakScanner
 
@@ -365,6 +367,8 @@ async def bounded(awaitable, seconds: float):
         task.cancel()
         task.add_done_callback(lambda t: t.cancelled() or t.exception())  # never "exception never retrieved"
         raise asyncio.TimeoutError
+    if task.cancelled():  # Windows cancelled the operation itself: same as no answer
+        raise asyncio.TimeoutError
     return task.result()
 
 
@@ -376,6 +380,8 @@ class WinLink:
     def __init__(self, loop, on_receive, on_lost):
         self.loop, self.on_receive, self.on_lost = loop, on_receive, on_lost
         self.watches = {}  # device id -> (name, device, rx, tx, tokens)
+        self.retry = {}  # device id -> (monotonic time of the next try, current delay)
+        self.opening = {}  # device id -> BluetoothLEDevice being opened (closed if the attempt fails)
 
     async def _connect(self, name: str) -> list[str]:
         from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice
@@ -390,20 +396,39 @@ class WinLink:
         for info in devices:
             if name.lower() not in info.name.lower() or info.id in self.watches:
                 continue
-            try:
-                # A watch that is restarting may never answer: skip it, the next round tries again.
-                found = await bounded(self._open_one(info, BluetoothLEDevice, BluetoothConnectionStatus,
-                                                              BluetoothCacheMode, Cccd), 10)
-            except (asyncio.TimeoutError, OSError) as error:
-                print(f"{info.name}: non risponde ({type(error).__name__})")
+            # A paired watch that is off, asleep or in another app does not answer: each failure
+            # doubles its pause (15 s .. 5 min), so it never stalls the others every few seconds.
+            due, delay = self.retry.get(info.id, (0.0, 0.0))
+            if time.monotonic() < due:
                 continue
+            try:
+                found = await bounded(self._open_one(info, BluetoothLEDevice, BluetoothConnectionStatus,
+                                                     BluetoothCacheMode, Cccd), 10)
+            except (asyncio.TimeoutError, OSError) as error:
+                found = False
+                if delay == 0.0:
+                    print(f"{info.name}: non risponde ({type(error).__name__}), riprovo con pause crescenti")
+            finally:
+                device = self.opening.pop(info.id, None)
+                if device is not None and info.id not in self.watches:
+                    try:  # an abandoned attempt must not keep a GATT session inside Windows
+                        device.close()
+                    except Exception:
+                        pass
             if found:
+                self.retry.pop(info.id, None)
                 added.append(info.name)
+            else:
+                delay = min(300.0, delay * 2 if delay else 15.0)
+                self.retry[info.id] = (time.monotonic() + delay, delay)
         return added
 
     async def _open_one(self, info, BluetoothLEDevice, BluetoothConnectionStatus, BluetoothCacheMode, Cccd) -> bool:
         device = await BluetoothLEDevice.from_id_async(info.id)
-        if device is None or device.connection_status != BluetoothConnectionStatus.CONNECTED:
+        if device is None:
+            return False
+        self.opening[info.id] = device
+        if device.connection_status != BluetoothConnectionStatus.CONNECTED:
             return False
         services = await device.get_gatt_services_async(BluetoothCacheMode.UNCACHED)
         service = next((s for s in services.services if str(s.uuid) == SERVICE), None)
@@ -415,7 +440,6 @@ class WinLink:
         by_uuid = {str(c.uuid): c for c in result.characteristics}
         if RX not in by_uuid or TX not in by_uuid:  # GATT read failed: the next refresh tries again
             print(f"{info.name}: servizio Deck non leggibile (stato {result.status})")
-            device.close()
             return False
         rx, tx = by_uuid[RX], by_uuid[TX]
         tokens = [tx.add_value_changed(self._changed), device.add_connection_status_changed(self._status)]
@@ -466,7 +490,7 @@ class WinLink:
         from winrt.windows.devices.bluetooth.genericattributeprofile import GattCommunicationStatus, GattWriteOption
         from winrt.windows.storage.streams import DataWriter
 
-        for key, (name, _, rx, _, _) in list(self.watches.items()):
+        async def one(key, name, rx) -> None:
             writer = DataWriter()
             writer.write_bytes(data)
             try:
@@ -479,6 +503,9 @@ class WinLink:
             if not ok:  # this watch only: the others keep their Deck, it comes back with refresh()
                 print(f"{name} non risponde: lo riprovo più tardi")
                 self._lost(key)
+
+        # All watches at once: a silent one costs SEND_TIMEOUT once, not once per watch.
+        await asyncio.gather(*(one(key, w[0], w[2]) for key, w in list(self.watches.items())))
 
     async def close(self) -> None:
         """Hand the Deck service back to Windows: a session left open keeps it busy for every app."""
@@ -840,13 +867,52 @@ async def session(name: str, selftest: bool = False) -> bool:
         await link.close()
         print("Selftest superato" if not failed else f"Selftest: {failed} errori")
         raise SystemExit(1 if failed else 0)
-    ci_task = None
+    resend = asyncio.Event()  # a watch joined: send it the whole state
+
+    async def keepalive() -> None:
+        """The watch shows the Deck only while it hears the agent (6 s): the ping never waits on
+        git, media, CI or the search for other watches."""
+        while True:
+            try:
+                await send({"t": "ping"})
+            except Exception as error:  # the session ends on its own when the link is gone
+                print(f"Ping: {error}")
+            await asyncio.sleep(2)
+
+    async def discover() -> None:
+        """Watches paired or switched on after the start, every 10 s, off the main loop."""
+        while hasattr(link, "refresh"):
+            await asyncio.sleep(10)
+            try:
+                added = await bounded(link.refresh(), 60)
+            except asyncio.TimeoutError:
+                print("Ricerca di altri watch bloccata da Windows: riprovo")
+                continue
+            except Exception as error:
+                print(f"Ricerca di altri watch: {error}")
+                continue
+            if added:
+                print(f"Collegato anche a {' + '.join(added)}")
+                await send({"t": "host", "name": clean(platform.node(), 23)})
+                await send_launch()
+                await send_own_keys()
+                resend.set()
+
+    tasks = []
     try:
         CI_RUNS.clear()
-        ci_task = loop.create_task(ci_loop())
+        tasks = [loop.create_task(ci_loop()), loop.create_task(keepalive()), loop.create_task(discover())]
         last_ctx = last_media = last_sys = last_git = None
         tick = 0
+        beat = time.monotonic()
         while not disconnected.is_set():
+            if resend.is_set():
+                resend.clear()
+                last_ctx = last_media = last_sys = last_git = None  # the new watch needs the whole state
+                CI_RUNS.clear()
+            if time.monotonic() - beat > 300:  # proof of life in the log, with its time stamp
+                beat = time.monotonic()
+                print(f"Attivo: {STATUS['device']} via {STATUS['via']}")
             while COMMANDS is not None and not COMMANDS.empty():
                 await send(COMMANDS.get_nowait())
             app, title = FIXED or foreground()
@@ -880,7 +946,6 @@ async def session(name: str, selftest: bool = False) -> bool:
                     await send_launch()
                     await send_own_keys()
                 write_status()
-                await send({"t": "ping"})  # the watch shows the touchbar only while it hears the agent
                 try:  # Windows' media session can stall (seen with a TV stream in Edge): never wait on it
                     media = await bounded(now_playing(), 3)
                 except asyncio.TimeoutError:
@@ -896,23 +961,14 @@ async def session(name: str, selftest: bool = False) -> bool:
                 if state != last_sys:
                     await send(state)
                     last_sys = state
-            if tick % 20 == 19 and hasattr(link, "refresh"):
-                added = await link.refresh()
-                if added:
-                    print(f"Collegato anche a {' + '.join(added)}")
-                    await send({"t": "host", "name": clean(platform.node(), 23)})
-                    await send_launch()
-                    await send_own_keys()
-                    last_ctx = last_media = last_sys = last_git = None  # the new watch needs the whole state
-                    CI_RUNS.clear()
             tick += 1
             try:
                 await bounded(disconnected.wait(), 0.5)
             except asyncio.TimeoutError:
                 pass
     finally:
-        if ci_task is not None:
-            ci_task.cancel()
+        for task in tasks:
+            task.cancel()
         STATUS.update(connected=False, device="", via="", app="")
         try:
             await send({"t": "bye"})
@@ -929,8 +985,34 @@ def log_to_file() -> str:
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, "agent.log")
     if sys.stdout is None or getattr(sys, "frozen", False):
-        sys.stdout = sys.stderr = open(path, "a", encoding="utf-8", buffering=1)
+        if not isinstance(sys.stdout, _Stamped):
+            raw = open(path, "a", encoding="utf-8", buffering=1)
+            sys.stdout = sys.stderr = _Stamped(raw)
+            import faulthandler  # a crash inside Windows' Bluetooth code leaves its trace here
+
+            faulthandler.enable(raw)
     return path
+
+
+class _Stamped:
+    """Log lines with date and time: a silent stop shows when it happened."""
+
+    def __init__(self, raw) -> None:
+        self.raw, self.fresh = raw, True
+
+    def write(self, text: str) -> int:
+        for part in text.splitlines(keepends=True):
+            if self.fresh:
+                self.raw.write(time.strftime("%d/%m %H:%M:%S "))
+            self.raw.write(part)
+            self.fresh = part.endswith("\n")
+        return len(text)
+
+    def flush(self) -> None:
+        self.raw.flush()
+
+    def fileno(self) -> int:
+        return self.raw.fileno()
 
 
 async def run(name: str = "Remote", selftest: bool = False) -> None:
@@ -944,8 +1026,13 @@ async def run(name: str = "Remote", selftest: bool = False) -> None:
             if not await session(name, selftest) and not waiting:
                 print("Non trovato: collega il cavo (Remote su USB) o associa il watch via Bluetooth.")
                 waiting = True
-        except Exception as error:  # radio errors: retry
-            print(f"Collegamento perso: {error}")
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as error:  # radio errors, and a CancelledError leaking from WinRT: retry
+            if isinstance(error, asyncio.CancelledError) and getattr(asyncio.current_task(), "cancelling", lambda: 1)():
+                raise  # really asked to stop (shutdown)
+            print(f"Collegamento perso: {type(error).__name__} {error}")
+            traceback.print_exc()
             waiting = False
         await asyncio.sleep(3)
 

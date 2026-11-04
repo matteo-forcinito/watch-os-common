@@ -69,11 +69,39 @@ def autostart(enabled: bool | None = None) -> bool:
             return False
 
 
+QUIT_EVENT = "Local\\WatchOsDeckAgentQuit"
+
+
+def stop_running(timeout: float = 10) -> bool:
+    """Ask a running agent to quit like "Esci" does (it gives the Deck service back to Windows).
+    Never taskkill: a killed agent leaves the watches' GATT service busy until bthserv restarts."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    event = kernel32.CreateEventW(None, True, False, QUIT_EVENT)
+    kernel32.SetEvent(event)
+    deadline = threading.Event()
+    waited = 0.0
+    while waited < timeout:
+        mutex = kernel32.OpenMutexW(0x00100000, False, "Local\\WatchOsDeckAgent")  # SYNCHRONIZE
+        if not mutex:
+            kernel32.ResetEvent(event)
+            kernel32.CloseHandle(event)
+            return True
+        kernel32.CloseHandle(mutex)
+        deadline.wait(0.25)
+        waited += 0.25
+    kernel32.ResetEvent(event)
+    kernel32.CloseHandle(event)
+    return False
+
+
 def install() -> None:
     if not FROZEN:
         raise SystemExit("--install works from WatchDeck.exe (build_exe.ps1); as a script use install_windows.ps1")
     os.makedirs(INSTALL_DIR, exist_ok=True)
     if os.path.normcase(sys.executable) != os.path.normcase(INSTALLED_EXE):
+        if not stop_running():
+            message(f"{NAME} in esecuzione non si chiude: usa Esci dal menu dell'icona e riprova.", 0x30)
+            raise SystemExit(1)
         shutil.copy2(sys.executable, INSTALLED_EXE)
     shortcut(START_MENU, INSTALLED_EXE)
     autostart(True)
@@ -102,8 +130,7 @@ def uninstall() -> None:
         winreg.DeleteKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY)
     except FileNotFoundError:
         pass
-    subprocess.run(["taskkill", "/IM", APP + ".exe", "/F", "/FI", f"PID ne {os.getpid()}"],
-                   creationflags=0x08000000, check=False, capture_output=True)
+    stop_running()  # politely: never taskkill (see stop_running)
     # The running exe cannot delete itself: a detached shell removes the folder once it exits.
     subprocess.Popen(f'cmd /c ping -n 3 127.0.0.1 >nul & rmdir /s /q "{INSTALL_DIR}"',
                      creationflags=0x08000000 | 0x00000008, close_fds=True)
@@ -180,7 +207,23 @@ class Tray:
     def agent(self) -> None:
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(deck_agent.run())
+        while True:  # the agent must never end while the icon is still in the tray
+            try:
+                self.loop.run_until_complete(deck_agent.run())
+            except BaseException as error:  # logged, then the agent starts over
+                print(f"Agente fermato ({type(error).__name__}: {error}): riparto")
+                import traceback
+
+                traceback.print_exc()
+            threading.Event().wait(3)
+
+    def quit_requests(self) -> None:
+        """A new WatchDeck.exe being installed asks this one to quit (instead of killing it)."""
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        event = kernel32.CreateEventW(None, True, False, "Local\\WatchOsDeckAgentQuit")
+        kernel32.WaitForSingleObject(event, 0xFFFFFFFF)
+        print("Chiusura richiesta dal nuovo WatchDeck")
+        self.quit()
 
     def quit(self) -> None:
         self.icon.stop()
@@ -194,6 +237,7 @@ class Tray:
     def run(self) -> None:
         threading.Thread(target=self.agent, daemon=True).start()
         threading.Thread(target=self.watch_status, daemon=True).start()
+        threading.Thread(target=self.quit_requests, daemon=True).start()
         self.icon.run()
 
 

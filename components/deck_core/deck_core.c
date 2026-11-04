@@ -42,7 +42,7 @@ static list_t *s_lists;
  * (any message, or its 2 s ping) within the last few seconds. */
 static volatile TickType_t s_last_rx;
 static volatile bool s_heard;
-#define AGENT_TIMEOUT pdMS_TO_TICKS(6000)
+#define AGENT_TIMEOUT pdMS_TO_TICKS(15000) /* pings every 2 s; one slow GATT write may hold one for 5 s */
 
 bool deck_agent_alive(void)
 {
