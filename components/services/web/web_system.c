@@ -121,10 +121,10 @@ static esp_err_t system_get(httpd_req_t *req)
     cJSON *out = cJSON_CreateObject();
     cJSON_AddStringToObject(out, "product", b->product);
     cJSON_AddStringToObject(out, "board", b->name);
-    cJSON_AddStringToObject(out, "name", sys_nickname());
+    cJSON_AddStringToObject(out, "name", settings_device_name());
     cJSON_AddBoolToObject(out, "stop", !recovery_active());   /* kit.js: power button */
     char host[24];
-    snprintf(host, sizeof(host), "%s.local", sys_hostname());
+    snprintf(host, sizeof(host), "%s.local", settings_hostname());
     cJSON_AddStringToObject(out, "hostname", host);
     cJSON_AddBoolToObject(out, "recovery", recovery_active());
     cJSON_AddBoolToObject(out, "recovery_supported", recovery_supported());

@@ -608,8 +608,8 @@ static void bluetooth_create(lv_obj_t *screen, void *arg)
     ui_row(page, LV_SYMBOL_EDIT, UI_COLOR_GRAY, "Nome", settings_get()->device_name, on_name, NULL);
     ui_row(page, LV_SYMBOL_GPS, UI_COLOR_GREEN, "Trova telefono", NULL, on_find_phone, NULL);
     ui_text(page,
-            "Sul telefono Android installa Gadgetbridge e aggiungi questo orologio: arrivano notifiche, "
-            "chiamate, meteo, ora e controlli musica. Il nome deve iniziare con \"Bangle.js\".",
+            "Il nome identifica l'orologio ovunque: Bluetooth (companion e Remote), rete, famiglia. "
+            "Con la companion arrivano notifiche, chiamate, meteo, ora e controlli musica.",
             true);
 
     lv_subject_add_observer_obj(state_subject(STATE_BLE), ble_status_update, page, NULL);

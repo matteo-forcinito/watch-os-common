@@ -1,4 +1,5 @@
 #include "apps_internal.h"
+#include "core/settings.h"
 
 #include "core/lv_port.h"
 #include "core/sys.h"
@@ -108,7 +109,7 @@ static void show_ready(void *arg)
     lv_obj_set_style_text_font(code, ui_font_title, 0);
 
     char hint[96];
-    snprintf(hint, sizeof(hint), "oppure http://%s.local/  ·  chiudi l'app per spegnere il Wi-Fi", sys_hostname());
+    snprintf(hint, sizeof(hint), "oppure http://%s.local/  ·  chiudi l'app per spegnere il Wi-Fi", settings_hostname());
     ui_text(s_page, hint, true);
 
     s_wifi = ui_text(s_page, "", false);

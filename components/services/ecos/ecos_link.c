@@ -529,7 +529,7 @@ static link_peer_t *find_peer(session_t *s, const uint8_t mac[6])
 static void my_status(ecos_link_status_t *out)
 {
     memset(out, 0, sizeof(*out));
-    snprintf(out->name, sizeof(out->name), "%s", sys_nickname());
+    snprintf(out->name, sizeof(out->name), "%s", settings_device_name());
     snprintf(out->product, sizeof(out->product), "%s", board_info()->product);
     snprintf(out->version, sizeof(out->version), "%.15s", esp_app_get_description()->version);
     int battery = pmu_present() ? (int)state_get(STATE_BATTERY) : -1;

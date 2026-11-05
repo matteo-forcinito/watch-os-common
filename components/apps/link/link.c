@@ -424,7 +424,7 @@ static esp_err_t link_get(httpd_req_t *req)
     const board_info_t *b = board_info();
     cJSON *out = cJSON_CreateObject();
     cJSON_AddNumberToObject(out, "version", 1);
-    cJSON_AddStringToObject(out, "node", sys_nickname());
+    cJSON_AddStringToObject(out, "node", settings_device_name());
     cJSON *features = cJSON_AddArrayToObject(out, "features");
     const char *always[] = {"scene", "events", "dial", "timer", "pets"};
     for (size_t i = 0; i < sizeof(always) / sizeof(always[0]); i++)

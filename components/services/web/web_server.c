@@ -1074,7 +1074,7 @@ static void announce(void)
     if (!s_mdns && mdns_init() == ESP_OK)
     {
         s_mdns = true;
-        mdns_hostname_set(sys_hostname());   /* "tamiro.local" */
+        mdns_hostname_set(settings_hostname());   /* the watch's name: "tamiro.local" */
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
     }
 

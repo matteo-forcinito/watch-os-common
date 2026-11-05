@@ -84,6 +84,15 @@ esp_err_t settings_init(void);
 
 /* Current settings (read only). */
 const settings_t *settings_get(void);
+/*
+ * The watch's name, the same everywhere it shows itself: Bluetooth (companion
+ * and Remote), ECOS, Orbit Link, the dashboard, the setup network. It is
+ * settings.device_name ("Nome" in Impostazioni), by default the watch's own
+ * nickname from its MAC ("Tamiro"); never empty.
+ */
+const char *settings_device_name(void);
+/* The same name for the network: lower case, letters, digits and '-' ("tamiro" -> tamiro.local). */
+const char *settings_hostname(void);
 
 /*
  * The accent as a NEON NOIR colour (0xRRGGBB). Values saved by older

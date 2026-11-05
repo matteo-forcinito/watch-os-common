@@ -9,6 +9,7 @@
  * Only an explicit start holds the radio, for at most 180 seconds. The
  * ephemeral session and peer secrets live in PSRAM, wiped before release. */
 #include "services/ecos.h"
+#include "core/settings.h"
 #include "ecos_wire.h"
 #include "ecos_internal.h"
 #include "services/wifi.h"
@@ -235,7 +236,7 @@ static bool generate(session_t *s)
               psa_export_public_key(s->ephemeral, s->hello + 16, 65, &length) == PSA_SUCCESS && length == 65;
     psa_reset_key_attributes(&attr);
     esp_fill_random(s->hello, 16);
-    snprintf((char *)s->hello + 81, ECOS_NAME_SIZE, "%s", sys_nickname());
+    snprintf((char *)s->hello + 81, ECOS_NAME_SIZE, "%s", settings_device_name());
     return ok && hello_commitment(s->mac, s->hello, s->commitment);
 }
 

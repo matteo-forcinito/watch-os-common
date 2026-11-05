@@ -1,4 +1,5 @@
 #include "services/wifi.h"
+#include "core/settings.h"
 #include "services/storage.h"
 
 #include "core/state.h"
@@ -1132,9 +1133,8 @@ bool wifi_known_any(void)
 esp_err_t wifi_start_access_point(char *ssid_out, size_t size)
 {
     wifi_config_t config = {0};
-    /* "<name>-<board>", e.g. "Tamiro-AMOLED": the watch's own name, always the same. */
-    int length = snprintf((char *)config.ap.ssid, sizeof(config.ap.ssid), "%s-%s", sys_nickname(),
-                          board_info()->short_name);
+    /* The watch's name, the same as on Bluetooth: it is how the watch is found. */
+    int length = snprintf((char *)config.ap.ssid, sizeof(config.ap.ssid), "%s", settings_device_name());
 
     for (int i = 0; i < length && i < (int)sizeof(config.ap.ssid); i++)
     {

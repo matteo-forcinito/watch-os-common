@@ -639,6 +639,13 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
         case BLE_GAP_EVENT_ENC_CHANGE:
             ESP_LOGI(TAG, "Link encrypted: %d", event->enc_change.status);
+            if (event->enc_change.status == 0)
+            {
+                /* Companion (OS) and Remote (external app) are one Bluetooth device: same
+                 * identity, same bond. Their services differ, so a bonded host is told to
+                 * read them again instead of using the ones it cached from the other. */
+                ble_svc_gatt_changed(0x0001, 0xFFFF);
+            }
             break;
 
         case BLE_GAP_EVENT_REPEAT_PAIRING:

@@ -9,6 +9,7 @@
  * watch (system dashboard and every internal app).
  */
 #include "appkit.h"
+#include "core/settings.h"
 #include "appkit_private.h"
 
 #include "core/app.h"
@@ -120,7 +121,7 @@ void appkit_web_url(char *out, size_t size)
 
 void appkit_web_host(char *out, size_t size)
 {
-    snprintf(out, size, "%s.local%s/", sys_hostname(), s_folder);
+    snprintf(out, size, "%s.local%s/", settings_hostname(), s_folder);
 }
 
 /* ------------------------------------------------------------ routes */

@@ -42,8 +42,8 @@ static void set_defaults(settings_t *s)
     strcpy(s->timezone, "CET-1CEST,M3.5.0,M10.5.0/3");   /* Italy */
     s->auto_time = true;
     s->ble_enabled = false; /* Fresh installations: optional services are opt-in. */
-    /* "Bangle.js" prefix: Gadgetbridge pairs it. Then the watch's own name. */
-    snprintf(s->device_name, sizeof(s->device_name), "Bangle.js %s", sys_nickname());
+    /* The watch's own name, nothing else: it is how the watch is found everywhere. */
+    snprintf(s->device_name, sizeof(s->device_name), "%s", sys_nickname());
     strcpy(s->weather_city, "Civita Castellana");
     s->weather_lat = 42.2946f;
     s->weather_lon = 12.4103f;
@@ -103,12 +103,17 @@ static void sanitize(settings_t *s)
 
     s->timezone[sizeof(s->timezone) - 1] = '\0';
     s->device_name[sizeof(s->device_name) - 1] = '\0';
-    /* The old default ("Bangle.js AMOLED", same on every watch) becomes this watch's own name. */
+    /* Older names: "Bangle.js AMOLED" (same on every watch) becomes the nickname, and the
+     * "Bangle.js " prefix goes: the watch is called by its name only. */
     char old_default[sizeof(s->device_name)];
     snprintf(old_default, sizeof(old_default), "Bangle.js %s", board_info()->short_name);
-    if (strcmp(s->device_name, old_default) == 0)
+    if (strcmp(s->device_name, old_default) == 0 || s->device_name[0] == '\0')
     {
-        snprintf(s->device_name, sizeof(s->device_name), "Bangle.js %s", sys_nickname());
+        snprintf(s->device_name, sizeof(s->device_name), "%s", sys_nickname());
+    }
+    else if (strncmp(s->device_name, "Bangle.js ", 10) == 0)
+    {
+        memmove(s->device_name, s->device_name + 10, strlen(s->device_name + 10) + 1);
     }
     s->weather_city[sizeof(s->weather_city) - 1] = '\0';
     s->update_url[sizeof(s->update_url) - 1] = '\0';
@@ -296,4 +301,27 @@ void settings_reset(void)
     set_defaults(&defaults);
     settings_save(&defaults);
     settings_flush();
+}
+
+const char *settings_device_name(void)
+{
+    const char *name = settings_get()->device_name;
+    return name[0] != '\0' ? name : sys_nickname();
+}
+
+const char *settings_hostname(void)
+{
+    static char host[sizeof(((settings_t *)0)->device_name)];
+    const char *name = settings_device_name();
+    size_t n = 0;
+    for (size_t i = 0; name[i] != '\0' && n < sizeof(host) - 1; i++)
+    {
+        char c = name[i];
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) host[n++] = c;
+        else if (n > 0 && host[n - 1] != '-') host[n++] = '-';   /* spaces and symbols: one dash */
+    }
+    while (n > 0 && host[n - 1] == '-') n--;
+    host[n] = '\0';
+    return n > 0 ? host : sys_hostname();
 }

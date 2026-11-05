@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "nvs.h"
+#include "services/gatt/ble_svc_gatt.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -345,6 +346,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         if (event->enc_change.status != 0 || ble_gap_conn_find(event->enc_change.conn_handle, &desc) != 0)
             break;
         s_peer = desc.peer_id_addr; /* the identity, resolved by now */
+        /* Companion (OS) and Remote (external app) are one Bluetooth device: same
+         * identity, same bond. Their services differ, so a bonded host is told to
+         * read them again instead of using the ones it cached from the other. */
+        ble_svc_gatt_changed(0x0001, 0xFFFF);
         if (host_allowed(&s_peer))
             accept_host();
         else

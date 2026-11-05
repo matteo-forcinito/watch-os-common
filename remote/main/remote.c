@@ -1,4 +1,5 @@
 #include "remote.h"
+#include "core/settings.h"
 #include "hid_link/hid_hub.h"
 
 #include "core/state.h"
@@ -160,9 +161,7 @@ void remote_connect(void)
 
 const char *remote_device_name(void)
 {
-    static char name[32];
-    snprintf(name, sizeof(name), "%.20s Remote", board_info()->short_name);
-    return name;
+    return settings_device_name();   /* one watch, one name: the same as the companion's */
 }
 
 bool remote_send_ok(bool accepted)
