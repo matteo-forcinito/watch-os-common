@@ -100,6 +100,27 @@ sono dimensionati come per un access point: è il primo punto della fase 1b.
 Conseguenza: ESP-NOW da solo non libera memoria. Prima del bus serve la **fase 1b** (sezione 6),
 compreso il rilascio completo della memoria quando l'avvio del Wi-Fi fallisce (1.75C).
 
+**Fase 1b, fatta il 5/11** (AMOLED 1.8, 1.75, 1.75C, Knob, Watcher; Guition 4848 aveva già i buffer ridotti):
+
+- driver Wi-Fi come su Guition e LCD 1.3: 4 buffer statici di ricezione, 4 di trasmissione, 8 di cache,
+  16 dinamici di ricezione, finestra di riordino 6 (`sdkconfig.defaults` di ogni board);
+- all'avvio il Bluetooth parte **prima** della sincronizzazione dell'ora (`main.c` delle sei board):
+  il controller vuole un blocco contiguo di circa 38 KB (il controllo in `ble_companion.c` chiede 40 KB)
+  che il driver Wi-Fi, partito prima, divideva.
+
+| Board | Stato | Libera | Blocco più grande | Bluetooth | Radio Wi-Fi |
+|---|---|---|---|---|---|
+| AMOLED 1.8 | ESP-NOW | 88 (prima 48) | 46 | no | sì |
+| AMOLED 1.8 | ESP-NOW + Bluetooth | 54 | 31 | **sì** | sì |
+| AMOLED 1.8 | Wi-Fi + Bluetooth | 53 | 31 | **sì** | sì |
+| 1.75C | Bluetooth all'avvio | 72 | 25 | sì | no |
+| 1.75C | ESP-NOW + Bluetooth | 46 | 25 | **sì** | **sì** |
+| 1.75C | Wi-Fi + Bluetooth | 46 | 25 | **sì** | **sì** |
+
+Il driver Wi-Fi passa da 66 a 27 KB di RAM interna. Accettazione della fase 1b raggiunta su 1.8 e 1.75C;
+il Watcher va rimisurato quando torna collegato. Con tutte le radio accese restano 46-54 KB liberi:
+il bus ECOS (fase 2) deve stare dentro pochi KB interni e tenere i buffer in PSRAM.
+
 ## 3. Vincoli tecnici
 
 1. **ESP-NOW vive nel driver Wi-Fi.** Richiede `esp_wifi_init/start` (radio in modalità station,
