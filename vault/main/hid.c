@@ -107,3 +107,10 @@ esp_err_t vault_hid_type(const char *text)
     /* No Tab, Enter, clipboard or automatic form submission is ever appended. */
     return ESP_OK;
 }
+
+/* hid_usb.c forwards Deck output reports here; Vault has no Deck, so they are dropped. */
+void hid_deck_usb_frame(const uint8_t *chunk, uint16_t length)
+{
+    (void)chunk;
+    (void)length;
+}
