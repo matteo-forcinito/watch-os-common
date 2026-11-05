@@ -177,6 +177,23 @@ bool sys_boot_ready(void)
     return s_boot_ready;
 }
 
+static volatile int s_boot_holds = 0;
+
+void sys_boot_hold(void)
+{
+    __atomic_add_fetch(&s_boot_holds, 1, __ATOMIC_SEQ_CST);
+}
+
+void sys_boot_release(void)
+{
+    __atomic_sub_fetch(&s_boot_holds, 1, __ATOMIC_SEQ_CST);
+}
+
+bool sys_boot_busy(void)
+{
+    return __atomic_load_n(&s_boot_holds, __ATOMIC_SEQ_CST) > 0;
+}
+
 void sys_heap_log(const char *where)
 {
     if (strcmp(where, "ready") == 0)

@@ -9,6 +9,9 @@
 #include "companion/ble_companion.h"
 #include "hardware/board.h"
 #include "services/weather.h"
+#include "services/extapp.h"
+#include "esp_heap_caps.h"
+#include <stdlib.h>
 #include "ui/ui.h"
 
 #include <stdio.h>
@@ -77,9 +80,92 @@ typedef struct
     lv_obj_t *alarm_label;
     lv_obj_t *music_pill;
     lv_obj_t *music_label;
+    lv_obj_t *apps_row;         /* shortcuts to the installed external apps */
+    extapp_t *apps;
+    int app_count;
 } face_t;
 
 static face_t s_face;
+
+/* ------------------------------------------------------- app shortcuts */
+
+#define FACE_APPS 4
+#define FACE_APP_ICON 46
+
+static void open_app_details(lv_event_t *e)
+{
+    int index = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_face.apps == NULL || index >= s_face.app_count)
+    {
+        return;
+    }
+    launcher_item_t *item = calloc(1, sizeof(*item));   /* owned by the details page */
+    if (item != NULL)
+    {
+        item->external = true;
+        item->ext = s_face.apps[index];
+        if (!app_open_app(&launcher_details_app, item))
+        {
+            free(item);
+        }
+    }
+}
+
+static bool music_showing(void)
+{
+    return s_face.music_pill != NULL && !lv_obj_is_hidden(s_face.music_pill);
+}
+
+/* The installed apps as a row of icons; the music pill, when
+ * shown, takes the same place. */
+static void apps_row_fill(void)
+{
+    if (s_face.apps_row == NULL)
+    {
+        return;
+    }
+    lv_obj_clean(s_face.apps_row);
+    if (s_face.apps == NULL)
+    {
+        s_face.apps = heap_caps_calloc(FACE_APPS, sizeof(extapp_t), MALLOC_CAP_SPIRAM);
+    }
+    /* Every installed app (bay slots, or the card's library), the first FACE_APPS of them. */
+    s_face.app_count = 0;
+    extapp_t *all = heap_caps_calloc(EXTAPP_MAX, sizeof(extapp_t), MALLOC_CAP_SPIRAM);
+    if (all != NULL && s_face.apps != NULL)
+    {
+        int found = extapp_scan(all, EXTAPP_MAX);
+        s_face.app_count = found < FACE_APPS ? found : FACE_APPS;
+        memcpy(s_face.apps, all, s_face.app_count * sizeof(extapp_t));
+    }
+    free(all);
+    for (int i = 0; i < s_face.app_count; i++)
+    {
+        const extapp_t *app = &s_face.apps[i];
+        lv_obj_t *icon = ui_icon_bubble(s_face.apps_row, app->icon[0] != '\0' ? app->icon : LV_SYMBOL_DIRECTORY,
+                                        UI_COLOR_PURPLE, FACE_APP_ICON);
+        lv_obj_set_clickable(icon, true);
+        lv_obj_set_ext_click_area(icon, 6);
+        lv_obj_add_event_cb(icon, open_app_details, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);
+    }
+    lv_obj_set_hidden(s_face.apps_row, s_face.app_count == 0 || music_showing());
+}
+
+static void apps_row_create(lv_obj_t *root, int32_t width)
+{
+    s_face.apps_row = lv_obj_create(root);
+    lv_obj_remove_style_all(s_face.apps_row);
+    lv_obj_set_size(s_face.apps_row, width, FACE_APP_ICON + 8);
+    lv_obj_set_flex_flow(s_face.apps_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_face.apps_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scrollable(s_face.apps_row, false);
+    apps_row_fill();
+}
+
+void watchface_apps_refresh(void)
+{
+    apps_row_fill();
+}
 
 #if CONFIG_APPKIT_HOSTED
 static void open_casa(lv_event_t *event)
@@ -264,6 +350,10 @@ static void update_music(lv_observer_t *observer, lv_subject_t *subject)
     bool on = ble_companion_connected() && ble_companion_music(&music) && music.playing;
 
     lv_obj_set_hidden(s_face.music_pill, !on);
+    if (s_face.apps_row != NULL)
+    {
+        lv_obj_set_hidden(s_face.apps_row, on || s_face.app_count == 0);
+    }
 
     if (on)
     {
@@ -508,6 +598,7 @@ static void face_deleted(lv_event_t *e)
     {
         return;   /* an older face deleted after a new one was built */
     }
+    s_face.apps_row = NULL;   /* deleted with the face; the app list stays for the next one */
 
     if (s_face.live != NULL)
     {
@@ -594,6 +685,8 @@ static void build_round(lv_obj_t *root)
 
     music_pill(root, l->pill_width);
     lv_obj_align(s_face.music_pill, LV_ALIGN_TOP_MID, 0, l->pill_y + dy);
+    apps_row_create(root, l->pill_width + 40);
+    lv_obj_align(s_face.apps_row, LV_ALIGN_TOP_MID, 0, l->pill_y + dy - 18);
 
     /* Seconds comet: just inside the battery ring. */
     s_face.orbit_radius = size / 2 - 3 - TK_LW_RING - TK_SP_2;
@@ -602,7 +695,9 @@ static void build_round(lv_obj_t *root)
 
 void watchface_create(lv_obj_t *parent)
 {
+    extapp_t *apps = s_face.apps;   /* the shortcut buffer outlives the face */
     s_face = (face_t){0};
+    s_face.apps = apps;
 
     lv_obj_t *root = lv_obj_create(parent);
     s_face.root = root;
@@ -686,6 +781,8 @@ void watchface_create(lv_obj_t *parent)
     /* phone music pill */
     music_pill(root, 300);
     lv_obj_align(s_face.music_pill, LV_ALIGN_BOTTOM_MID, 0, -26);
+    apps_row_create(root, 300);
+    lv_obj_align(s_face.apps_row, LV_ALIGN_BOTTOM_MID, 0, -18);
 
     comet_create(root);
     watchface_observe(root);

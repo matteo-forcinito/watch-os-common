@@ -33,7 +33,7 @@
 #define SPLASH_LINE_MS     250
 #define SPLASH_CHAR_MS     40
 #define SPLASH_MIN_MS      600    /* shorter would read as a flash */
-#define SPLASH_MAX_MS      8000   /* never block the user longer than this */
+#define SPLASH_MAX_MS      10000  /* never block the user longer than this (no network) */
 #define SPLASH_SETTLE_MS   600    /* internal RAM steady this long = start-up allocations done */
 #define SPLASH_DROP_BYTES  2048   /* a fall smaller than this is noise */
 #define SPLASH_GLITCH_TICKS 2
@@ -110,10 +110,11 @@ static void line_anim(int32_t from, int32_t to, uint32_t ms, lv_anim_path_cb_t p
 
 static void set_log(int lines)
 {
-    static const char *const names[] = {"DISPLAY", "DISPLAY\nCORE", "DISPLAY\nCORE\nLINK"};
-    static const char *const status[] = {"OK", "OK\nOK", "OK\nOK\nOK"};
+    /* 3: start-up work still running (clock sync...), 4: everything done. */
+    static const char *const names[] = {"DISPLAY", "DISPLAY\nCORE", "DISPLAY\nCORE\nSYNC", "DISPLAY\nCORE\nSYNC"};
+    static const char *const status[] = {"OK", "OK\nOK", "OK\nOK\n...", "OK\nOK\nOK"};
 
-    if (lines == s_splash.log_lines || lines < 1 || lines > 3)
+    if (lines == s_splash.log_lines || lines < 1 || lines > 4)
     {
         return;
     }
@@ -152,7 +153,7 @@ static void splash_tick(lv_timer_t *timer)
         s_splash.heap_drop_at = lv_tick_get();
     }
     bool settled = lv_tick_elaps(s_splash.heap_drop_at) >= SPLASH_SETTLE_MS;
-    bool ready = timeout || (home_up && sys_boot_ready() && settled);
+    bool ready = timeout || (home_up && sys_boot_ready() && !sys_boot_busy() && settled);
     if (s_splash.phase == SPLASH_INTRO)
     {
         input_enable(false);   /* inputs registered after the splash (knob, keys) stay off too */
@@ -169,14 +170,14 @@ static void splash_tick(lv_timer_t *timer)
 
             if (home_up)
             {
-                set_log(2);   /* the UI is built: a real milestone, not a fake bar */
+                set_log(sys_boot_ready() && (sys_boot_busy() || !settled) ? 3 : 2);   /* real milestones */
             }
 
             if (ready && typed == word_len && elapsed >= SPLASH_MIN_MS)
             {
                 ESP_LOGI("splash", "Done after %u ms (%s), internal RAM %u KB", (unsigned)elapsed,
                          timeout ? "timeout" : "start-up finished, RAM steady", (unsigned)(free_now / 1024));
-                set_log(3);
+                set_log(4);
                 set_typed(word_len, false);
                 lv_obj_set_hidden(s_splash.ghost, false);
                 s_splash.phase = SPLASH_GLITCH;

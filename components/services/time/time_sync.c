@@ -49,25 +49,47 @@ static esp_err_t run_sntp(void)
     return err;
 }
 
+#define SYNC_WIFI 1
+#define SYNC_BOOT 2   /* the start-up sync: the splash waits for it */
+
 static void sync_task(void *arg)
 {
-    bool need_wifi = arg != NULL;
+    int flags = (int)(intptr_t)arg;
+    bool need_wifi = flags & SYNC_WIFI;
 
     if (!need_wifi || wifi_acquire(15000) == ESP_OK)
     {
         run_sntp();
 
-        if (need_wifi)
+        if (need_wifi && (flags & SYNC_BOOT))
+        {
+            wifi_release_now();   /* nothing left running behind the home */
+            /* Hold the splash until the radio is really off (a few tens of ms). */
+            wifi_activity_t radio;
+            for (int i = 0; i < 100; i++)
+            {
+                if (wifi_activity_snapshot(&radio) && !radio.started && !radio.driver)
+                {
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+        }
+        else if (need_wifi)
         {
             wifi_release();
         }
     }
 
     s_running = false;
+    if (flags & SYNC_BOOT)
+    {
+        sys_boot_release();
+    }
     vTaskDelete(NULL);
 }
 
-static void start_task(bool need_wifi)
+static void start_task(bool need_wifi, bool boot)
 {
     if (s_running || !settings_get()->auto_time)
     {
@@ -75,10 +97,19 @@ static void start_task(bool need_wifi)
     }
 
     s_running = true;
+    if (boot)
+    {
+        sys_boot_hold();
+    }
 
-    if (!sys_task_create(sync_task, "time_sync", 4096, need_wifi ? (void *)1 : NULL, 3, SYS_CORE_ANY))
+    int flags = (need_wifi ? SYNC_WIFI : 0) | (boot ? SYNC_BOOT : 0);
+    if (!sys_task_create(sync_task, "time_sync", 4096, (void *)(intptr_t)flags, 3, SYS_CORE_ANY))
     {
         s_running = false;
+        if (boot)
+        {
+            sys_boot_release();
+        }
     }
 }
 
@@ -91,7 +122,7 @@ static void got_ip(void *arg, esp_event_base_t base, int32_t id, void *data)
 
     if (s_last_sync == 0 || time(NULL) - s_last_sync > RESYNC_WHEN_ONLINE_S || !clock_is_valid())
     {
-        start_task(false);
+        start_task(false, false);
     }
 }
 
@@ -101,7 +132,7 @@ static void daily_cb(void *arg)
 
     if (wifi_known_any() && (s_last_sync == 0 || time(NULL) - s_last_sync > 20 * 3600))
     {
-        start_task(true);
+        start_task(true, false);
     }
 }
 
@@ -116,7 +147,7 @@ void time_sync_init(void)
     /* Clock never set (new board, RTC battery flat): try right away. */
     if (!clock_is_valid() && wifi_known_any())
     {
-        start_task(true);
+        start_task(true, true);
     }
 }
 

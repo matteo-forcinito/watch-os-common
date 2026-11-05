@@ -51,6 +51,8 @@ esp_err_t wifi_acquire(uint32_t timeout_ms);
 
 /* Done with the network: Wi-Fi goes off shortly after the last release. */
 void wifi_release(void);
+/* Same, but if nobody else holds Wi-Fi it goes off now instead of after the grace period. */
+void wifi_release_now(void);
 
 /* The radio only (ESP-NOW between devices, no network, no internet): driver on
  * in station mode, not joined. Same reference count as wifi_acquire(): pair

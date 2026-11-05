@@ -68,6 +68,14 @@ void sys_health_log(void);
 size_t sys_internal_free(void);
 /* True once app_main has finished starting everything (its final sys_heap_log("ready")). */
 bool sys_boot_ready(void);
+/*
+ * Start-up work that goes on in the background after app_main (the first clock
+ * sync over Wi-Fi...). The boot splash stays until none is left, so the home
+ * appears with nothing still starting behind it. Pair every hold with a release.
+ */
+void sys_boot_hold(void);
+void sys_boot_release(void);
+bool sys_boot_busy(void);
 size_t sys_internal_largest(void);
 size_t sys_internal_min_free(void);
 

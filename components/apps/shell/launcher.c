@@ -90,12 +90,6 @@ void launcher_hint_refresh(void) {}
 #define ICON_SIZE   64
 #define FAVORITES   6
 
-typedef struct
-{
-    bool external;
-    const app_t *app;          /* built-in */
-    extapp_t ext;              /* external */
-} launcher_item_t;
 
 enum { MENU_PET, MENU_APPS, MENU_EXTERNAL, MENU_MARKET, MENU_WEB, MENU_SETTINGS, MENU_INFO, MENU_COUNT };
 
@@ -286,13 +280,11 @@ static void open_menu_entry(int entry)
 typedef struct
 {
     bool menu;                 /* a menu entry, else a favourite */
-    bool installed;            /* an installed external app shown on its own (not a favourite) */
     int entry;
     launcher_item_t item;
 } slot_t;
 
-#define INSTALLED_MAX 4        /* installed apps on the ring besides the favourites */
-#define SLOTS (MENU_COUNT + FAVORITES + INSTALLED_MAX)
+#define SLOTS (MENU_COUNT + FAVORITES)
 
 static slot_t *s_slots;
 static int s_slot_count;
@@ -320,26 +312,8 @@ static void collect_slots(void)
         if (resolve(s->favorites[i], &s_slots[s_slot_count].item))
         {
             s_slots[s_slot_count].menu = false;
-            s_slots[s_slot_count].installed = false;
             s_slot_count++;
         }
-    }
-    /* Apps living in an app slot (the bay, or the single app slot) are on the
-     * ring too, for a quick start, unless they are already favourites. */
-    for (int i = 0, shown = 0; i < s_ext_count && shown < INSTALLED_MAX; i++)
-    {
-        if (!s_ext[i].in_slot)
-        {
-            continue;
-        }
-        launcher_item_t item = {.external = true, .ext = s_ext[i]};
-        if (is_favorite(&item))
-        {
-            continue;
-        }
-        s_slots[s_slot_count] = (slot_t){.menu = false, .installed = true, .item = item};
-        s_slot_count++;
-        shown++;
     }
 }
 
@@ -414,12 +388,7 @@ static void menu_build(void)
     {
         return;
     }
-    int favorites = 0, installed = 0;
-    for (int i = MENU_COUNT; i < s_slot_count; i++)
-    {
-        if (s_slots[i].installed) installed++;
-        else favorites++;
-    }
+    int favorites = s_slot_count - MENU_COUNT;
     pet_cta(s_menu);
     ui_section(s_menu, "PREFERITE");
     if (favorites > 0)
@@ -433,10 +402,6 @@ static void menu_build(void)
         lv_obj_set_scrollable(grid, false);
         for (int i = MENU_COUNT; i < s_slot_count; i++)
         {
-            if (s_slots[i].installed)
-            {
-                continue;   /* listed in their own section below */
-            }
             const launcher_item_t *item = &s_slots[i].item;
             lv_obj_t *c = small_cell(grid, item_icon(item), item_color(item), item_name(item), 96);
             lv_obj_add_event_cb(c, on_favorite, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);
@@ -446,27 +411,6 @@ static void menu_build(void)
     else
     {
         ui_text(s_menu, "Apri un'app dalle pagine e scegli \"Aggiungi alle preferite\": comparirà qui.", true);
-    }
-    if (installed > 0)
-    {
-        ui_section(s_menu, "INSTALLATE");
-        lv_obj_t *grid = lv_obj_create(s_menu);
-        lv_obj_remove_style_all(grid);
-        lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-        lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-        lv_obj_set_style_pad_row(grid, 12, 0);
-        lv_obj_set_scrollable(grid, false);
-        for (int i = MENU_COUNT; i < s_slot_count; i++)
-        {
-            if (!s_slots[i].installed)
-            {
-                continue;
-            }
-            const launcher_item_t *item = &s_slots[i].item;
-            lv_obj_t *c = small_cell(grid, item_icon(item), item_color(item), item_name(item), 96);
-            lv_obj_add_event_cb(c, on_favorite, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);   /* details first */
-        }
     }
 
     char value[32];
@@ -615,9 +559,9 @@ static void ring_build(void)
         lv_obj_set_style_bg_color(icon, ui_glow(slot_color(i), TK_GLOW_G2), LV_STATE_PRESSED);
         if (!s_slots[i].menu)
         {
-            /* Favourites wear a thin amber ring, installed apps a lime one. */
+            /* Favourites wear a thin ring so they read apart from the menu entries. */
             lv_obj_set_style_outline_width(icon, TK_LW, 0);
-            lv_obj_set_style_outline_color(icon, lv_color_hex(s_slots[i].installed ? TK_LIME : TK_AMBER), 0);
+            lv_obj_set_style_outline_color(icon, lv_color_hex(TK_AMBER), 0);
             lv_obj_set_style_outline_pad(icon, TK_LW, 0);
         }
         lv_obj_add_event_cb(icon, on_ring_icon, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);
@@ -653,6 +597,7 @@ void launcher_refresh(void)
      * Opening a list or swiping the shell only reads the cached catalogue. */
     s_ext_loaded = false;
     scan_external();
+    watchface_apps_refresh();   /* installed apps are shortcuts on the watch face */
     if (s_ring != NULL)
     {
         ring_build();

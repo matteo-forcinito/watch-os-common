@@ -797,6 +797,19 @@ void wifi_release(void)
     xSemaphoreGive(s_mutex);
 }
 
+void wifi_release_now(void)
+{
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    if (s_refs > 0 && --s_refs == 0)
+    {
+        esp_timer_stop(s_off_timer);
+        esp_timer_start_once(s_off_timer, 1000);   /* the usual off path, without waiting */
+    }
+
+    xSemaphoreGive(s_mutex);
+}
+
 void wifi_set_fast(bool fast)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);

@@ -3,6 +3,7 @@
 
 #include "core/app.h"
 #include "lvgl.h"
+#include "services/extapp.h"
 
 /* ---- apps (each in its own file) */
 extern const app_t agentdeck_app;
@@ -58,6 +59,16 @@ extern const app_t battery_app;
 extern const app_t launcher_all_app;    /* hidden: every app in a list (round launcher, "Altre") */
 extern const app_t launcher_apps_app;   /* hidden: paged cards, arg = (void *)0 built-in, (void *)1 external */
 extern const app_t launcher_actions_app;/* hidden: Apri / Dettagli / Preferita..., arg = launcher_item_t * (malloc) */
+/* An app of the launcher: built-in or external (launcher pages, home, watch face). */
+typedef struct
+{
+    bool external;
+    const app_t *app;          /* built-in */
+    extapp_t ext;              /* external */
+} launcher_item_t;
+
+/* The watch face's shortcuts to installed apps: rebuild after an install or a removal. */
+void watchface_apps_refresh(void);
 extern const app_t launcher_details_app;/* hidden: details of one app, arg = launcher_item_t * (malloc) */
 extern const app_t call_app;
 extern const app_t update_app;          /* hidden: Settings > Aggiornamento */
