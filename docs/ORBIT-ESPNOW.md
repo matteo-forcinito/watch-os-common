@@ -73,12 +73,32 @@ DHCP, server web sempre acceso, mDNS.
   quindi qui si vede il caso opposto al Watcher: **con il Bluetooth acceso il Wi-Fi non parte**.
 - L'accensione fallita del Wi-Fi **non restituisce circa 25 KB** (72 -> 47 KB, blocco 42 -> 28 KB) e il
   minimo scende a 8 KB: dopo un tentativo fallito il dispositivo resta con meno memoria fino al riavvio.
-- All'avvio, durante la sincronizzazione dell'ora, la connessione al router fallisce
-  (`Disconnected ... errore di connessione (8)`), coerente con la stessa mancanza di memoria.
+- Il messaggio `Disconnected ... errore di connessione (8)` all'avvio non è un errore: è il motivo 8
+  (uscita volontaria) che compare ogni volta che il sistema spegne il Wi-Fi dopo l'NTP.
+
+**Fase 1, AMOLED 1.8 (5/11, stesso comando):**
+
+| Stato | Libera | Blocco più grande | Bluetooth attivo | Radio Wi-Fi |
+|---|---|---|---|---|
+| Radio spente | 115 | 62 | no | no |
+| Bluetooth | 81 | 42 | sì | no |
+| Bluetooth spento | 115 | 62 | no | no |
+| ESP-NOW | 48 | 31 | no | sì |
+| ESP-NOW + Bluetooth | 48 | 31 | **non parte** | sì |
+| Wi-Fi collegato | 48 | 31 | no | sì |
+| Wi-Fi + Bluetooth | 48 | 31 | **non parte** | sì |
+| Radio spente (fine) | 114 | 52 | no | no |
+
+Stesso quadro del Watcher: Bluetooth 34 KB, driver Wi-Fi 66 KB (ESP-NOW e Wi-Fi collegato uguali),
+Bluetooth che non parte con la radio Wi-Fi accesa, blocco più grande che non torna al valore iniziale.
+
+**Configurazione del driver Wi-Fi oggi** (log di avvio, uguale sulle tre board): 16 buffer statici di
+ricezione da 1600 byte (25 KB, sempre allocati), 32 dinamici di ricezione, 16 statici di trasmissione,
+32 di cache in trasmissione, 32 buffer corti di gestione. Per ESP-NOW e per il traffico di un orologio
+sono dimensionati come per un access point: è il primo punto della fase 1b.
 
 Conseguenza: ESP-NOW da solo non libera memoria. Prima del bus serve la **fase 1b** (sezione 6),
-compreso il rilascio completo della memoria quando l'avvio del Wi-Fi fallisce.
-Resta da misurare l'AMOLED 1.8.
+compreso il rilascio completo della memoria quando l'avvio del Wi-Fi fallisce (1.75C).
 
 ## 3. Vincoli tecnici
 
