@@ -842,6 +842,11 @@ static void reserve_take(void)
      * contiguous internal RAM before entering the controller's allocator. */
 }
 
+bool ble_companion_running(void)
+{
+    return atomic_load(&s_running);
+}
+
 void ble_companion_reserve(void)
 {
     reserve_take();

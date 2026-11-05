@@ -55,6 +55,8 @@ void ble_companion_enable(bool enable);
 void ble_companion_restart(void);
 
 bool ble_companion_connected(void);
+/* The Bluetooth stack is running (on, connected or not). */
+bool ble_companion_running(void);
 
 /* BLE scan with the companion's host, for internal apps (Ombra): `cb` gets the
  * BLE_GAP_EVENT_DISC events in the NimBLE host task. Needs Bluetooth on (false

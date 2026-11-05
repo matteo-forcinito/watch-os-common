@@ -883,6 +883,10 @@ static void tone_task(void *arg)
 /* Keep application QA commands above the core/services dependency boundary. */
 bool devcon_app_command(char *line)
 {
+    if (radio_bench_command(line))
+    {
+        return true;
+    }
     if (strncmp(line, "pet", 3) == 0 && (line[3] == 0 || line[3] == ' '))
     {
         pet_record_t p;

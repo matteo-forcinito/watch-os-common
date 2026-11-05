@@ -71,6 +71,8 @@ typedef struct
  * "" for automatic, a bay slot label, or NULL when cancelled. */
 typedef void (*slot_choice_cb_t)(const char *id, const char *slot);
 void slot_choice_open(const char *id, size_t size, slot_choice_cb_t done);
+/* QA console "radios": internal RAM in each radio state (shell/radio_bench.c). */
+bool radio_bench_command(const char *line);
 void slot_choice_close(void);
 bool slot_choice_active(void);
 
