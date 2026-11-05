@@ -68,6 +68,8 @@ bool market_entry(int index, market_entry_t *out);
 esp_err_t market_refresh(void);
 /* Downloads verified app files to SD only; it never boots an application. */
 esp_err_t market_install(const char *id);
+/* Same, into a chosen app bay slot ("ota_3"); NULL or "" = automatic. */
+esp_err_t market_install_slot(const char *id, const char *slot_label);
 esp_err_t market_remove(const char *id);
 void market_cancel(void);
 bool market_development(void);

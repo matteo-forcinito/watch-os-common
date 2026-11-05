@@ -2,6 +2,9 @@
 
 #include "core/lv_port.h"
 #include "core/recovery.h"
+#include "core/sys.h"
+
+#include "esp_log.h"
 
 #include <string.h>
 
@@ -12,8 +15,13 @@
  *     t = 0      a cyan line opens from the centre          (line, 2 px)
  *     250 ms     "WATCH OS_" is typed, 40 ms per letter      (~300 x 40 px)
  *                boot log: DISPLAY OK / CORE OK / LINK OK    (one small box)
- *     home up    2 glitch frames (magenta copy, 2 px off), the line closes
+ *     ready      2 glitch frames (magenta copy, 2 px off), the line closes
  *                to the centre and the splash is deleted
+ *
+ * "Ready" is not just "the home exists": the splash also waits for app_main
+ * to finish starting the services (sys_boot_ready) and for the internal RAM
+ * to stop falling, so nobody taps into a system still allocating. All input
+ * (touch, knob, keys) is off meanwhile. SPLASH_MAX_MS caps the wait.
  *
  * Every step touches a small area; the only full redraw is the final
  * deletion, which the first frame of the home pays anyway. While app_main
@@ -25,6 +33,9 @@
 #define SPLASH_LINE_MS     250
 #define SPLASH_CHAR_MS     40
 #define SPLASH_MIN_MS      600    /* shorter would read as a flash */
+#define SPLASH_MAX_MS      8000   /* never block the user longer than this */
+#define SPLASH_SETTLE_MS   600    /* internal RAM steady this long = start-up allocations done */
+#define SPLASH_DROP_BYTES  2048   /* a fall smaller than this is noise */
 #define SPLASH_GLITCH_TICKS 2
 
 typedef enum
@@ -51,6 +62,8 @@ typedef struct
     bool cursor_on;
     splash_phase_t phase;
     int32_t line_width;
+    size_t heap_low;          /* lowest internal free RAM seen */
+    uint32_t heap_drop_at;    /* when it last fell noticeably */
 } splash_t;
 
 static splash_t s_splash;
@@ -60,9 +73,19 @@ static void set_width(void *obj, int32_t width)
     lv_obj_set_width(obj, width < 1 ? 1 : width);
 }
 
+static void input_enable(bool on)
+{
+    for (lv_indev_t *indev = lv_indev_get_next(NULL); indev != NULL; indev = lv_indev_get_next(indev))
+    {
+        lv_indev_enable(indev, on);
+    }
+}
+
 static void splash_deleted(lv_anim_t *a)
 {
     (void)a;
+
+    input_enable(true);
 
     if (s_splash.cover != NULL)
     {
@@ -119,8 +142,21 @@ static void set_typed(int typed, bool cursor)
 static void splash_tick(lv_timer_t *timer)
 {
     uint32_t elapsed = lv_tick_elaps(s_splash.start);
-    /* Cap: never leave the touch-blocking cover up if the home never loads. */
-    bool home_up = lv_screen_active() != s_splash.boot_screen || elapsed > 5000;
+    bool timeout = elapsed > SPLASH_MAX_MS;
+    bool home_up = lv_screen_active() != s_splash.boot_screen || timeout;
+
+    size_t free_now = sys_internal_free();
+    if (s_splash.heap_low == 0 || free_now + SPLASH_DROP_BYTES < s_splash.heap_low)
+    {
+        s_splash.heap_low = free_now;
+        s_splash.heap_drop_at = lv_tick_get();
+    }
+    bool settled = lv_tick_elaps(s_splash.heap_drop_at) >= SPLASH_SETTLE_MS;
+    bool ready = timeout || (home_up && sys_boot_ready() && settled);
+    if (s_splash.phase == SPLASH_INTRO)
+    {
+        input_enable(false);   /* inputs registered after the splash (knob, keys) stay off too */
+    }
     const int word_len = (int)strlen(SPLASH_WORD);
 
     switch (s_splash.phase)
@@ -136,8 +172,10 @@ static void splash_tick(lv_timer_t *timer)
                 set_log(2);   /* the UI is built: a real milestone, not a fake bar */
             }
 
-            if (home_up && typed == word_len && elapsed >= SPLASH_MIN_MS)
+            if (ready && typed == word_len && elapsed >= SPLASH_MIN_MS)
             {
+                ESP_LOGI("splash", "Done after %u ms (%s), internal RAM %u KB", (unsigned)elapsed,
+                         timeout ? "timeout" : "start-up finished, RAM steady", (unsigned)(free_now / 1024));
                 set_log(3);
                 set_typed(word_len, false);
                 lv_obj_set_hidden(s_splash.ghost, false);
@@ -189,6 +227,7 @@ void ui_splash_show(void)
     lv_obj_set_style_bg_opa(cover, LV_OPA_COVER, 0);
     lv_obj_set_clickable(cover, true);
     lv_obj_set_scrollable(cover, false);
+    input_enable(false);   /* knob and keys too, not only touch; back on when the splash goes */
 
     s_splash.line = lv_obj_create(cover);
     lv_obj_remove_style_all(s_splash.line);

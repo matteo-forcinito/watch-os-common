@@ -66,6 +66,8 @@ void sys_health_log(void);
 
 /* Free internal RAM in bytes and the largest block. */
 size_t sys_internal_free(void);
+/* True once app_main has finished starting everything (its final sys_heap_log("ready")). */
+bool sys_boot_ready(void);
 size_t sys_internal_largest(void);
 size_t sys_internal_min_free(void);
 

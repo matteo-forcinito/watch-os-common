@@ -68,6 +68,8 @@ void extapp_forget_cache(void);
 
 /* App slots beyond ota_1 (0 = classic layout: one app slot shared with OS updates). */
 int extapp_bay_size(void);
+/* Bay slot `index` (0 = ota_2), NULL past the end. */
+const esp_partition_t *extapp_bay_slot(int index);
 /* Where an OS update goes: the OS's other slot, never a bay slot. */
 const esp_partition_t *extapp_os_update_slot(void);
 /* Where the market writes app `id` of `size` bytes: its current slot, else a free

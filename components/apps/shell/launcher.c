@@ -233,7 +233,24 @@ static void open_item(const launcher_item_t *item)
     if (copy != NULL)
     {
         *copy = item->ext;
-        app_open_app(&extapps_open_app, copy);   /* the user chose "open": start at once */
+        if (!app_open_app(&extapps_open_app, copy))   /* the user chose "open": start at once */
+        {
+            free(copy);
+        }
+    }
+}
+
+/* The details page of an app (its own copy, freed with the page). */
+static void open_details(const launcher_item_t *item)
+{
+    launcher_item_t *copy = malloc(sizeof(*copy));
+    if (copy != NULL)
+    {
+        *copy = *item;
+        if (!app_open_app(&launcher_details_app, copy))
+        {
+            free(copy);
+        }
     }
 }
 
@@ -269,11 +286,13 @@ static void open_menu_entry(int entry)
 typedef struct
 {
     bool menu;                 /* a menu entry, else a favourite */
+    bool installed;            /* an installed external app shown on its own (not a favourite) */
     int entry;
     launcher_item_t item;
 } slot_t;
 
-#define SLOTS (MENU_COUNT + FAVORITES)
+#define INSTALLED_MAX 4        /* installed apps on the ring besides the favourites */
+#define SLOTS (MENU_COUNT + FAVORITES + INSTALLED_MAX)
 
 static slot_t *s_slots;
 static int s_slot_count;
@@ -301,8 +320,26 @@ static void collect_slots(void)
         if (resolve(s->favorites[i], &s_slots[s_slot_count].item))
         {
             s_slots[s_slot_count].menu = false;
+            s_slots[s_slot_count].installed = false;
             s_slot_count++;
         }
+    }
+    /* Apps living in an app slot (the bay, or the single app slot) are on the
+     * ring too, for a quick start, unless they are already favourites. */
+    for (int i = 0, shown = 0; i < s_ext_count && shown < INSTALLED_MAX; i++)
+    {
+        if (!s_ext[i].in_slot)
+        {
+            continue;
+        }
+        launcher_item_t item = {.external = true, .ext = s_ext[i]};
+        if (is_favorite(&item))
+        {
+            continue;
+        }
+        s_slots[s_slot_count] = (slot_t){.menu = false, .installed = true, .item = item};
+        s_slot_count++;
+        shown++;
     }
 }
 
@@ -315,6 +352,10 @@ static void slot_open(int index)
     if (s_slots[index].menu)
     {
         open_menu_entry(s_slots[index].entry);
+    }
+    else if (s_slots[index].item.external)
+    {
+        open_details(&s_slots[index].item);   /* an external app replaces the system: look first */
     }
     else
     {
@@ -373,7 +414,12 @@ static void menu_build(void)
     {
         return;
     }
-    int favorites = s_slot_count - MENU_COUNT;
+    int favorites = 0, installed = 0;
+    for (int i = MENU_COUNT; i < s_slot_count; i++)
+    {
+        if (s_slots[i].installed) installed++;
+        else favorites++;
+    }
     pet_cta(s_menu);
     ui_section(s_menu, "PREFERITE");
     if (favorites > 0)
@@ -387,6 +433,10 @@ static void menu_build(void)
         lv_obj_set_scrollable(grid, false);
         for (int i = MENU_COUNT; i < s_slot_count; i++)
         {
+            if (s_slots[i].installed)
+            {
+                continue;   /* listed in their own section below */
+            }
             const launcher_item_t *item = &s_slots[i].item;
             lv_obj_t *c = small_cell(grid, item_icon(item), item_color(item), item_name(item), 96);
             lv_obj_add_event_cb(c, on_favorite, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);
@@ -396,6 +446,27 @@ static void menu_build(void)
     else
     {
         ui_text(s_menu, "Apri un'app dalle pagine e scegli \"Aggiungi alle preferite\": comparirà qui.", true);
+    }
+    if (installed > 0)
+    {
+        ui_section(s_menu, "INSTALLATE");
+        lv_obj_t *grid = lv_obj_create(s_menu);
+        lv_obj_remove_style_all(grid);
+        lv_obj_set_size(grid, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+        lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+        lv_obj_set_style_pad_row(grid, 12, 0);
+        lv_obj_set_scrollable(grid, false);
+        for (int i = MENU_COUNT; i < s_slot_count; i++)
+        {
+            if (!s_slots[i].installed)
+            {
+                continue;
+            }
+            const launcher_item_t *item = &s_slots[i].item;
+            lv_obj_t *c = small_cell(grid, item_icon(item), item_color(item), item_name(item), 96);
+            lv_obj_add_event_cb(c, on_favorite, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);   /* details first */
+        }
     }
 
     char value[32];
@@ -544,9 +615,9 @@ static void ring_build(void)
         lv_obj_set_style_bg_color(icon, ui_glow(slot_color(i), TK_GLOW_G2), LV_STATE_PRESSED);
         if (!s_slots[i].menu)
         {
-            /* Favourites wear a thin ring so they read apart from the menu entries. */
+            /* Favourites wear a thin amber ring, installed apps a lime one. */
             lv_obj_set_style_outline_width(icon, TK_LW, 0);
-            lv_obj_set_style_outline_color(icon, lv_color_hex(TK_AMBER), 0);
+            lv_obj_set_style_outline_color(icon, lv_color_hex(s_slots[i].installed ? TK_LIME : TK_AMBER), 0);
             lv_obj_set_style_outline_pad(icon, TK_LW, 0);
         }
         lv_obj_add_event_cb(icon, on_ring_icon, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);
@@ -1059,6 +1130,16 @@ const app_t launcher_actions_app = {
 
 static launcher_item_t *s_details;
 
+static void details_open(lv_event_t *e)
+{
+    (void)e;
+    if (s_details != NULL)
+    {
+        launcher_item_t item = *s_details;   /* the page and its item go away with the app switch */
+        open_item(&item);
+    }
+}
+
 static void details_create(lv_obj_t *screen, void *arg)
 {
     s_details = arg;
@@ -1080,6 +1161,8 @@ static void details_create(lv_obj_t *screen, void *arg)
         ui_text(page, "Si aggiorna con il sistema (Impostazioni > Aggiornamento).", true);
         return;
     }
+    lv_obj_t *open = ui_button(page, LV_SYMBOL_PLAY "  Apri", UI_COLOR_BLUE, details_open, NULL);
+    lv_port_set_focusable(open);
     market_entry_t *m = heap_caps_malloc(sizeof(*m), MALLOC_CAP_SPIRAM);
     bool listed = m != NULL && market_of(item->ext.id, m);
     if (listed && m->summary[0] != '\0')

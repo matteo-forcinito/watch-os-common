@@ -186,6 +186,11 @@ static const esp_partition_t *bay_slot(int index)
                                     (esp_partition_subtype_t)(ESP_PARTITION_SUBTYPE_APP_OTA_0 + 2 + index), NULL);
 }
 
+const esp_partition_t *extapp_bay_slot(int index)
+{
+    return bay_slot(index);
+}
+
 int extapp_bay_size(void)
 {
     int count = 0;

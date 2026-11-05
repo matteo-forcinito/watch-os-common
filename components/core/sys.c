@@ -170,8 +170,19 @@ size_t sys_internal_min_free(void)
     return heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
+static volatile bool s_boot_ready = false;
+
+bool sys_boot_ready(void)
+{
+    return s_boot_ready;
+}
+
 void sys_heap_log(const char *where)
 {
+    if (strcmp(where, "ready") == 0)
+    {
+        s_boot_ready = true;   /* every board ends app_main with this line */
+    }
     ESP_LOGI(TAG, "[%s] internal %u KB free (largest %u KB, min %u KB), PSRAM %u KB free", where,
              (unsigned)(sys_internal_free() / 1024), (unsigned)(sys_internal_largest() / 1024),
              (unsigned)(sys_internal_min_free() / 1024),

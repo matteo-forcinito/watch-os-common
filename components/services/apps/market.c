@@ -43,6 +43,7 @@ typedef struct
     bool refresh;
     bool remove;
     market_entry_t entry;
+    char slot[17];   /* chosen bay slot, "" = automatic */
 } job_t;
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -689,12 +690,25 @@ static void add_to_home(const char *id)
     settings_save(&s);
 }
 
-static esp_err_t install_direct(const market_entry_t *entry)
+/* The user's slot: a bay slot the image fits in. NULL = invalid choice. */
+static const esp_partition_t *chosen_slot(const char *label, size_t size)
+{
+    for (int i = 0; i < extapp_bay_size(); i++)
+    {
+        const esp_partition_t *slot = extapp_bay_slot(i);
+        if (strcmp(slot->label, label) == 0) return size <= slot->size ? slot : NULL;
+    }
+    return NULL;
+}
+
+static esp_err_t install_direct(const market_entry_t *entry, const char *slot_label)
 {
     /* The bay boots apps from slots beyond ota_1: only apps that return to the
      * launcher through NVS (extapp_sdk >= 2) may live there. */
     if (extapp_bay_size() > 0 && entry->sdk < 2) return ESP_ERR_NOT_SUPPORTED;
-    const esp_partition_t *slot = extapp_slot_for(entry->id, entry->binary_size);
+    const esp_partition_t *slot = slot_label != NULL && slot_label[0] != '\0'
+                                      ? chosen_slot(slot_label, entry->binary_size)
+                                      : extapp_slot_for(entry->id, entry->binary_size);
     if (slot == NULL) return extapp_bay_size() > 0 ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_SIZE;
     extapp_t previous;
     bool had = extapp_slot_read(slot, &previous);
@@ -784,9 +798,9 @@ static esp_err_t remove_entry(const market_entry_t *entry)
     return ESP_OK;
 }
 
-static esp_err_t install_entry(const market_entry_t *entry)
+static esp_err_t install_entry(const market_entry_t *entry, const char *slot_label)
 {
-    if (!sdcard_is_mounted() || extapp_bay_size() > 0) return install_direct(entry);   /* bay: apps live in slots */
+    if (!sdcard_is_mounted() || extapp_bay_size() > 0) return install_direct(entry, slot_label);   /* bay: apps live in slots */
     const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
     if (slot == NULL || entry->binary_size > slot->size) return ESP_ERR_INVALID_SIZE;
     uint32_t total, available;
@@ -844,7 +858,7 @@ static void worker(void *arg)
     if (!job->remove && err == ESP_OK)
     {
         wifi_set_fast(true);
-        err = job->refresh ? refresh_catalog() : install_entry(&job->entry);
+        err = job->refresh ? refresh_catalog() : install_entry(&job->entry, job->slot);
         wifi_set_fast(false);
         wifi_release();
     }
@@ -910,6 +924,11 @@ esp_err_t market_refresh(void)
 
 esp_err_t market_install(const char *id)
 {
+    return market_install_slot(id, NULL);
+}
+
+esp_err_t market_install_slot(const char *id, const char *slot_label)
+{
     if (!market_safe_id(id)) return ESP_ERR_INVALID_STATE;
     job_t *job = calloc(1, sizeof(*job));
     if (job == NULL) return ESP_ERR_NO_MEM;
@@ -927,6 +946,7 @@ esp_err_t market_install(const char *id)
         free(job);
         return ESP_ERR_NOT_FOUND;
     }
+    snprintf(job->slot, sizeof(job->slot), "%s", slot_label != NULL ? slot_label : "");
     return start(job);
 }
 
