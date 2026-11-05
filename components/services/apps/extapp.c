@@ -2,6 +2,7 @@
 #include "services/storage.h"
 
 #include "core/power.h"
+#include "core/state.h"
 #include "core/recovery.h"
 #include "hardware/sdcard.h"
 
@@ -92,6 +93,8 @@ static bool read_manifest(const char *dir, extapp_t *app)
     if (safe_leaf(bin)) snprintf(app->bin, sizeof(app->bin), "%s/%s", dir, bin);
     if (safe_leaf(icon)) snprintf(app->icon, sizeof(app->icon), "%s/%s", dir, icon);
     if (version != NULL) snprintf(app->version, sizeof(app->version), "%s", version);
+    cJSON *sdk = cJSON_GetObjectItem(root, "sdk");
+    app->sdk = cJSON_IsNumber(sdk) && sdk->valueint >= 1 && sdk->valueint <= 99 ? (uint8_t)sdk->valueint : 1;
     cJSON_Delete(root);
     return true;
 }
@@ -378,6 +381,13 @@ void extapp_slot_drop_others(const esp_partition_t *keep, const char *id)
     }
 }
 
+/* The apps in the slots changed: the watch face and the launcher follow. */
+static void apps_changed(void)
+{
+    static int32_t version;
+    state_set(STATE_APPS_VERSION, ++version);
+}
+
 esp_err_t extapp_slot_note(const esp_partition_t *slot, const char *id, const char *name, const char *version,
                            const char *icon)
 {
@@ -406,6 +416,7 @@ esp_err_t extapp_slot_note(const esp_partition_t *slot, const char *id, const ch
         err = nvs_commit(nvs);
     }
     nvs_close(nvs);
+    apps_changed();
     return err;
 }
 
@@ -419,6 +430,7 @@ void extapp_slot_forget(const esp_partition_t *slot)
         nvs_erase_key(nvs, key);
         nvs_commit(nvs);
         nvs_close(nvs);
+        apps_changed();
     }
     /* The card app copied into the copy slot is gone too, if this was that slot. */
     if (slot == NULL || slot == copy_slot())
@@ -661,38 +673,10 @@ void extapp_forget_cache(void)
     }
 }
 
-static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int percent, void *ctx), void *ctx)
+/* Copy a card app's image into slot (verified before erasing, checked after writing). */
+static esp_err_t copy_into(const extapp_t *app, const esp_partition_t *slot, void (*progress)(int percent, void *ctx),
+                           void *ctx)
 {
-    const esp_partition_t *slot = app->in_slot ? extapp_slot_of(app) : copy_slot();
-
-    if (slot == NULL && !app->in_slot && extapp_bay_size() > 0)
-    {
-        return fail("Con la baia app installala dal Market", ESP_ERR_NOT_SUPPORTED);
-    }
-
-    s_error[0] = '\0';
-
-    if (slot == NULL)
-    {
-        return fail("Nessuno slot app", ESP_ERR_NOT_FOUND);
-    }
-
-    if (app->in_slot && !extapp_is_cached(app))
-    {
-        return fail("App non più presente: installala dal Market", ESP_ERR_NOT_FOUND);
-    }
-
-    if (extapp_is_cached(app))
-    {
-        if (progress != NULL)
-        {
-            progress(100, ctx);
-        }
-
-        boot_into(slot);
-        return fail("Avvio fallito", ESP_FAIL);
-    }
-
     FILE *file = fopen(app->bin, "rb");
 
     if (file == NULL)
@@ -744,7 +728,8 @@ static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int perc
     /* Sequential writes: each sector is erased just before it is written, so the
        progress bar moves from the start instead of waiting for a long erase. */
     esp_ota_handle_t ota = 0;
-    esp_err_t err = esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &ota);
+    esp_err_t err;
+    err = esp_ota_begin(slot, OTA_WITH_SEQUENTIAL_WRITES, &ota);
 
     if (err != ESP_OK)
     {
@@ -798,6 +783,103 @@ static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int perc
     if (err != ESP_OK)
     {
         return fail("Immagine non valida", err);
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t extapp_install(const extapp_t *app, const esp_partition_t *slot, void (*progress)(int percent, void *ctx),
+                         void *ctx)
+{
+    s_error[0] = '\0';
+    if (app == NULL || app->in_slot || slot == NULL)
+    {
+        return fail("Niente da installare", ESP_ERR_INVALID_ARG);
+    }
+    if (app->sdk < 2)
+    {
+        /* An older build cannot run from a bay slot nor find its way back. */
+        return fail("Versione vecchia: aggiornala dal Market", ESP_ERR_NOT_SUPPORTED);
+    }
+    esp_err_t err = copy_into(app, slot, progress, ctx);
+    if (err != ESP_OK)
+    {
+        return err;
+    }
+    /* The slot now holds this app: note it like a market install, drop older copies. */
+    err = extapp_slot_note(slot, app->id, app->name, app->version, app->icon);
+    extapp_slot_drop_others(slot, app->id);
+    if (progress != NULL)
+    {
+        progress(100, ctx);
+    }
+    ESP_LOGI(TAG, "%s installed in %s", app->name, slot->label);
+    return err;
+}
+
+/* In the bay, the slot already holding this card app (same id), or NULL. */
+static const esp_partition_t *bay_copy_of(const extapp_t *app)
+{
+    extapp_t held;
+    for (int i = 0; i < extapp_bay_size(); i++)
+    {
+        const esp_partition_t *slot = bay_slot(i);
+        if (extapp_slot_read(slot, &held) && strcasecmp(held.id, app->id) == 0)
+        {
+            return slot;
+        }
+    }
+    return NULL;
+}
+
+static esp_err_t launch_exclusive(const extapp_t *app, void (*progress)(int percent, void *ctx), void *ctx)
+{
+    const esp_partition_t *slot = app->in_slot ? extapp_slot_of(app) : copy_slot();
+
+    if (slot == NULL && !app->in_slot && extapp_bay_size() > 0)
+    {
+        /* Card app with a bay: start its installed copy, else it must be installed first. */
+        const esp_partition_t *installed = bay_copy_of(app);
+        if (installed == NULL)
+        {
+            return fail("Prima installala nella baia", ESP_ERR_NOT_FOUND);
+        }
+        if (progress != NULL)
+        {
+            progress(100, ctx);
+        }
+        boot_into(installed);
+        return fail("Avvio fallito", ESP_FAIL);
+    }
+
+    s_error[0] = '\0';
+
+    if (slot == NULL)
+    {
+        return fail("Nessuno slot app", ESP_ERR_NOT_FOUND);
+    }
+
+    if (app->in_slot && !extapp_is_cached(app))
+    {
+        return fail("App non più presente: installala dal Market", ESP_ERR_NOT_FOUND);
+    }
+
+    if (extapp_is_cached(app))
+    {
+        if (progress != NULL)
+        {
+            progress(100, ctx);
+        }
+
+        boot_into(slot);
+        return fail("Avvio fallito", ESP_FAIL);
+    }
+
+    esp_err_t err = copy_into(app, slot, progress, ctx);
+
+    if (err != ESP_OK)
+    {
+        return err;
     }
 
     cache_t stamp;

@@ -513,7 +513,8 @@ static esp_err_t publish(const char *folder, const market_entry_t *entry,
               cJSON_AddStringToObject(root, "icon", icon_name) != NULL &&
               cJSON_AddStringToObject(root, "version", entry->version) != NULL &&
               cJSON_AddStringToObject(root, "channel", entry->channel) != NULL &&
-              cJSON_AddStringToObject(root, "board", entry->board) != NULL;
+              cJSON_AddStringToObject(root, "board", entry->board) != NULL &&
+              cJSON_AddNumberToObject(root, "sdk", entry->sdk) != NULL;
     if (removed) ok = cJSON_AddBoolToObject(root, "removed", true) != NULL && ok;
     char *text = ok ? cJSON_PrintUnformatted(root) : NULL;
     cJSON_Delete(root);
@@ -673,24 +674,6 @@ done:
     return err;
 }
 
-/* A newly installed app also appears on the home ring, if a favourite place is free. */
-static void add_to_home(const char *id)
-{
-    char key[24];
-    snprintf(key, sizeof(key), "ext:%.19s", id);
-    settings_t s = *settings_get();
-    int free_slot = -1;
-    for (int i = 0; i < (int)(sizeof(s.favorites) / sizeof(s.favorites[0])); i++)
-    {
-        if (strcmp(s.favorites[i], key) == 0) return;
-        if (s.favorites[i][0] == '\0' && free_slot < 0) free_slot = i;
-    }
-    if (free_slot < 0) return;
-    snprintf(s.favorites[free_slot], sizeof(s.favorites[free_slot]), "%s", key);
-    settings_save(&s);
-}
-
-/* The user's slot: a bay slot the image fits in. NULL = invalid choice. */
 static const esp_partition_t *chosen_slot(const char *label, size_t size)
 {
     for (int i = 0; i < extapp_bay_size(); i++)
@@ -741,7 +724,6 @@ static esp_err_t install_direct(const market_entry_t *entry, const char *slot_la
     if (err == ESP_OK)
     {
         extapp_slot_drop_others(slot, entry->id);
-        if (!had || strcasecmp(previous.id, entry->id) != 0) add_to_home(entry->id);
     }
     refresh_installed_catalog();
     return err;
@@ -769,7 +751,12 @@ static esp_err_t remove_direct(const market_entry_t *entry)
 
 static esp_err_t remove_entry(const market_entry_t *entry)
 {
-    if (!sdcard_is_mounted() || extapp_bay_size() > 0) return remove_direct(entry);
+    if (!sdcard_is_mounted()) return remove_direct(entry);
+    if (extapp_bay_size() > 0)
+    {
+        esp_err_t err = remove_direct(entry);   /* out of the bay first, then off the card */
+        if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) return err;
+    }
     char folder[80];
     snprintf(folder, sizeof(folder), SDCARD_MOUNT "/apps/%s", entry->id);
     status_set(MARKET_PUBLISHING, 0, "Rimozione dell'app");
@@ -798,11 +785,41 @@ static esp_err_t remove_entry(const market_entry_t *entry)
     return ESP_OK;
 }
 
+static void install_progress(int percent, void *ctx)
+{
+    (void)ctx;
+    status_set(MARKET_PUBLISHING, 90 + percent / 10, "Installazione nella baia");
+}
+
+/* The card's copy of app id, installed into a bay slot. */
+static esp_err_t install_from_card(const char *id, const esp_partition_t *slot)
+{
+    extapp_t *apps = heap_caps_calloc(EXTAPP_MAX, sizeof(extapp_t), MALLOC_CAP_SPIRAM);
+    if (apps == NULL) return ESP_ERR_NO_MEM;
+    esp_err_t err = ESP_ERR_NOT_FOUND;
+    int count = extapp_scan(apps, EXTAPP_MAX);
+    for (int i = 0; i < count; i++)
+    {
+        if (!apps[i].in_slot && strcasecmp(apps[i].id, id) == 0)
+        {
+            err = extapp_install(&apps[i], slot, install_progress, NULL);
+            break;
+        }
+    }
+    free(apps);
+    return err;
+}
+
 static esp_err_t install_entry(const market_entry_t *entry, const char *slot_label)
 {
-    if (!sdcard_is_mounted() || extapp_bay_size() > 0) return install_direct(entry, slot_label);   /* bay: apps live in slots */
-    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
-    if (slot == NULL || entry->binary_size > slot->size) return ESP_ERR_INVALID_SIZE;
+    if (!sdcard_is_mounted()) return install_direct(entry, slot_label);   /* no card: straight into a slot */
+    /* With a card the download goes to the library first; with a bay it is then
+     * installed from the card into a slot (the same step works offline later). */
+    const esp_partition_t *slot = extapp_bay_size() > 0 ? extapp_slot_for(entry->id, entry->binary_size)
+                                                        : esp_ota_get_next_update_partition(NULL);
+    if (slot_label != NULL && slot_label[0] != '\0') slot = chosen_slot(slot_label, entry->binary_size);
+    if (extapp_bay_size() > 0 && entry->sdk < 2) return ESP_ERR_NOT_SUPPORTED;
+    if (slot == NULL) return extapp_bay_size() > 0 ? ESP_ERR_NO_MEM : ESP_ERR_INVALID_SIZE;
     uint32_t total, available;
     sdcard_space(&total, &available);
     if ((uint64_t)available * 1024 * 1024 < entry->binary_size + entry->icon_size + 1024 * 1024)
@@ -842,6 +859,10 @@ static esp_err_t install_entry(const market_entry_t *entry, const char *slot_lab
     status_set(MARKET_PUBLISHING, 98, "Aggiunta alla libreria");
     if (atomic_load(&s_cancel)) return ESP_FAIL;
     err = publish(folder, entry, binary_name, icon_name, false);
+    if (err == ESP_OK && extapp_bay_size() > 0)
+    {
+        err = install_from_card(entry->id, slot);
+    }
     if (err == ESP_OK)
     {
         /* Workers own catalog mutations. Readers copy under the same lock. */

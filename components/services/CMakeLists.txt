@@ -35,6 +35,7 @@ idf_component_register(
         core
         hardware
         esp_http_client
+        esp_partition   # services/extapp.h hands out partitions
         esp_http_server
     PRIV_REQUIRES
         esp_wifi

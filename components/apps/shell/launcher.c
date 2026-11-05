@@ -1075,6 +1075,64 @@ const app_t launcher_actions_app = {
 
 static launcher_item_t *s_details;
 
+/* Install a card app into the bay (offline): the copy runs in a task. */
+typedef struct
+{
+    extapp_t app;
+    char slot[17];
+} bay_job_t;
+
+static void bay_install_task(void *arg)
+{
+    bay_job_t *job = arg;
+    const esp_partition_t *slot = NULL;
+    for (int i = 0; i < extapp_bay_size(); i++)
+    {
+        if (strcmp(extapp_bay_slot(i)->label, job->slot) == 0) slot = extapp_bay_slot(i);
+    }
+    if (slot == NULL) slot = extapp_slot_for(job->app.id, job->app.size);
+    esp_err_t err = slot != NULL ? extapp_install(&job->app, slot, NULL, NULL) : ESP_ERR_NO_MEM;
+    char text[96];
+    if (err == ESP_OK) snprintf(text, sizeof(text), LV_SYMBOL_OK " %s installata in %s", job->app.name, slot->label);
+    else snprintf(text, sizeof(text), "%s", slot == NULL ? "Baia app piena: scegli una partizione" : extapp_last_error());
+    lv_port_lock();
+    ui_toast(text);
+    launcher_refresh();
+    lv_port_unlock();
+    free(job);
+    vTaskDelete(NULL);
+}
+
+static void bay_slot_chosen(const char *id, const char *slot)
+{
+    if (slot == NULL || s_details == NULL || strcmp(s_details->ext.id, id) != 0)
+    {
+        return;
+    }
+    bay_job_t *job = calloc(1, sizeof(*job));
+    if (job == NULL)
+    {
+        return;
+    }
+    job->app = s_details->ext;
+    snprintf(job->slot, sizeof(job->slot), "%s", slot);
+    ui_toast("Installazione nella baia...");
+    if (!sys_task_create(bay_install_task, "bay_install", 6144, job, 4, SYS_CORE_ANY))
+    {
+        free(job);
+        ui_toast("Installazione non avviata");
+    }
+}
+
+static void details_install(lv_event_t *e)
+{
+    (void)e;
+    if (s_details != NULL)
+    {
+        slot_choice_open(s_details->ext.id, s_details->ext.size, bay_slot_chosen);
+    }
+}
+
 static void details_open(lv_event_t *e)
 {
     (void)e;
@@ -1108,6 +1166,16 @@ static void details_create(lv_obj_t *screen, void *arg)
     }
     lv_obj_t *open = ui_button(page, LV_SYMBOL_PLAY "  Apri", UI_COLOR_BLUE, details_open, NULL);
     lv_port_set_focusable(open);
+    if (extapp_bay_size() > 0 && !item->ext.in_slot && item->ext.sdk >= 2)
+    {
+        /* A card app on a board with a bay: install it into a partition, no network needed. */
+        lv_obj_t *install = ui_button(page, LV_SYMBOL_DOWNLOAD "  Installa nella baia", UI_COLOR_GREEN, details_install, NULL);
+        lv_port_set_focusable(install);
+    }
+    else if (extapp_bay_size() > 0 && !item->ext.in_slot)
+    {
+        ui_text(page, "Questa copia sulla microSD è una versione vecchia: aggiornala dal Market per installarla nella baia.", true);
+    }
     market_entry_t *m = heap_caps_malloc(sizeof(*m), MALLOC_CAP_SPIRAM);
     bool listed = m != NULL && market_of(item->ext.id, m);
     if (listed && m->summary[0] != '\0')

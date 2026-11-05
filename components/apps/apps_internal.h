@@ -67,6 +67,13 @@ typedef struct
     extapp_t ext;              /* external */
 } launcher_item_t;
 
+/* "Dove installare?" over everything (shell/slot_choice.c). done(id, slot): slot is
+ * "" for automatic, a bay slot label, or NULL when cancelled. */
+typedef void (*slot_choice_cb_t)(const char *id, const char *slot);
+void slot_choice_open(const char *id, size_t size, slot_choice_cb_t done);
+void slot_choice_close(void);
+bool slot_choice_active(void);
+
 /* The watch face's shortcuts to installed apps: rebuild after an install or a removal. */
 void watchface_apps_refresh(void);
 extern const app_t launcher_details_app;/* hidden: details of one app, arg = launcher_item_t * (malloc) */

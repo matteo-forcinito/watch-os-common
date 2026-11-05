@@ -1,4 +1,4 @@
-"""Publish the AMOLED 1.75C app-bay builds of the external apps on the Market.
+"""Publish the app-bay builds of the external apps on the Market (AMOLED 1.75C, Watcher).
 
 Every app of ESP32-S3-Touch-AMOLED-1.75C/external_apps with a build-bay image
 (built with components/extapp_sdk/sdkconfig.bay, see docs/BAIA-APP.md) is
@@ -8,7 +8,7 @@ install it in any bay slot. Name, summary, colour and icon are reused from the
 app's existing Market entry (this board first, then the others); a new app
 needs NEW below. Dry run by default; --publish to do it.
 
-    python tools/publish_bay_apps.py [--publish] [app ...]
+    python tools/publish_bay_apps.py [--board watcher_os] [--publish] [app ...]
 """
 import argparse
 import hashlib
@@ -20,17 +20,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import market_catalog as mc  # noqa: E402
 
+BOARDS = {"amoled175c_watch": "ESP32-S3-Touch-AMOLED-1.75C", "watcher_os": "SenseCap-Watcher-W1-A"}
 BOARD = "amoled175c_watch"
-WRAPPERS = Path(__file__).resolve().parents[2] / "ESP32-S3-Touch-AMOLED-1.75C" / "external_apps"
-ID = {"pockettank": "PocketTank"}   # folder -> Market id when it is not just capitalised
+WRAPPERS = Path(__file__).resolve().parents[2] / BOARDS[BOARD] / "external_apps"
+ID = {"pockettank": "PocketTank", "webradio": "WebRadio", "watcher_photo": "WatcherPhoto"}   # folder -> Market id
 BUILD_DIR = {"astri": "build"}      # apps whose normal build is already the bay configuration
 NEW = {  # apps never published before: their Market metadata and icon file
     "Astri": {"summary": "Il cielo sopra di te, offline: stelle, costellazioni, pianeti e Luna.",
               "color": "7FA8FF", "icon": WRAPPERS / "astri" / "icon.png"},
 }
-TAG = "bay-175c-" + date.today().strftime("%Y%m%d")
-PREFIX = f"https://github.com/{mc.REPO}/releases/download/{TAG}/"
-OTHER_BOARDS = ["amoled175_watch", "amoled_watch", "watcher_os", "knob_os", "guition4848_panel"]
+TAG = PREFIX = ""
+OTHER_BOARDS = []
 
 
 def header_text(image: bytes, start: int, end: int) -> str:
@@ -40,8 +40,16 @@ def header_text(image: bytes, start: int, end: int) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument("--board", default="amoled175c_watch", choices=sorted(BOARDS))
     parser.add_argument("apps", nargs="*")
     args = parser.parse_args()
+    global BOARD, WRAPPERS, TAG, PREFIX, OTHER_BOARDS
+    BOARD = args.board
+    WRAPPERS = Path(__file__).resolve().parents[2] / BOARDS[BOARD] / "external_apps"
+    TAG = "bay-" + ("175c" if BOARD == "amoled175c_watch" else "watcher") + "-" + date.today().strftime("%Y%m%d")
+    PREFIX = f"https://github.com/{mc.REPO}/releases/download/{TAG}/"
+    OTHER_BOARDS = [b for b in ["amoled175c_watch", "watcher_os", "amoled175_watch", "amoled_watch", "knob_os",
+                                "guition4848_panel"] if b != BOARD]
 
     req = mc.make_req(mc.token())
     catalogues = {}
@@ -100,9 +108,9 @@ def main() -> None:
     except urllib.error.HTTPError as e:
         if e.code != 404:
             raise
-        release = req(api + "/releases", "POST", {"tag_name": TAG, "name": f"App per la baia 1.75C ({TAG[-8:]})",
+        release = req(api + "/releases", "POST", {"tag_name": TAG, "name": f"App per la baia {BOARD} ({TAG[-8:]})",
                                                   "draft": True, "prerelease": False,
-                                                  "body": "App esterne compilate per la baia app della AMOLED 1.75C "
+                                                  "body": f"App esterne compilate per la baia app di {BOARD} "
                                                           "(slot oltre i 16 MB, extapp_sdk 2)."})
     uploaded = {x["name"]: x for x in req(api + f"/releases/{release['id']}/assets?per_page=100")}
     for name, data in sorted(assets.items()):

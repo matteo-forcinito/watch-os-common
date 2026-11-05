@@ -116,7 +116,7 @@ static bool music_showing(void)
     return s_face.music_pill != NULL && !lv_obj_is_hidden(s_face.music_pill);
 }
 
-/* The installed apps as a row of icons; the music pill, when
+/* The apps installed in the bay partitions as a row of icons; the music pill, when
  * shown, takes the same place. */
 static void apps_row_fill(void)
 {
@@ -129,16 +129,9 @@ static void apps_row_fill(void)
     {
         s_face.apps = heap_caps_calloc(FACE_APPS, sizeof(extapp_t), MALLOC_CAP_SPIRAM);
     }
-    /* Every installed app (bay slots, or the card's library), the first FACE_APPS of them. */
-    s_face.app_count = 0;
-    extapp_t *all = heap_caps_calloc(EXTAPP_MAX, sizeof(extapp_t), MALLOC_CAP_SPIRAM);
-    if (all != NULL && s_face.apps != NULL)
-    {
-        int found = extapp_scan(all, EXTAPP_MAX);
-        s_face.app_count = found < FACE_APPS ? found : FACE_APPS;
-        memcpy(s_face.apps, all, s_face.app_count * sizeof(extapp_t));
-    }
-    free(all);
+    /* Only the apps installed in the app bay partitions: they start at once.
+     * Boards without a bay (single app slot) show no shortcuts. */
+    s_face.app_count = s_face.apps != NULL && extapp_bay_size() > 0 ? extapp_slot_apps(s_face.apps, FACE_APPS) : 0;
     for (int i = 0; i < s_face.app_count; i++)
     {
         const extapp_t *app = &s_face.apps[i];
@@ -164,6 +157,13 @@ static void apps_row_create(lv_obj_t *root, int32_t width)
 
 void watchface_apps_refresh(void)
 {
+    apps_row_fill();
+}
+
+static void update_apps(lv_observer_t *observer, lv_subject_t *subject)
+{
+    (void)observer;
+    (void)subject;
     apps_row_fill();
 }
 
@@ -798,6 +798,7 @@ static void watchface_observe(lv_obj_t *root)
     lv_obj_add_event_cb(s_face.time, open_casa, LV_EVENT_LONG_PRESSED, NULL);
 #endif
     lv_subject_add_observer_obj(state_subject(STATE_MINUTE), update_time, root, NULL);
+    lv_subject_add_observer_obj(state_subject(STATE_APPS_VERSION), update_apps, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_SETTINGS_VERSION), update_time, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_BATTERY), update_battery, root, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_CHARGING), update_battery, root, NULL);

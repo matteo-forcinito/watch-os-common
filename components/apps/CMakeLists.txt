@@ -66,6 +66,7 @@ idf_component_register(
         "shell/shell.c"
         "shell/watchface.c"
         "shell/launcher.c"
+        "shell/slot_choice.c"
         "shell/control_center.c"
         "shell/notifications.c"
         "shell/now_playing.c"

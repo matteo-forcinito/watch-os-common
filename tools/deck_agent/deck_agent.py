@@ -9,7 +9,7 @@ a short allowlist of actions (lock, display off, microphone, task manager).
     optional on Windows: pip install pycaw winrt-Windows.Media.Control winrt-Windows.Foundation
     optional on Linux:   xdotool, playerctl, pactl (PipeWire/PulseAudio)
 
-    python deck_agent.py [--name "AMOLED Remote"] [--selftest]
+    python deck_agent.py [--name "Fapega"] [--selftest]   (no --name: every paired watch with the Deck service)
 
 Pair the watch from the system Bluetooth settings first (Remote > Bluetooth).
 """
@@ -509,6 +509,7 @@ async def bounded(awaitable, seconds: float):
 
 _RETRY: dict = {}
 _DENIED: set = set()
+_NO_DECK: dict = {}  # paired devices without the Deck service: id -> skip until (monotonic)
 
 
 _CLOSERS: list = []  # threads still closing WinRT objects; shutdown waits for them
@@ -560,6 +561,7 @@ class WinLink:
         self.retry = _RETRY  # device id -> (next try, delay): kept across sessions, a new one starts every 3 s
         self.opening = {}  # device id -> BluetoothLEDevice being opened (closed if the attempt fails)
         self.denied = _DENIED  # device ids whose Deck service Windows refused: kept across sessions (one notice)
+        self.no_deck = _NO_DECK  # device id -> until when it is skipped: paired, but no Deck service
 
     async def _connect(self, name: str) -> list[str]:
         from winrt.windows.devices.bluetooth import BluetoothCacheMode, BluetoothConnectionStatus, BluetoothLEDevice
@@ -572,7 +574,10 @@ class WinLink:
         selector = BluetoothLEDevice.get_device_selector_from_pairing_state(True)
         devices = await bounded(DeviceInformation.find_all_async_aqs_filter(selector), 10)
         for info in devices:
-            if name.lower() not in info.name.lower() or info.id in self.watches:
+            if (name and name.lower() not in info.name.lower()) or info.id in self.watches:
+                continue
+            # Paired devices without the Deck service (headphones, mice...) are not asked again for 10 min.
+            if time.monotonic() < self.no_deck.get(info.id, 0.0):
                 continue
             # A paired watch that is off, asleep or in another app does not answer: each failure
             # doubles its pause (15 s .. 5 min), so it never stalls the others every few seconds.
@@ -616,7 +621,9 @@ class WinLink:
         service = await asyncio.to_thread(
             lambda: next((s for s in services.services if str(s.uuid) == SERVICE), None))
         if service is None:
-            return False  # an older Remote without the Deck service
+            # Not a watch running Remote (or an older Remote): the watch is found by its service, not its name.
+            self.no_deck[info.id] = time.monotonic() + 600.0
+            return False
         from winrt.windows.devices.bluetooth.genericattributeprofile import GattOpenStatus, GattSharingMode
 
         # Shared, never exclusive: an exclusive open held by a session Windows did not release kept the
@@ -657,7 +664,7 @@ class WinLink:
 
     async def refresh(self) -> list[str]:
         """Watches connected since the session started."""
-        return await self._connect(getattr(self, "name", "Remote"))
+        return await self._connect(getattr(self, "name", ""))
 
     def _changed(self, _, args) -> None:
         data = bytes(args.characteristic_value)
@@ -729,7 +736,8 @@ class BleakLink:
 
     async def open(self, name: str) -> str | None:
         device = await BleakScanner.find_device_by_filter(
-            lambda d, adv: name.lower() in (d.name or adv.local_name or "").lower() or SERVICE in (adv.service_uuids or []),
+            lambda d, adv: (bool(name) and name.lower() in (d.name or adv.local_name or "").lower())
+            or SERVICE in (adv.service_uuids or []),
             timeout=10,
         )
         if device is None:
@@ -1264,12 +1272,13 @@ def _watchdog() -> None:
             os._exit(3)
 
 
-async def run(name: str = "Remote", selftest: bool = False) -> None:
+async def run(name: str = "", selftest: bool = False) -> None:
     """Find the watch, serve it, and start over whenever the link drops."""
     global COMMANDS
     threading.Thread(target=_watchdog, name="watchdog", daemon=True).start()
     COMMANDS = asyncio.Queue()
-    print(f"Cerco \"{name}\" via USB e tra i dispositivi Bluetooth associati...")
+    target = f'"{name}"' if name else "un orologio con Remote aperto"
+    print(f"Cerco {target} via USB e tra i dispositivi Bluetooth associati...")
     waiting = False
     while True:
         try:
@@ -1296,7 +1305,7 @@ def single_instance() -> bool:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--name", default="Remote", help="part of the watch's name")
+    parser.add_argument("--name", default="", help="part of the watch's name (default: any watch offering the Deck service)")
     parser.add_argument("--selftest", action="store_true", help="check the touchbar chosen for known apps, then exit")
     parser.add_argument("--fixed", nargs=2, metavar=("APP", "TITLE"), help="report this app instead of the focused one")
     parser.add_argument("--watch-transport", choices=("usb", "ble"), help="move Remote to USB or Bluetooth, then exit")

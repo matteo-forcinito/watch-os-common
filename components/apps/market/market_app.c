@@ -210,110 +210,17 @@ static market_ui_t *current_ui(void)
 
 /* ------------------------------------------------- app bay: which slot */
 
-#define SLOT_CHOICES 8
-typedef struct
-{
-    char id[32];
-    char label[SLOT_CHOICES][17];   /* "" = automatic */
-    lv_obj_t *overlay;
-} slot_choice_t;
-
-static slot_choice_t *s_choice;
-
 static void begin_install(const char *id, const char *slot);
 
-static void slot_choice_close(void)
+static void slot_chosen(const char *id, const char *slot)
 {
-    if (s_choice != NULL)
-    {
-        lv_obj_delete(s_choice->overlay);
-        free(s_choice);
-        s_choice = NULL;
-    }
-}
-
-static void on_slot_choice(lv_event_t *e)
-{
-    int index = (int)(intptr_t)lv_event_get_user_data(e);
-    if (s_choice == NULL) return;
-    char id[32], slot[17];
-    snprintf(id, sizeof(id), "%s", s_choice->id);
-    snprintf(slot, sizeof(slot), "%s", index >= 0 ? s_choice->label[index] : "");
-    bool cancel = index == -2;
-    slot_choice_close();
-    if (cancel)
+    if (slot == NULL)
     {
         market_ui_t *ui = current_ui();
         if (ui != NULL) ui->open_after_download = false;
         return;
     }
     begin_install(id, slot);
-}
-
-/* "Where should it go?": automatic, then every bay slot with its size and what it holds now. */
-static void slot_choice_open(const char *id, size_t size)
-{
-    slot_choice_close();
-    s_choice = calloc(1, sizeof(*s_choice));
-    if (s_choice == NULL)
-    {
-        begin_install(id, "");
-        return;
-    }
-    snprintf(s_choice->id, sizeof(s_choice->id), "%s", id);
-    lv_obj_t *overlay = lv_obj_create(lv_layer_top());
-    s_choice->overlay = overlay;
-    lv_obj_remove_style_all(overlay);
-    lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(overlay, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(overlay, LV_OPA_90, 0);
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_flex_flow(overlay, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(overlay, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(overlay, 8, 0);
-
-    lv_obj_t *title = lv_label_create(overlay);
-    lv_obj_set_style_text_font(title, ui_font_title, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_label_set_text(title, "Dove installare?");
-
-    char text[64];
-    int count = extapp_bay_size() < SLOT_CHOICES ? extapp_bay_size() : SLOT_CHOICES;
-    for (int i = -1; i < count; i++)
-    {
-        bool fits = true;
-        if (i < 0)
-        {
-            snprintf(text, sizeof(text), "Automatica");
-        }
-        else
-        {
-            const esp_partition_t *slot = extapp_bay_slot(i);
-            extapp_t held;
-            snprintf(s_choice->label[i], sizeof(s_choice->label[i]), "%s", slot->label);
-            fits = size <= slot->size;
-            bool busy = extapp_slot_read(slot, &held);
-            snprintf(text, sizeof(text), "%s · %u MB · %s", slot->label, (unsigned)(slot->size >> 20),
-                     !fits ? "troppo piccola" : !busy ? "libera" : strcmp(held.id, id) == 0 ? "già qui" : held.name);
-        }
-        lv_obj_t *button = lv_button_create(overlay);
-        lv_obj_set_width(button, LV_PCT(78));
-        lv_obj_set_style_radius(button, 22, 0);
-        lv_obj_set_style_bg_color(button, lv_color_hex(i < 0 ? UI_COLOR_GREEN : 0x1E2433), 0);
-        lv_obj_t *caption = lv_label_create(button);
-        lv_obj_set_style_text_font(caption, UI_FONT_SMALL, 0);
-        lv_label_set_text(caption, text);
-        lv_obj_center(caption);
-        if (fits) lv_obj_add_event_cb(button, on_slot_choice, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        else lv_obj_add_state(button, LV_STATE_DISABLED);
-    }
-    lv_obj_t *cancel = lv_button_create(overlay);
-    lv_obj_set_style_bg_opa(cancel, LV_OPA_TRANSP, 0);
-    lv_obj_t *caption = lv_label_create(cancel);
-    lv_obj_set_style_text_font(caption, UI_FONT_SMALL, 0);
-    lv_obj_set_style_text_color(caption, lv_color_hex(0x9AA3B5), 0);
-    lv_label_set_text(caption, "Annulla");
-    lv_obj_add_event_cb(cancel, on_slot_choice, LV_EVENT_CLICKED, (void *)(intptr_t)-2);
 }
 
 static void begin_install(const char *id, const char *slot)
@@ -341,7 +248,7 @@ static void install_confirmed(bool confirmed, void *arg)
     }
     else if (extapp_bay_size() > 0 && ui != NULL && !ui->selected.installed)
     {
-        slot_choice_open(id, ui->selected.binary_size);   /* new app: the user picks the slot */
+        slot_choice_open(id, ui->selected.binary_size, slot_chosen);   /* new app: the user picks the slot */
     }
     else
     {
@@ -560,7 +467,16 @@ static void show_catalog(market_ui_t *ui)
     market_status_t state;
     market_status(&state);
     lv_label_set_text(ui->status, state.message[0] != '\0' ? state.message : "App esterne dal tuo catalogo GitHub");
-    if (!sdcard_is_mounted())
+    if (extapp_bay_size() > 0)
+    {
+        extapp_t held[8];
+        int used = extapp_slot_apps(held, extapp_bay_size() < 8 ? extapp_bay_size() : 8);
+        char bay[96];
+        snprintf(bay, sizeof(bay), "Baia app: %d di %d partizioni occupate. Scegli tu dove installare.", used,
+                 extapp_bay_size());
+        ui_text(page, bay, true);
+    }
+    else if (!sdcard_is_mounted())
         ui_text(page, "Senza microSD c'è posto per una app alla volta: installarne un'altra la sostituisce.", true);
     if (market_development()) ui_text(page, "Il canale dev include versioni di prova.", true);
 
@@ -695,9 +611,13 @@ static void show_information(market_ui_t *ui)
                  entry->installed_version[0] ? entry->installed_version : "versione non indicata");
         ui_text(page, text, true);
     }
-    ui_text(page, sdcard_is_mounted() ? "L'app funziona dal suo firmware. Il download viene salvato sulla microSD." :
-                                        "L'app funziona dal suo firmware, scritto direttamente nella memoria app. "
-                                        "Sostituisce l'app installata prima.", true);
+    ui_text(page, extapp_bay_size() > 0 ? (sdcard_is_mounted()
+                                                ? "Scaricata sulla microSD e installata nella partizione che scegli: "
+                                                  "potrai reinstallarla anche senza rete."
+                                                : "Installata nella partizione della baia che scegli; le altre app restano.")
+                  : sdcard_is_mounted() ? "L'app funziona dal suo firmware. Il download viene salvato sulla microSD."
+                                        : "L'app funziona dal suo firmware, scritto direttamente nella memoria app. "
+                                          "Sostituisce l'app installata prima.", true);
     if (strcmp(entry->channel, "dev") == 0)
         ui_text(page, "Canale sviluppo: questa versione è ancora in verifica.", true);
     ui->status = ui_text(page, "", true);
@@ -882,7 +802,7 @@ static void deleted(lv_event_t *event)
 static bool back(void)
 {
     market_ui_t *ui = lv_obj_get_user_data(lv_screen_active());
-    if (s_choice != NULL)
+    if (slot_choice_active())
     {
         slot_choice_close();   /* back = cancel the slot choice */
         if (ui != NULL) ui->open_after_download = false;

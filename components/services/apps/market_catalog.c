@@ -1,5 +1,6 @@
 #include "services/market.h"
 #include "services/fw_version.h"
+#include "services/extapp.h"
 #include "cJSON.h"
 #include "sdkconfig.h"
 
@@ -128,6 +129,8 @@ esp_err_t market_parse_catalog(const char *text, const char *board,
         entry->color = 0x7B6CFF;
         cJSON *sdk = cJSON_GetObjectItemCaseSensitive(app, "sdk");
         entry->sdk = cJSON_IsNumber(sdk) && sdk->valueint >= 1 && sdk->valueint <= 99 ? sdk->valueint : 1;
+        /* A board with an app bay lists only builds that can live in a bay slot. */
+        if (extapp_bay_size() > 0 && entry->sdk < 2) continue;
         const char *color = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(app, "color"));
         if (color != NULL)
         {

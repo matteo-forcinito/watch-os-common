@@ -13,6 +13,7 @@ cjson, catalog = (Path(p).resolve() for p in sys.argv[1:3])
 work = Path(tempfile.mkdtemp(prefix='market-catalog-'))
 (work/'esp_err.h').write_text('typedef int esp_err_t;\n#define ESP_OK 0\n#define ESP_ERR_INVALID_ARG 1\n#define ESP_ERR_INVALID_RESPONSE 2\n#define ESP_ERR_NO_MEM 3\n')
 (work/'sdkconfig.h').write_text('#define CONFIG_WATCH_DEV_CONSOLE 1\n')
+(work/'esp_partition.h').write_text('typedef struct { char label[17]; unsigned size; } esp_partition_t;\n')
 (work/'test.c').write_text(r'''
 #include <assert.h>
 #include <stdio.h>
@@ -20,6 +21,7 @@ work = Path(tempfile.mkdtemp(prefix='market-catalog-'))
 #include <string.h>
 #include "services/market.h"
 #include "cJSON.h"
+int extapp_bay_size(void){return 0;}   /* host: a board without an app bay */
 int main(int argc,char **argv){
  assert(argc==2);FILE *f=fopen(argv[1],"rb");assert(f);fseek(f,0,SEEK_END);long n=ftell(f);rewind(f);
  char *text=calloc(n+1,1);assert(text);assert(fread(text,1,n,f)==n);fclose(f);

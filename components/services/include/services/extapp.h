@@ -31,6 +31,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 #include "esp_partition.h"
@@ -47,6 +48,7 @@ typedef struct
     size_t size;
     char version[32];
     bool in_slot;                 /* lives only in the app slot (no file to copy) */
+    uint8_t sdk;                  /* extapp_sdk generation of a card app (manifest "sdk"; 1 if not stated) */
 } extapp_t;
 
 int extapp_scan(extapp_t *out, int max);
@@ -93,6 +95,10 @@ void extapp_slot_forget(const esp_partition_t *slot);
 void extapp_note_launcher(void);
 /* The first app in an app slot (classic layout: the only one). */
 bool extapp_slot_app(extapp_t *out);
+/* Install a card app into an app bay slot (offline, from the card), without
+ * starting it. Blocking: run it in a task. progress(0..100) is optional. */
+esp_err_t extapp_install(const extapp_t *app, const esp_partition_t *slot, void (*progress)(int percent, void *ctx),
+                         void *ctx);
 /* Error text of the last failed launch. */
 const char *extapp_last_error(void);
 
