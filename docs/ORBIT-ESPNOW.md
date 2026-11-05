@@ -60,8 +60,25 @@ DHCP, server web sempre acceso, mDNS.
 - Con la radio Wi-Fi accesa il controller Bluetooth non trova memoria e non si avvia.
 - Il blocco più grande non torna a 56 KB dopo lo spegnimento: la memoria resta frammentata.
 
-Conseguenza: ESP-NOW da solo non libera memoria. Prima del bus serve la **fase 1b** (sezione 6).
-Restano da misurare 1.75C e AMOLED 1.8.
+**Fase 1, AMOLED 1.75C (5/11, stesso comando, firmware 1.18.0 + banco QA):**
+
+| Stato | Libera | Blocco più grande | Minimo dall'avvio | Bluetooth | Radio Wi-Fi |
+|---|---|---|---|---|---|
+| Inizio (Bluetooth già acceso) | 72 | 42 | 28 | sì | no |
+| ESP-NOW | 47 | 28 | **8** | sì | **non parte** |
+| Wi-Fi collegato | 47 | 28 | 8 | sì | **non parte** |
+| Fine | 47 | 28 | 8 | sì | no |
+
+- Il Bluetooth resta acceso anche quando il banco lo rilascia (la companion lo tiene attivo),
+  quindi qui si vede il caso opposto al Watcher: **con il Bluetooth acceso il Wi-Fi non parte**.
+- L'accensione fallita del Wi-Fi **non restituisce circa 25 KB** (72 -> 47 KB, blocco 42 -> 28 KB) e il
+  minimo scende a 8 KB: dopo un tentativo fallito il dispositivo resta con meno memoria fino al riavvio.
+- All'avvio, durante la sincronizzazione dell'ora, la connessione al router fallisce
+  (`Disconnected ... errore di connessione (8)`), coerente con la stessa mancanza di memoria.
+
+Conseguenza: ESP-NOW da solo non libera memoria. Prima del bus serve la **fase 1b** (sezione 6),
+compreso il rilascio completo della memoria quando l'avvio del Wi-Fi fallisce.
+Resta da misurare l'AMOLED 1.8.
 
 ## 3. Vincoli tecnici
 
