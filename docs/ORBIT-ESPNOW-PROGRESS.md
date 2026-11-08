@@ -557,3 +557,12 @@ Preservare le modifiche preesistenti, inclusa `apps/market/market_app.c`.
 - Pubblicazione6/6 job7fec25a6-3daa-4ee9-bcd0-f724113aae15 actualEXIT0. Audit remoto3038471b-3e68-43df-95c9-d879367a7632 actualEXIT0: binari pubblici identici ai locali, SHA/size cataloghi, manifest e tag sorgenti corrispondenti.
 - hardware-verified.json2 e ota-verified.json6 in .release-work/stable-1.18.1. Ripristinate preferenze VSCode e modifica QA market preesistenti; stashes/backup di sicurezza conservati.
 - Perimetro della release chiuso. Restano software futuro: sveglie condivise e ingressi residui della roadmap; verifiche hardware estese radio/audio/memoria. Non marcarli come completati dalla sola release.
+
+## Companion 0.5.5+17: APK ed EXE consegnabili
+
+- Pacchetti in `Orbit-Companion/dist`: `orbit-companion-0.5.5-android.apk` e `orbit-companion-0.5.5-windows-x64.zip`; ZIP completo con EXE, DLL, dati e runtime. Manifest e SHA256SUMS nella stessa cartella.
+- Android: run 42505823156, job Android e smoke emulatore riusciti, incluso aggiornamento dalla versione precedente. Firma originale, appid e versione verificati anche localmente. Il job Windows vecchio della stessa run era fallito; non dichiarare riuscita l'intera run.
+- Windows: build/package/avvio e chiusura locali riusciti. Run 42507853282 su commit 2f68e49 riuscita: analyzer pulito, 110 test superati, solo test hardware live escluso (ORBIT_DEVICE non impostato), build release e smoke pacchetto riusciti.
+- Sorgenti runtime dei pacchetti corrispondenti: Windows locale 902e2c2, APK e3de55c, CI finale 2f68e49; differenze successive solo test/workflow/documentazione. Provenienza distinta registrata nel manifest.
+- Verifica finale manifest/firme/hash job 685aa462-3ddd-4ae4-af8f-cb4c4157d23a actualEXIT0. Nessuna nuova release Companion pubblicata; sorgenti sul branch privato build/orbit-0.5.5. Preservato tools/test.py non pertinente.
+- Prossima attivita eventuale: collaudo companion 0.5.5 su telefono reale con firmware 1.18.1, BLE/ESP-NOW e scenari radio/audio; non sostituito dai test emulatore. Sveglie condivise ancora escluse.
