@@ -3,6 +3,8 @@ idf_component_register(
     SRCS
         "ble_companion.c"
         "ble_bridge.c"
+        "ble_ecos.c"
+        "ble_ecos_bus.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

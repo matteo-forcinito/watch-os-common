@@ -5,7 +5,7 @@ set(INTERNAL_SRCS "")
 set(INTERNAL_INCLUDES "")
 set(INTERNAL_PAGES "")
 if(CONFIG_WATCH_ECOS_PAIRING)
-    list(APPEND INTERNAL_SRCS "ecos/ecos_app.c")
+    list(APPEND INTERNAL_SRCS "ecos/ecos_app.c" "link/link_house.c" "link/link_family.c" "link/link_intercom.c" "link/link_routes.c")
 endif()
 if(CONFIG_APPKIT_HOSTED)
     list(APPEND INTERNAL_SRCS "agentdeck/app.c" "agentdeck/model.c" "agentdeck/critter.c" "agentdeck/hats.c" "agentdeck/panel.cpp")
@@ -88,6 +88,9 @@ idf_component_register(
         "battery/battery_app.c"
         "update/update_app.c"
         "link/link.c"
+        "link/link_orbit.c"
+        "link/link_gateway.c"
+        "link/link_sensor.c"
         "link/link_scene.c"
         ${INTERNAL_SRCS}
     INCLUDE_DIRS

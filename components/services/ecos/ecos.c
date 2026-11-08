@@ -12,6 +12,8 @@
 #include "core/settings.h"
 #include "ecos_wire.h"
 #include "ecos_internal.h"
+#include "ecos_bus.h"
+#include "freertos/idf_additions.h"
 #include "services/wifi.h"
 #include "core/sys.h"
 #include "esp_heap_caps.h"
@@ -75,6 +77,9 @@ typedef struct
     psa_key_id_t ephemeral;
     struct sockaddr_in destination;
     bool espnow;                 /* the transport of this window */
+    bool ble;
+    ecos_pair_ble_send_t ble_send;
+    void *ble_context;
     bool committed, selected, local_ok, remote_ok, saved, remote_saved;
     int64_t deadline, done_at;
     ecos_snapshot_t view;
@@ -84,6 +89,9 @@ static const char *TAG = "ecos";
 static portMUX_TYPE s_guard = portMUX_INITIALIZER_UNLOCKED;
 static EXT_RAM_BSS_ATTR ecos_snapshot_t s_view;
 static bool s_busy, s_cancel, s_confirm;
+static ecos_pair_ble_send_t s_ble_send;
+static void *s_ble_context;
+static unsigned s_ble_rx_users;
 
 static void id_text(const uint8_t mac[6], char out[13])
 {
@@ -294,9 +302,18 @@ static void send_packet(session_t *s, int fd, uint8_t kind)
     {
         return;
     }
-    if (s->espnow)
+    if (s->ble)
     {
-        esp_now_send(s_broadcast, frame, length);
+        if (!s->ble_send(frame, length, s->ble_context))
+        {
+            portENTER_CRITICAL(&s_guard);
+            s_cancel = true;
+            portEXIT_CRITICAL(&s_guard);
+        }
+    }
+    else if (s->espnow)
+    {
+        ecos_bus_send(s_broadcast, frame, length);
     }
     else
     {
@@ -430,13 +447,40 @@ static bool receive_packet(session_t *s, const uint8_t *p, size_t n, const struc
     return true;
 }
 
+static void close_pair_rx(void)
+{
+    portENTER_CRITICAL(&s_guard);
+    QueueHandle_t rx = s_rx;
+    s_rx = NULL;
+    portEXIT_CRITICAL(&s_guard);
+    if (rx == NULL) return;
+    for (;;)
+    {
+        portENTER_CRITICAL(&s_guard);
+        unsigned users = s_ble_rx_users;
+        portEXIT_CRITICAL(&s_guard);
+        if (users == 0) break;
+        vTaskDelay(1);
+    }
+    vQueueDeleteWithCaps(rx);
+}
+
 static void worker(void *arg)
 {
     uint32_t target_ip = (uint32_t)(uintptr_t)arg;
+    bool ble = target_ip == UINT32_MAX;
+    ecos_pair_ble_send_t ble_send = NULL;
+    void *ble_context = NULL;
+    portENTER_CRITICAL(&s_guard);
+    if (ble)
+    {
+        ble_send = s_ble_send;
+        ble_context = s_ble_context;
+    }
+    portEXIT_CRITICAL(&s_guard);
     session_t *s = heap_caps_calloc(1, sizeof(*s), MALLOC_CAP_SPIRAM);
     int fd = -1;
     bool wifi_held = false, fast_held = false, espnow_on = false;
-    int8_t tx_power = 0;
     const char *result = "Memoria insufficiente";
     if (s == NULL)
     {
@@ -450,16 +494,14 @@ static void worker(void *arg)
         goto done;
     }
     s->espnow = target_ip == 0;
+    s->ble = ble;
+    s->ble_send = ble_send;
+    s->ble_context = ble_context;
     if (s->espnow)
     {
         publish(s, "Accendo la radio...");
-        if (wifi_radio_acquire() != ESP_OK)
-        {
-            result = "Radio non disponibile (memoria): riprova";
-            goto done;
-        }
     }
-    else
+    else if (!s->ble)
     {
         publish(s, "Connessione al Wi-Fi di casa...");
         if (wifi_acquire(15000) != ESP_OK)
@@ -468,7 +510,7 @@ static void worker(void *arg)
             goto done;
         }
     }
-    wifi_held = true;
+    wifi_held = !s->espnow && !s->ble;
     if (!generate(s))
     {
         result = "Impossibile avviare la crittografia";
@@ -486,34 +528,43 @@ static void worker(void *arg)
             result = "Radio occupata: riprova";
             goto done;
         }
-        wifi_set_fast(true);   /* no modem sleep: frames would be missed */
-        fast_held = true;
-        s_rx = xQueueCreate(8, sizeof(radio_frame_t));
-        esp_now_peer_info_t peer = {.channel = 0, .ifidx = WIFI_IF_STA, .encrypt = false};
-        memcpy(peer.peer_addr, s_broadcast, 6);
-        if (s_rx == NULL || esp_now_init() != ESP_OK)
+        s_rx = xQueueCreateWithCaps(8, sizeof(radio_frame_t), MALLOC_CAP_SPIRAM);
+        if (s_rx == NULL || ecos_bus_open("EC01", on_radio, NULL, PAIRING_TX_POWER) != ESP_OK)
         {
             result = "ESP-NOW non disponibile";
             goto done;
         }
         espnow_on = true;
-        if (esp_now_register_recv_cb(on_radio) != ESP_OK || esp_now_add_peer(&peer) != ESP_OK)
+        wifi_set_fast(true);   /* no modem sleep: frames would be missed */
+        fast_held = true;
+        if (ecos_bus_peer(s_broadcast) != ESP_OK)
         {
             result = "ESP-NOW non disponibile";
             goto done;
         }
         if (!wifi_is_connected())
         {
-            wifi_radio_set_channel(1);   /* the meeting point */
+            uint8_t channel = wifi_radio_pinned_channel();
+            if (channel == 0) channel = wifi_radio_common_channel();
+            wifi_radio_set_channel(channel);   /* the common meeting point */
         }
         /* The two devices are usually side by side: at full power (20 dBm) the
          * receiver saturates and the frames are lost. 8 dBm still covers a room,
          * and keeps the pairing local. Restored at the end. */
-        if (esp_wifi_get_max_tx_power(&tx_power) == ESP_OK)
-        {
-            esp_wifi_set_max_tx_power(PAIRING_TX_POWER);
-        }
         publish(s, "Avvia Abbinamento anche sull'altro dispositivo, vicino: non servono Wi-Fi né internet");
+    }
+    else if (s->ble)
+    {
+        QueueHandle_t rx = xQueueCreateWithCaps(8, sizeof(radio_frame_t), MALLOC_CAP_SPIRAM);
+        if (rx == NULL)
+        {
+            result = "Memoria insufficiente per il collegamento Bluetooth";
+            goto done;
+        }
+        portENTER_CRITICAL(&s_guard);
+        s_rx = rx;
+        portEXIT_CRITICAL(&s_guard);
+        publish(s, "Confronta il codice con Orbit e conferma su entrambi");
     }
     else
     {
@@ -550,7 +601,7 @@ static void worker(void *arg)
             result = s->saved ? "Salvato qui; verifica l'esito sull'altro dispositivo" : "Abbinamento annullato";
             break;
         }
-        if (!s->espnow && !wifi_is_connected())
+        if (!s->espnow && !s->ble && !wifi_is_connected())
         {
             result = "Connessione Wi-Fi interrotta";
             break;
@@ -560,9 +611,9 @@ static void worker(void *arg)
         if (s->espnow && !s->committed && !wifi_is_connected() && esp_timer_get_time() >= next_hop)
         {
             hop = (hop + 1) % sizeof(s_hops);
-            wifi_radio_set_channel(s_hops[hop]);
+            bool moved = wifi_radio_set_channel(s_hops[hop]);
             next_hop = esp_timer_get_time() + HOP_DWELL_US;
-            next_send = 0;   /* announce at once on the new channel */
+            if (moved) next_send = 0;   /* announce at once on an allowed channel */
         }
         if (confirm && s->selected && !s->local_ok)
         {
@@ -603,7 +654,7 @@ static void worker(void *arg)
             next_send = esp_timer_get_time() + (s->espnow ? 300000 : 750000);
             publish(s, NULL);
         }
-        if (s->espnow)
+        if (s->espnow || s->ble)
         {
             radio_frame_t frame;
             bool bad = false;
@@ -651,21 +702,11 @@ done:
     {
         close(fd);
     }
-    if (tx_power != 0)
-    {
-        esp_wifi_set_max_tx_power(tx_power);
-    }
     if (espnow_on)
     {
-        esp_now_unregister_recv_cb();
-        esp_now_deinit();
+        ecos_bus_close("EC01");
     }
-    if (s_rx != NULL)
-    {
-        QueueHandle_t rx = s_rx;
-        s_rx = NULL;
-        vQueueDelete(rx);
-    }
+    close_pair_rx();
     if (fast_held)
     {
         wifi_set_fast(false);
@@ -693,31 +734,23 @@ done:
         mbedtls_platform_zeroize(s, sizeof(*s));
         free(s);
     }
+    /* Restore the family policy before allowing a new pairing to reserve its
+     * own suspension. An old worker must not undo a newer window's hold. */
+    ecos_link_suspend(false);
     portENTER_CRITICAL(&s_guard);
     snprintf(s_view.message, sizeof(s_view.message), "%s", result);
     s_busy = false;
+    s_ble_send = NULL;
+    s_ble_context = NULL;
     portEXIT_CRITICAL(&s_guard);
-    ecos_link_suspend(false);
     ESP_LOGI(TAG, "Pairing ended: %s", result);
     sys_heap_log("ecos stopped");
+    if (ble_send != NULL) ble_send(NULL, 0, ble_context);
     vTaskDelete(NULL);
 }
 
-esp_err_t ecos_pair_start(const char *peer_ip)
+static esp_err_t start_pair(uint32_t target, ecos_pair_ble_send_t send, void *context)
 {
-    struct in_addr address = {0};
-    if (peer_ip != NULL && peer_ip[0] != 0)
-    {
-        if (inet_pton(AF_INET, peer_ip, &address) != 1)
-        {
-            return ESP_ERR_INVALID_ARG;
-        }
-        uint32_t host = ntohl(address.s_addr);
-        if ((host >> 24) != 10 && (host >> 20) != 0xac1 && (host >> 16) != 0xc0a8)
-        {
-            return ESP_ERR_INVALID_ARG;
-        }
-    }
     portENTER_CRITICAL(&s_guard);
     if (s_busy)
     {
@@ -727,6 +760,8 @@ esp_err_t ecos_pair_start(const char *peer_ip)
     s_busy = true;
     s_cancel = false;
     s_confirm = false;
+    s_ble_send = send;
+    s_ble_context = context;
     s_view.running = true;
     s_view.comparing = s_view.local_ok = s_view.remote_ok = s_view.saved = false;
     s_view.code = 0;
@@ -735,16 +770,62 @@ esp_err_t ecos_pair_start(const char *peer_ip)
     snprintf(s_view.message, sizeof(s_view.message), "Avvio abbinamento...");
     portEXIT_CRITICAL(&s_guard);
     ecos_link_suspend(true);
-    if (!sys_task_create(worker, "ecos_pair", 6144, (void *)(uintptr_t)address.s_addr, 2, SYS_CORE_ANY))
+    if (!sys_task_create(worker, "ecos_pair", 6144, (void *)(uintptr_t)target, 2, SYS_CORE_ANY))
     {
         ecos_link_suspend(false);
         portENTER_CRITICAL(&s_guard);
         s_busy = s_view.running = false;
+        s_ble_send = NULL;
+        s_ble_context = NULL;
         snprintf(s_view.message, sizeof(s_view.message), "Memoria insufficiente");
         portEXIT_CRITICAL(&s_guard);
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+esp_err_t ecos_pair_start(const char *peer_ip)
+{
+    struct in_addr address = {0};
+    if (peer_ip != NULL && peer_ip[0] != 0)
+    {
+        if (inet_pton(AF_INET, peer_ip, &address) != 1) return ESP_ERR_INVALID_ARG;
+        uint32_t host = ntohl(address.s_addr);
+        if ((host >> 24) != 10 && (host >> 20) != 0xac1 && (host >> 16) != 0xc0a8)
+            return ESP_ERR_INVALID_ARG;
+    }
+    return start_pair(address.s_addr, NULL, NULL);
+}
+
+esp_err_t ecos_pair_ble_start(ecos_pair_ble_send_t send, void *context)
+{
+    if (send == NULL) return ESP_ERR_INVALID_ARG;
+    return start_pair(UINT32_MAX, send, context);
+}
+
+bool ecos_pair_ble_receive(const uint8_t *data, size_t length, void *context)
+{
+    if (data == NULL || !ecos_wire_valid(data, length)) return false;
+    portENTER_CRITICAL(&s_guard);
+    QueueHandle_t rx = s_ble_send != NULL && s_ble_context == context && s_busy && !s_cancel ? s_rx : NULL;
+    if (rx != NULL) ++s_ble_rx_users;
+    portEXIT_CRITICAL(&s_guard);
+    if (rx == NULL) return false;
+    radio_frame_t frame = {.length = (uint8_t)length};
+    memcpy(frame.mac, data + 5, 6);
+    memcpy(frame.data, data, length);
+    bool accepted = xQueueSend(rx, &frame, 0) == pdTRUE;
+    portENTER_CRITICAL(&s_guard);
+    --s_ble_rx_users;
+    portEXIT_CRITICAL(&s_guard);
+    return accepted;
+}
+
+void ecos_pair_ble_disconnect(void *context)
+{
+    portENTER_CRITICAL(&s_guard);
+    if (s_ble_send != NULL && s_ble_context == context && s_busy) s_cancel = true;
+    portEXIT_CRITICAL(&s_guard);
 }
 
 esp_err_t ecos_pair_confirm(const char *id, uint32_t code)

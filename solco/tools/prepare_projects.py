@@ -50,9 +50,9 @@ project(solco_''' + board + ''')
 ''', encoding="utf-8")
     (app / "main" / "CMakeLists.txt").write_text('''set(SOLCO_SHARED "${WATCH_OS_COMMON}/solco/main")
 idf_component_register(
-    SRCS "${SOLCO_SHARED}/main.c" "${SOLCO_SHARED}/install.c" "${SOLCO_SHARED}/engine.c" "${SOLCO_SHARED}/mix.c" "${SOLCO_SHARED}/vinyl.c" "${SOLCO_SHARED}/keylock.c" "${SOLCO_SHARED}/mp3.c" "${SOLCO_SHARED}/prepare.c" "${SOLCO_SHARED}/wav.c" "${SOLCO_SHARED}/studio.c" "${SOLCO_SHARED}/studio_motion.c" "${SOLCO_SHARED}/studio_clock.c" "${SOLCO_SHARED}/ui_kit.c" "${SOLCO_SHARED}/ui_decks.c" "${SOLCO_SHARED}/ui_master.c" "${SOLCO_SHARED}/ui_studio.c" "${SOLCO_SHARED}/link.c"
-    INCLUDE_DIRS "${SOLCO_SHARED}"
-    PRIV_REQUIRES hardware core ui extapp_sdk esp_timer nvs_flash app_update bootloader_support mbedtls fatfs esp_wifi esp_event
+    SRCS "${SOLCO_SHARED}/main.c" "${SOLCO_SHARED}/install.c" "${SOLCO_SHARED}/engine.c" "${SOLCO_SHARED}/mix.c" "${SOLCO_SHARED}/vinyl.c" "${SOLCO_SHARED}/keylock.c" "${SOLCO_SHARED}/mp3.c" "${SOLCO_SHARED}/prepare.c" "${SOLCO_SHARED}/wav.c" "${SOLCO_SHARED}/studio.c" "${SOLCO_SHARED}/studio_motion.c" "${SOLCO_SHARED}/studio_clock.c" "${SOLCO_SHARED}/ui_kit.c" "${SOLCO_SHARED}/ui_decks.c" "${SOLCO_SHARED}/ui_master.c" "${SOLCO_SHARED}/ui_studio.c" "${SOLCO_SHARED}/link.c" "${WATCH_OS_COMMON}/components/services/ecos/ecos_bus.c" "${WATCH_OS_COMMON}/components/services/ecos/ecos_bus_standalone.c"
+    INCLUDE_DIRS "${SOLCO_SHARED}" "${WATCH_OS_COMMON}/components/services/include" "${WATCH_OS_COMMON}/components/services/ecos"
+    PRIV_REQUIRES hardware core ui extapp_sdk esp_timer nvs_flash app_update bootloader_support mbedtls fatfs esp_wifi esp_event lwip
     EMBED_FILES "${SOLCO_SHARED}/../assets/pulse.pcm" "${SOLCO_SHARED}/../assets/chord.pcm" "${SOLCO_SHARED}/../assets/import-test.mp3"
 )
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror -O2)

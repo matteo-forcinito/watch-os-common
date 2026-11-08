@@ -7,11 +7,11 @@
 #include "link.h"
 #include "adpcm.h"
 #include "engine.h"
-#include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
-#include "esp_now.h"
+#include "ecos_bus.h"
+#include "services/wifi.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -96,7 +96,7 @@ static TaskHandle_t s_task;
 static SemaphoreHandle_t s_lock;
 static solco_link_stats_t s_st;
 static volatile bool s_stop;
-static bool s_wifi_up;
+static bool s_bus_up;
 static uint32_t s_seq;
 static peer_t s_peers[ECOS_PEERS];
 static int s_peer_count;
@@ -281,6 +281,52 @@ static int load_peers(bool open)
     return s_peer_count;
 }
 
+static void clear_link_keys(void)
+{
+    if (s_session_key)
+    {
+        psa_destroy_key(s_session_key);
+        s_session_key = 0;
+    }
+    for (int i = 0; i < s_peer_count; ++i)
+    {
+        if (s_peers[i].key)
+        {
+            psa_destroy_key(s_peers[i].key);
+            s_peers[i].key = 0;
+        }
+    }
+    memset(s_peers, 0, sizeof(s_peers));
+    s_peer_count = 0;
+    memset(s_session_raw, 0, sizeof(s_session_raw));
+    memset(s_join_nonce, 0, sizeof(s_join_nonce));
+    memset(s_cand_mac, 0, sizeof(s_cand_mac));
+    s_cand_session = 0;
+}
+
+static void publish_beacon_fields(int64_t anchor, uint32_t d_us, bool stream, bool all,
+                                  const uint8_t active[][6], int count);
+
+static void finish_link(void)
+{
+    s_stream_wanted = false;
+    publish_beacon_fields(0, s_d_us, false, true, NULL, 0);
+    if (s_bus_up)
+    {
+        wifi_radio_channel_release("SL02");
+        ecos_bus_close("SL02");
+        s_bus_up = false;
+    }
+    clear_link_keys();
+    if (s_lock)
+    {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s_st.role = SOLCO_LINK_OFF;
+        s_st.joined = false;
+        xSemaphoreGive(s_lock);
+    }
+}
+
 static peer_t *find_peer(const uint8_t mac[6])
 {
     for (int i = 0; i < s_peer_count; ++i)
@@ -327,7 +373,7 @@ static int header(uint8_t *f, uint8_t type, int64_t now)
 static void send_to(const uint8_t *mac, uint8_t *f, int len, psa_key_id_t key)
 {
     sign(key, f, len);
-    esp_err_t err = esp_now_send(mac, f, (size_t)(len + TAG));
+    esp_err_t err = ecos_bus_send_tag("SL02", mac, f, (size_t)(len + TAG));
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (err == ESP_OK)
         ++s_st.tx;
@@ -338,23 +384,19 @@ static void send_to(const uint8_t *mac, uint8_t *f, int len, psa_key_id_t key)
 
 static void ensure_peer(const uint8_t *mac)
 {
-    if (esp_now_is_peer_exist(mac))
+    if (ecos_bus_peer(mac) != ESP_OK)
         return;
-    esp_now_peer_info_t peer = {.channel = (uint8_t)s_st.channel, .ifidx = WIFI_IF_STA};
-    memcpy(peer.peer_addr, mac, 6);
-    if (esp_now_add_peer(&peer) == ESP_OK)
-    {
-        /* 24 Mbit/s OFDM: the stream takes ~5 % of the channel instead of ~50 %. */
-        esp_now_rate_config_t rate = {.phymode = WIFI_PHY_MODE_11G, .rate = WIFI_PHY_RATE_24M};
-        esp_now_set_peer_rate_config(mac, &rate);
-    }
+    /* 24 Mbit/s OFDM: the stream takes ~5 % of the channel instead of ~50 %. */
+    esp_now_rate_config_t rate = {.phymode = WIFI_PHY_MODE_11G, .rate = WIFI_PHY_RATE_24M};
+    esp_now_set_peer_rate_config(mac, &rate);
 }
 
 static void on_recv(const esp_now_recv_info_t *info, const uint8_t *data, int len)
 {
     static rx_t item; /* only the Wi-Fi task calls this: keep 600 B off its stack */
     item.t_rx = esp_timer_get_time();
-    if (len < HDR + TAG || len > FRAME_MAX || data[0] != 'S' || data[1] != 'L')
+    if (info == NULL || info->src_addr == NULL || data == NULL || len < HDR + TAG || len > FRAME_MAX ||
+        data[0] != 'S' || data[1] != 'L' || data[2] != VERSION)
         return;
     memcpy(item.mac, info->src_addr, 6);
     item.len = (uint16_t)len;
@@ -974,6 +1016,7 @@ static void link_task(void *arg)
         if (free_now < s_st.internal_min)
             s_st.internal_min = (uint32_t)free_now;
     }
+    finish_link();
     s_task = NULL;
     vTaskDelete(NULL);
 }
@@ -1008,49 +1051,41 @@ esp_err_t solco_link_start(solco_link_role_t role, int channel, bool open)
         s_slots[i].frame0 = UINT32_MAX;
     s_down.newest = 0;
     if (psa_crypto_init() != PSA_SUCCESS)
+    {
+        clear_link_keys();
         return ESP_FAIL;
+    }
     size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     uint32_t min_before = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     uint32_t step[5] = {0};
 #define MEM_STEP(i) (step[i] = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT))
     esp_err_t err = ESP_OK;
-    if (!s_wifi_up)
+    static const uint8_t rx_pattern[4] = {'S', 'L', VERSION, 0};
+    static const uint8_t rx_mask[4] = {0xff, 0xff, 0xff, 0};
+    if (!s_bus_up)
     {
-        err = esp_event_loop_create_default();
-        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
-            return err;
         MEM_STEP(0);
-        wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
-        config.nvs_enable = 0; /* nothing written to the shared NVS */
-        err = esp_wifi_init(&config);
+        err = ecos_bus_open_mask("SL02", rx_pattern, rx_mask, on_recv, NULL, 0);
         MEM_STEP(1);
-        if (err == ESP_OK)
-            err = esp_wifi_set_storage(WIFI_STORAGE_RAM);
-        if (err == ESP_OK)
-            err = esp_wifi_set_mode(WIFI_MODE_STA);
-        if (err == ESP_OK)
-            err = esp_wifi_start();
-        MEM_STEP(2);
-        if (err == ESP_OK)
-            err = esp_wifi_set_ps(WIFI_PS_NONE);
-        if (err == ESP_OK)
-            err = esp_now_init();
-        MEM_STEP(3);
-        if (err == ESP_OK)
-            err = esp_now_register_recv_cb(on_recv);
         if (err != ESP_OK)
         {
             ESP_LOGE(TAG_LOG, "radio start failed: %s", esp_err_to_name(err));
-            esp_now_deinit();
-            esp_wifi_stop();
-            esp_wifi_deinit();
+            clear_link_keys();
             return err;
         }
-        s_wifi_up = true;
+        s_bus_up = true;
     }
-    err = esp_wifi_set_channel((uint8_t)channel, WIFI_SECOND_CHAN_NONE);
-    if (err != ESP_OK)
+    MEM_STEP(2);
+    if (!wifi_radio_channel_reserve("SL02", (uint8_t)channel))
+    {
+        err = ESP_ERR_INVALID_STATE;
+        wifi_radio_channel_release("SL02");
+        ecos_bus_close("SL02");
+        s_bus_up = false;
+        clear_link_keys();
         return err;
+    }
+    MEM_STEP(3);
     int paired = load_peers(open);
     xSemaphoreTake(s_lock, portMAX_DELAY);
     memset(&s_st, 0, sizeof(s_st));
@@ -1082,6 +1117,14 @@ esp_err_t solco_link_start(solco_link_role_t role, int channel, bool open)
     {
         esp_fill_random(s_session_raw, sizeof(s_session_raw));
         s_session_key = import_key(s_session_raw);
+        if (!s_session_key)
+        {
+            clear_link_keys();
+            wifi_radio_channel_release("SL02");
+            ecos_bus_close("SL02");
+            s_bus_up = false;
+            return ESP_FAIL;
+        }
         s_st.session = esp_random() | 1;
         s_st.joined = true;
     }
@@ -1089,7 +1132,14 @@ esp_err_t solco_link_start(solco_link_role_t role, int channel, bool open)
     ensure_peer(broadcast);
     s_stop = false;
     if (xTaskCreatePinnedToCore(link_task, "solco_link", 6144, NULL, 15, &s_task, 0) != pdPASS)
+    {
+        s_task = NULL;
+        clear_link_keys();
+        wifi_radio_channel_release("SL02");
+        ecos_bus_close("SL02");
+        s_bus_up = false;
         return ESP_ERR_NO_MEM;
+    }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     MEM_STEP(4);
     memcpy(s_st.mem_step, step, sizeof(step));
@@ -1103,24 +1153,18 @@ esp_err_t solco_link_start(solco_link_role_t role, int channel, bool open)
 
 void solco_link_stop(void)
 {
+    bool had_task = s_task != NULL;
     s_stop = true;
     for (int i = 0; i < 50 && s_task; ++i)
         vTaskDelay(pdMS_TO_TICKS(10));
-    s_stream_wanted = false;
-    publish_beacon_fields(0, s_d_us, false, true, NULL, 0);
-    if (s_wifi_up)
+    if (s_task != NULL)
     {
-        esp_now_deinit();
-        esp_wifi_stop();
-        esp_wifi_deinit();
-        s_wifi_up = false;
+        ESP_LOGW(TAG_LOG, "link task has not stopped; retaining radio and keys");
+        return;
     }
-    if (s_lock)
+    if (!had_task)
     {
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        s_st.role = SOLCO_LINK_OFF;
-        s_st.joined = false;
-        xSemaphoreGive(s_lock);
+        finish_link();
     }
 }
 

@@ -11,6 +11,8 @@
 /* Input for the companion (taps on scenes, dial, Orbi). Any task. */
 void link_event(const char *type, int value);
 void link_event_text(const char *type, const char *value);
+void link_event_received(const char *from, const char *type, const char *text, int value);
+bool link_scene_input(const char *from, const char *type, const char *text, int value);
 
 /* Draws the scene described by `json` (takes ownership) in the lvgl task.
  * False when the scene is unknown or the UI queue is full. Any task. */
@@ -19,6 +21,9 @@ bool link_scene_post(cJSON *json);
 bool link_scene_busy(void);
 /* Orbit (the companion) polled this device in the last 30 s. */
 bool link_orbit_present(void);
+/* Existing HTTP/memo/hardware audio ownership; excludes the intercom's own
+ * reservation so its worker can acquire hardware after claiming the session. */
+bool link_audio_busy(void);
 
 /* Shows or hides the "microphone on" indicator. Any task. */
 void link_scene_mic(bool on);

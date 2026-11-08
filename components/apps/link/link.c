@@ -18,6 +18,10 @@
  */
 #include "apps_internal.h"
 #include "link_internal.h"
+#include "link_orbit.h"
+#include "link_gateway.h"
+#include "link_sensor.h"
+#include "link_orbit_json.h"
 #include "pet/pet.h"
 
 #include "core/lv_port.h"
@@ -28,13 +32,25 @@
 #include "hardware/microphone.h"
 #include "services/sound.h"
 #include "services/voice_memo.h"
+#include "services/motion.h"
 #include "services/web_server.h"
+#if CONFIG_WATCH_ECOS_PAIRING
+#include "services/ecos.h"
+#include "services/orbit_state.h"
+#include "services/ecos_orbit.h"
+#include "link_house.h"
+#include "link_family.h"
+#include "link_intercom.h"
+#include "link_routes.h"
+#include "companion/ble_companion.h"
+#endif
 
 #include "cJSON.h"
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_mac.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -64,22 +80,40 @@ typedef struct
     uint32_t seq;
     char type[12];
     char text[16];   /* string value, "" when the value is a number */
+    char from[13];   /* empty for local input */
     int32_t value;
 } link_event_t;
 
 static EXT_RAM_BSS_ATTR link_event_t s_events[EVENTS_MAX];
 static uint32_t s_event_seq;
 static portMUX_TYPE s_event_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool scene_apply(cJSON *json);
+static bool timer_apply(const char *action, int seconds);
+static bool voice_apply(const char *action, int i);
 
-static void push_event(const char *type, const char *text, int value)
+static void push_event_from(const char *from, const char *type, const char *text, int value)
 {
     taskENTER_CRITICAL(&s_event_mux);
     link_event_t *e = &s_events[s_event_seq % EVENTS_MAX];
     e->seq = ++s_event_seq;
     snprintf(e->type, sizeof(e->type), "%s", type);
     snprintf(e->text, sizeof(e->text), "%s", text != NULL ? text : "");
+    snprintf(e->from, sizeof(e->from), "%s", from != NULL ? from : "");
     e->value = value;
     taskEXIT_CRITICAL(&s_event_mux);
+}
+
+static void push_event(const char *type, const char *text, int value)
+{
+    push_event_from(NULL, type, text, value);
+#if CONFIG_WATCH_ECOS_PAIRING
+    link_routes_emit(type, text, value);
+#endif
+}
+
+void link_event_received(const char *from, const char *type, const char *text, int value)
+{
+    push_event_from(from, type, text, value);
 }
 
 void link_event(const char *type, int value)
@@ -160,6 +194,21 @@ static SemaphoreHandle_t s_audio_lock;  /* guards both rings' pointers */
 static atomic_bool s_speaker_running;
 static atomic_bool s_mic_running;
 
+bool link_audio_busy(void)
+{
+    return atomic_load(&s_speaker_running) || atomic_load(&s_mic_running) ||
+           voice_memo_busy() || audio_is_running() || sound_alarm_playing();
+}
+
+static bool intercom_busy(void)
+{
+#if CONFIG_WATCH_ECOS_PAIRING
+    return link_intercom_busy();
+#else
+    return false;
+#endif
+}
+
 static void audio_lock_init(void)
 {
     if (s_audio_lock == NULL)
@@ -230,7 +279,7 @@ static esp_err_t speaker_post(httpd_req_t *req)
     {
         return fail(req, "404 Not Found", "Nessun altoparlante");
     }
-    if (sound_alarm_playing() || atomic_load(&s_mic_running))
+    if (sound_alarm_playing() || atomic_load(&s_mic_running) || intercom_busy() || voice_memo_busy())
     {
         return fail(req, "409 Conflict", "Altoparlante occupato");
     }
@@ -346,7 +395,7 @@ static esp_err_t mic_post(httpd_req_t *req)
         atomic_store(&s_mic_wanted, false);
         return send_json(req, cJSON_CreateObject());
     }
-    if (atomic_load(&s_speaker_running) || sound_alarm_playing())
+    if (atomic_load(&s_speaker_running) || sound_alarm_playing() || intercom_busy() || voice_memo_busy())
     {
         return fail(req, "409 Conflict", "Audio occupato");
     }
@@ -464,7 +513,7 @@ static esp_err_t scene_post(httpd_req_t *req)
         cJSON_Delete(json);
         return fail(req, "400 Bad Request", "Serve {scene: ...}");
     }
-    bool ok = link_scene_post(json);   /* takes ownership */
+    bool ok = scene_apply(json);   /* takes ownership */
     if (!ok)
     {
         return fail(req, "400 Bad Request", "Scena sconosciuta o interfaccia occupata");
@@ -480,6 +529,49 @@ bool link_orbit_present(void)
     return seen && esp_timer_get_time() - seen < 30LL * 1000 * 1000;
 }
 
+static uint32_t events_copy(link_event_t copy[EVENTS_MAX])
+{
+    taskENTER_CRITICAL(&s_event_mux);
+    uint32_t last = s_event_seq;
+    memcpy(copy, s_events, sizeof(s_events));
+    taskEXIT_CRITICAL(&s_event_mux);
+    return last;
+}
+
+static uint32_t events_next(uint32_t since, link_event_t *next, uint32_t *first_out)
+{
+    taskENTER_CRITICAL(&s_event_mux);
+    uint32_t latest = s_event_seq;
+    uint32_t first = latest > EVENTS_MAX ? latest - EVENTS_MAX + 1 : 1;
+    memset(next, 0, sizeof(*next));
+    uint32_t start = since < first - 1 ? first : since + 1;
+    for (uint32_t seq = start; since < latest && seq <= latest; ++seq)
+    {
+        const link_event_t *candidate = &s_events[(seq - 1) % EVENTS_MAX];
+        if (candidate->seq == seq)
+        {
+            *next = *candidate;
+            break;
+        }
+        if (seq == latest) break;
+    }
+    taskEXIT_CRITICAL(&s_event_mux);
+    *first_out = first;
+    return latest;
+}
+
+static cJSON *event_json(const link_event_t *e)
+{
+    cJSON *j = cJSON_CreateObject();
+    if (j == NULL) return NULL;
+    cJSON_AddNumberToObject(j, "seq", e->seq);
+    cJSON_AddStringToObject(j, "type", e->type);
+    if (e->from[0] != '\0') cJSON_AddStringToObject(j, "from", e->from);
+    if (e->text[0] != '\0') cJSON_AddStringToObject(j, "value", e->text);
+    else cJSON_AddNumberToObject(j, "value", e->value);
+    return j;
+}
+
 static esp_err_t events_get(httpd_req_t *req)
 {
     atomic_store(&s_orbit_seen, esp_timer_get_time());
@@ -487,10 +579,7 @@ static esp_err_t events_get(httpd_req_t *req)
     cJSON *out = cJSON_CreateObject();
     cJSON *list = cJSON_AddArrayToObject(out, "events");
     link_event_t copy[EVENTS_MAX];
-    taskENTER_CRITICAL(&s_event_mux);
-    uint32_t last = s_event_seq;
-    memcpy(copy, s_events, sizeof(copy));
-    taskEXIT_CRITICAL(&s_event_mux);
+    uint32_t last = events_copy(copy);
     cJSON_AddNumberToObject(out, "seq", last);
     if (since >= 0)
     {
@@ -502,18 +591,7 @@ static esp_err_t events_get(httpd_req_t *req)
             {
                 continue;
             }
-            cJSON *j = cJSON_CreateObject();
-            cJSON_AddNumberToObject(j, "seq", e->seq);
-            cJSON_AddStringToObject(j, "type", e->type);
-            if (e->text[0] != '\0')
-            {
-                cJSON_AddStringToObject(j, "value", e->text);
-            }
-            else
-            {
-                cJSON_AddNumberToObject(j, "value", e->value);
-            }
-            cJSON_AddItemToArray(list, j);
+            cJSON_AddItemToArray(list, event_json(e));
         }
     }
     return send_json(req, out);
@@ -537,6 +615,21 @@ static cJSON *timer_json(void)
     return out;
 }
 
+/* Shared command paths for HTTP and the bounded EL02 RPC. */
+static bool scene_apply(cJSON *json)
+{
+    return link_scene_post(json); /* takes ownership */
+}
+
+static bool timer_apply(const char *action, int seconds)
+{
+    if (action == NULL) return false;
+    lv_port_lock();
+    bool ok = timer_remote(action, seconds);
+    lv_port_unlock();
+    return ok;
+}
+
 static esp_err_t timer_get(httpd_req_t *req)
 {
     return send_json(req, timer_json());
@@ -547,13 +640,7 @@ static esp_err_t timer_post(httpd_req_t *req)
     cJSON *json = read_json(req, 128);
     const char *action = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "action"));
     const cJSON *seconds = cJSON_GetObjectItemCaseSensitive(json, "seconds");
-    bool ok = false;
-    if (action != NULL)
-    {
-        lv_port_lock();
-        ok = timer_remote(action, cJSON_IsNumber(seconds) ? seconds->valueint : 0);
-        lv_port_unlock();
-    }
+    bool ok = timer_apply(action, cJSON_IsNumber(seconds) ? seconds->valueint : 0);
     cJSON_Delete(json);
     if (!ok)
     {
@@ -604,8 +691,20 @@ static esp_err_t voice_post(httpd_req_t *req)
     const char *action = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(json, "action"));
     const cJSON *index = cJSON_GetObjectItemCaseSensitive(json, "index");
     int i = cJSON_IsNumber(index) ? index->valueint : -1;
+    bool ok = voice_apply(action, i);
+    cJSON_Delete(json);
+    if (!ok)
+    {
+        return fail(req, "409 Conflict", "Comando non eseguito: audio occupato o memo inesistente");
+    }
+    return send_json(req, cJSON_CreateObject());
+}
+
+static bool voice_apply(const char *action, int i)
+{
+    if (!microphone_supported()) return false;
     bool ok = false;
-    if (action != NULL && (atomic_load(&s_mic_running) || atomic_load(&s_speaker_running)) && strcmp(action, "stop") != 0)
+    if (action != NULL && (atomic_load(&s_mic_running) || atomic_load(&s_speaker_running) || intercom_busy()) && strcmp(action, "stop") != 0)
     {
         ok = false;
     }
@@ -626,13 +725,120 @@ static esp_err_t voice_post(httpd_req_t *req)
     {
         ok = voice_memo_delete(i);
     }
-    cJSON_Delete(json);
-    if (!ok)
-    {
-        return fail(req, "409 Conflict", "Comando non eseguito: audio occupato o memo inesistente");
-    }
-    return send_json(req, cJSON_CreateObject());
+    return ok;
 }
+
+static bool orbit_scene(cJSON *json)
+{
+    return scene_apply(json);
+}
+
+static cJSON *orbit_info(void)
+{
+    const board_info_t *board = board_info();
+    cJSON *out = cJSON_CreateObject();
+    if (out != NULL)
+    {
+        cJSON_AddNumberToObject(out, "w", board->width);
+        cJSON_AddNumberToObject(out, "h", board->height);
+        cJSON_AddBoolToObject(out, "round", board->round);
+        cJSON_AddBoolToObject(out, "voice", microphone_supported());
+        cJSON_AddBoolToObject(out, "knob", board->has_knob);
+    }
+    return out;
+}
+
+static cJSON *orbit_sensor(const char *part)
+{
+    motion_snapshot_t sample = {0};
+    motion_snapshot(&sample);
+    int64_t now = esp_timer_get_time();
+    int64_t age = sample.sample_monotonic_us > 0 && now >= sample.sample_monotonic_us ?
+                  (now - sample.sample_monotonic_us) / 1000 : -1;
+    return link_sensor_json(part, imu_supported(), sample.running, sample.valid, age,
+                             sample.sample.acceleration_g, sample.sample.angular_dps, sample.sample.temperature_c);
+}
+
+static esp_err_t sensor_get(httpd_req_t *req)
+{
+    cJSON *command = link_gateway_command(req->uri, NULL);
+    const char *part = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(command, "part"));
+    cJSON *out = part != NULL ? orbit_sensor(part) : NULL;
+    cJSON_Delete(command);
+    return out != NULL ? send_json(req, out) : fail(req, "400 Bad Request", "Sensore richiesto non valido");
+}
+
+static bool orbit_timer(const char *action, int seconds, link_orbit_timer_state_t *state)
+{
+    if (action != NULL && !timer_apply(action, seconds)) return false;
+    timer_remote_t t;
+    lv_port_lock();
+    timer_remote_state(&t);
+    lv_port_unlock();
+    *state = (link_orbit_timer_state_t){
+        .countdown_running = t.countdown_running,
+        .countdown_ringing = t.countdown_ringing,
+        .watch_running = t.watch_running,
+        .countdown_total_s = t.countdown_total_s,
+        .countdown_remaining_s = t.countdown_remaining_s,
+        .watch_elapsed_ms = t.watch_elapsed_ms,
+    };
+    return true;
+}
+
+static void orbit_events(uint32_t since, uint32_t *latest, uint32_t *first, link_orbit_event_t *next)
+{
+    link_event_t event;
+    *latest = events_next(since, &event, first);
+    next->seq = event.seq;
+    memcpy(next->type, event.type, sizeof(next->type));
+    memcpy(next->text, event.text, sizeof(next->text));
+    memcpy(next->from, event.from, sizeof(next->from));
+    next->value = event.value;
+    atomic_store(&s_orbit_seen, esp_timer_get_time());
+}
+
+static bool orbit_memo_supported(void)
+{
+    return microphone_supported();
+}
+
+static bool orbit_memo(const char *action, int index, link_orbit_memo_state_t *state)
+{
+    if (action != NULL) return voice_apply(action, index);
+    voice_memo_snapshot_t *v = heap_caps_malloc(sizeof(*v), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (v == NULL) return false;
+    voice_memo_snapshot(v);
+    state->phase = v->phase;
+    state->elapsed_ms = v->elapsed_ms;
+    state->duration_ms = v->duration_ms;
+    memcpy(state->levels, v->levels, sizeof(state->levels));
+    state->selected = v->selected;
+    state->count = v->count;
+    state->found = index >= 0 && index < v->count && index < VOICE_MEMO_LIST_SIZE;
+    if (state->found) voice_memo_format_name(v->names[index], state->name, sizeof(state->name));
+    free(v);
+    return true;
+}
+
+static const link_orbit_ops_t s_orbit_ops = {
+    .info = orbit_info,
+    .sensor = orbit_sensor,
+#if CONFIG_WATCH_ECOS_PAIRING
+    .intercom = link_intercom_control,
+    .route = link_routes_config,
+    .input = link_scene_input,
+#endif
+    .scene = orbit_scene,
+#if CONFIG_WATCH_ECOS_PAIRING
+    .house_scene = link_house_scene,
+    .house_timer = link_house_timer,
+#endif
+    .timer = orbit_timer,
+    .events = orbit_events,
+    .memo_supported = orbit_memo_supported,
+    .memo = orbit_memo,
+};
 
 static esp_err_t pets_get(httpd_req_t *req)
 {
@@ -645,12 +851,49 @@ static esp_err_t pets_post(httpd_req_t *req)
     cJSON *out=pet_command(in,&error); cJSON_Delete(in);
     return out?send_json(req,out):fail(req,"409 Conflict",error);
 }
+#if CONFIG_WATCH_ECOS_PAIRING
+static esp_err_t route_post(httpd_req_t *req)
+{
+    cJSON *request = read_json(req, 128);
+    cJSON *out = link_routes_config(request);
+    cJSON_Delete(request);
+    return out != NULL ? send_json(req, out) : fail(req, "400 Bad Request", "Regola input non valida");
+}
+
+static esp_err_t family_get(httpd_req_t *req)
+{
+    cJSON *out = link_family_snapshot();
+    if (out == NULL) return fail(req, "503 Service Unavailable", "Memoria insufficiente");
+    return send_json(req, out);
+}
+
+static esp_err_t family_relay(httpd_req_t *req)
+{
+    cJSON *envelope = read_json(req, 1400);
+    int status = 200;
+    cJSON *out = link_family_relay(envelope, &status);
+    cJSON_Delete(envelope);
+    if (out == NULL) return fail(req, "503 Service Unavailable", "Memoria insufficiente");
+    const char *status_text = status == 400 ? "400 Bad Request" : status == 404 ? "404 Not Found" :
+                              status == 409 ? "409 Conflict" : status == 413 ? "413 Payload Too Large" :
+                              status == 504 ? "504 Gateway Timeout" : status == 200 ? "200 OK" : "503 Service Unavailable";
+    httpd_resp_set_status(req, status_text);
+    return send_json(req, out);
+}
+#endif
+
 static void register_routes(httpd_handle_t server)
 {
     static const httpd_uri_t routes[] = {
         {.uri = "/api/orbi", .method = HTTP_GET, .handler = pets_get},
         {.uri = "/api/orbi", .method = HTTP_POST, .handler = pets_post},
         {.uri = "/api/link", .method = HTTP_GET, .handler = link_get},
+        {.uri = "/api/link/sensors", .method = HTTP_GET, .handler = sensor_get},
+#if CONFIG_WATCH_ECOS_PAIRING
+        {.uri = "/api/link/family", .method = HTTP_GET, .handler = family_get},
+        {.uri = "/api/link/relay", .method = HTTP_POST, .handler = family_relay},
+        {.uri = "/api/link/route", .method = HTTP_POST, .handler = route_post},
+#endif
         {.uri = "/api/link/scene", .method = HTTP_POST, .handler = scene_post},
         {.uri = "/api/link/events", .method = HTTP_GET, .handler = events_get},
         {.uri = "/api/link/speaker", .method = HTTP_POST, .handler = speaker_post},
@@ -667,8 +910,81 @@ static void register_routes(httpd_handle_t server)
     }
 }
 
+#if CONFIG_WATCH_ECOS_PAIRING
+static bool orbit_ble_api(const char *path, const char *body, uint8_t **reply, size_t *length, int *status)
+{
+    bool family = strcmp(path, "/api/link/family") == 0;
+    bool relay = strcmp(path, "/api/link/relay") == 0;
+    cJSON *input = body != NULL ? link_orbit_parse_json_limit((const uint8_t *)body, strlen(body), 1400) : NULL;
+    cJSON *out = NULL;
+    *status = 200;
+    if (body != NULL && input == NULL)
+    {
+        /* Let unrelated paths retain their existing parser/HTTP behavior. */
+        if (!family && !relay) return false;
+        *status = 400;
+        out = cJSON_CreateObject();
+    }
+    else if (family)
+    {
+        if (body == NULL) out = link_family_snapshot();
+        else
+        {
+            *status = 405;
+            out = cJSON_CreateObject();
+            if (out != NULL) cJSON_AddStringToObject(out, "error", "GET richiesto");
+        }
+    }
+    else if (relay)
+    {
+        out = link_family_relay(input, status);
+    }
+    else
+    {
+        cJSON *command = link_gateway_command(path, input);
+        if (command == NULL) { cJSON_Delete(input); return false; }
+        char *text = cJSON_PrintUnformatted(command);
+        cJSON_Delete(command);
+        uint8_t answer[LINK_ORBIT_MAX];
+        size_t count = text != NULL ? link_orbit_dispatch(NULL, (const uint8_t *)text, strlen(text), answer, sizeof(answer)) : 0;
+        cJSON_free(text);
+        out = count > 0 ? link_orbit_parse_json(answer, count) : NULL;
+        if (out != NULL && (cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(out, "ok")) ||
+                            cJSON_GetObjectItemCaseSensitive(out, "error") != NULL)) *status = 409;
+        out = link_gateway_response(path, out);
+    }
+    cJSON_Delete(input);
+    char *encoded = out != NULL ? cJSON_PrintUnformatted(out) : NULL;
+    cJSON_Delete(out);
+    *reply = (uint8_t *)encoded;
+    *length = encoded != NULL ? strlen(encoded) : 0;
+    return true;
+}
+
+static size_t orbit_dispatch(const char *from, const uint8_t *request, size_t length,
+                             uint8_t *reply, size_t max)
+{
+    if (length >= 4 && memcmp(request, "OS01", 4) == 0)
+        return orbit_state_handle_rpc(from, request, length, reply, max);
+    return link_orbit_dispatch(from, request, length, reply, max);
+}
+#endif
+
 void link_init(void)
 {
     audio_lock_init();
+    link_orbit_set_ops(&s_orbit_ops);
     web_server_add_routes(register_routes);
+#if CONFIG_WATCH_ECOS_PAIRING
+    ecos_family_set_orbit_handler(orbit_dispatch);
+    link_intercom_init();
+    uint8_t mac[6];
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK)
+    {
+        char id[13];
+        snprintf(id, sizeof(id), "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        link_routes_init(id);
+    }
+    ble_companion_set_api_handler(orbit_ble_api);
+#endif
 }

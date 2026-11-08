@@ -28,6 +28,7 @@
 #include "ui_kit.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdatomic.h>
 
 typedef struct
 {
@@ -223,7 +224,7 @@ void solco_master_create(lv_obj_t *root)
  * (member: finds the hub on the kit channel), SCOLLEGA. Start/stop run on the
  * system worker (Wi-Fi bring-up must not stall the UI); the last role is kept
  * in Solco's own NVS namespace, written only on these explicit actions. */
-#define KIT_CHANNEL 6
+static _Atomic uint8_t s_kit_channel = 1;
 #define KIT_SEARCH_MS 15000
 
 static lv_obj_t *s_kit, *k_role, *k_line[4], *k_note;
@@ -239,7 +240,18 @@ static void kit_job(void *arg)
 {
     int role = (int)(intptr_t)arg;
     solco_link_stop();
-    s_kit_err = role ? solco_link_start((solco_link_role_t)role, KIT_CHANNEL, false) : ESP_OK;
+    /* The external app shares NVS with the launcher, including the stable
+     * family channel. Read once in this job, never on a UI refresh tick. */
+    uint8_t channel = 1;
+    nvs_handle_t channel_store;
+    if (nvs_open("wifi", NVS_READONLY, &channel_store) == ESP_OK)
+    {
+        uint8_t saved = 0;
+        if (nvs_get_u8(channel_store, "channel", &saved) == ESP_OK && saved >= 1 && saved <= 13) channel = saved;
+        nvs_close(channel_store);
+    }
+    s_kit_channel = channel;
+    s_kit_err = role ? solco_link_start((solco_link_role_t)role, channel, false) : ESP_OK;
     nvs_handle_t h;
     if (nvs_open("solco", NVS_READWRITE, &h) == ESP_OK)
     {
@@ -379,7 +391,7 @@ static void kit_refresh(void)
         snprintf(t, sizeof(t), "HUB %02X:%02X // ACCOPPIATI %d // CANALE %d", l->hub_mac[4], l->hub_mac[5],
                  l->peers_paired, l->channel);
     else
-        snprintf(t, sizeof(t), "NESSUN COLLEGAMENTO // CANALE %d", KIT_CHANNEL);
+        snprintf(t, sizeof(t), "NESSUN COLLEGAMENTO // CANALE %d", (int)s_kit_channel);
     sk_set_text(k_line[0], t);
     bool member = l->role == SOLCO_LINK_MEMBER;
     if (member)

@@ -238,20 +238,32 @@ bool timer_remote(const char *action, int seconds)
                 return false;
             }
         }
+        esp_err_t stop_err = esp_timer_stop(s_countdown);
+        if (stop_err != ESP_OK && stop_err != ESP_ERR_INVALID_STATE)
+        {
+            return false;
+        }
         sound_alarm_stop();
-        esp_timer_stop(s_countdown);
         s_countdown_minutes = seconds / 60 > 0 ? (seconds / 60 > 120 ? 120 : seconds / 60) : 1;
         s_countdown_duration_us = (int64_t)seconds * 1000000;
         s_countdown_end_us = esp_timer_get_time() + s_countdown_duration_us;
-        return esp_timer_start_once(s_countdown, (uint64_t)s_countdown_duration_us) == ESP_OK;
+        if (esp_timer_start_once(s_countdown, (uint64_t)s_countdown_duration_us) != ESP_OK)
+        {
+            s_countdown_end_us = 0;
+            s_countdown_duration_us = 0;
+            return false;
+        }
+        return true;
     }
     if (strcmp(action, "stop") == 0)
     {
-        sound_alarm_stop();
+        esp_err_t stop_err = ESP_ERR_INVALID_STATE;
         if (s_countdown != NULL)
         {
-            esp_timer_stop(s_countdown);
+            stop_err = esp_timer_stop(s_countdown);
         }
+        if (stop_err != ESP_OK && stop_err != ESP_ERR_INVALID_STATE) return false;
+        sound_alarm_stop();
         s_countdown_end_us = 0;
         s_countdown_duration_us = 0;
         return true;

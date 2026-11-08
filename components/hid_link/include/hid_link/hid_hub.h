@@ -69,6 +69,10 @@ esp_err_t hid_hub_start(const char *name);
 /* Paired watches (hub: satellites; satellite: its hub), with link state. */
 int hid_hub_peers(hid_hub_peer_info_t *out, int max);
 esp_err_t hid_hub_forget(int index);
+/* Explicit HID grant using an existing ECOS pair. Both devices must grant
+ * each other in Remote. Saved only; restart the app to apply the change. */
+int hid_hub_family_peers(hid_hub_peer_info_t *out, int max);
+esp_err_t hid_hub_family_authorize(const uint8_t mac[6]);
 
 /* Pairing. Satellite: hubs found while searching, then pick one. */
 esp_err_t hid_hub_pair_open(void);

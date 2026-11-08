@@ -696,6 +696,50 @@ bool link_scene_post(cJSON *json)
     return true;
 }
 
+typedef struct
+{
+    char from[13], type[12], text[16];
+    int value;
+} input_job_t;
+
+static void input_apply(void *arg)
+{
+    input_job_t *job = arg;
+    if (strcmp(job->type, "dial") == 0 && s_current == SCENE_DIAL)
+    {
+        int64_t next = (int64_t)s_dial_value + (int64_t)job->value * 2;
+        s_dial_value = next < 0 ? 0 : next > 100 ? 100 : (int)next;
+        dial_show();
+    }
+    else if ((strcmp(job->type, "dial_done") == 0 && s_current == SCENE_DIAL) ||
+             (strcmp(job->type, "tap") == 0 && (s_current == SCENE_TEXT || s_current == SCENE_LIGHT)))
+    {
+        clear_scene();
+    }
+    else if (strcmp(job->type, "orbi") == 0 && s_current == SCENE_ORBI && s_orbi != NULL)
+    {
+        orbi_view_poke(s_orbi);
+    }
+    /* Store the authenticated source, without emitting another routed event. */
+    link_event_received(job->from, job->type, job->text[0] != '\0' ? job->text : NULL, job->value);
+    free(job);
+}
+
+bool link_scene_input(const char *from, const char *type, const char *text, int value)
+{
+    if (from == NULL || strlen(from) != 12 || type == NULL || strlen(type) >= 12 ||
+        (text != NULL && (text[0] == '\0' || strlen(text) >= 16))) return false;
+    if (strcmp(type, "tap") && strcmp(type, "dial") && strcmp(type, "dial_done") && strcmp(type, "orbi")) return false;
+    input_job_t *job = heap_caps_calloc(1, sizeof(*job), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (job == NULL) return false;
+    memcpy(job->from, from, 13);
+    snprintf(job->type, sizeof(job->type), "%s", type);
+    if (text != NULL) snprintf(job->text, sizeof(job->text), "%s", text);
+    job->value = value;
+    if (!ui_async(input_apply, job)) { free(job); return false; }
+    return true;
+}
+
 /* ------------------------------------------------------- mic indicator */
 
 static void mic_apply(void *arg)

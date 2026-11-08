@@ -16,6 +16,7 @@
  * the connection interval is shortened, then relaxed again for battery.
  */
 #include "ble_bridge.h"
+#include "companion/ble_companion.h"
 
 #include "core/sys.h"
 #include "services/web_server.h"
@@ -36,8 +37,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *TAG = "ble_api";
-
 #define PATH_MAX_LEN     200
 #define BODY_MAX_LEN     1400
 #define REPLY_MAX        (96 * 1024)   /* bigger answers need Wi-Fi */
@@ -55,6 +54,7 @@ typedef struct
 static QueueHandle_t s_queue;
 static atomic_bool s_worker;
 static bridge_send_fn_t s_send;
+static _Atomic(ble_api_handler_t) s_api_handler;
 static uint16_t s_fast_conn = BLE_HS_CONN_HANDLE_NONE;   /* link currently sped up */
 
 static void reply_error(uint32_t id, int status, const char *message)
@@ -90,8 +90,65 @@ static void link_speed(uint16_t conn, bool fast)
     ble_gap_update_params(conn, &params);
 }
 
-static void run(request_t *r)
+static void send_response(uint32_t id, int status, const uint8_t *reply, int total)
 {
+    int chunks = total == 0 ? 1 : (total + CHUNK_RAW - 1) / CHUNK_RAW;
+    char *line = malloc(1024);
+    if (line == NULL) { reply_error(id, 503, "Memoria insufficiente"); return; }
+    for (int i = 0; i < chunks; i++)
+    {
+        int start = i * CHUNK_RAW;
+        int length = total - start < CHUNK_RAW ? total - start : CHUNK_RAW;
+        if (length < 0)
+        {
+            length = 0;
+        }
+        int head = snprintf(line, 1024, "{\"t\":\"api\",\"id\":%lu,\"s\":%d,\"i\":%d,\"n\":%d,\"d\":\"",
+                            (unsigned long)id, status, i, chunks);
+        size_t written = 0;
+        mbedtls_base64_encode((unsigned char *)line + head, 1024 - head - 4, &written, reply + start, (size_t)length);
+        snprintf(line + head + written, 1024 - head - written, "\"}\n");
+        if (!s_send(line))
+        {
+            break;   /* disconnected: drop the rest */
+        }
+    }
+    free(line);
+}
+
+void ble_companion_set_api_handler(ble_api_handler_t handler)
+{
+    atomic_store(&s_api_handler, handler);
+}
+
+static bool run_direct(request_t *r)
+{
+    ble_api_handler_t handler = atomic_load(&s_api_handler);
+    if (handler == NULL) return false;
+    uint8_t *reply = NULL;
+    size_t length = 0;
+    int status = 500;
+    bool handled = handler(r->path, r->body, &reply, &length, &status);
+    if (handled)
+    {
+        if (reply == NULL || length > REPLY_MAX || status < 100 || status > 599)
+            reply_error(r->id, 503, "Risposta non disponibile");
+        else send_response(r->id, status, reply, (int)length);
+    }
+    free(reply);
+    return handled;
+}
+
+static void run(request_t *r, bool *local, int64_t *last_local)
+{
+    if (run_direct(r)) return;
+    *last_local = esp_timer_get_time();
+    if (!*local) *local = web_server_start_local() == ESP_OK;
+    if (!*local)
+    {
+        reply_error(r->id, 503, "Servizio locale non avviato");
+        return;
+    }
     char url[PATH_MAX_LEN + 24];
     snprintf(url, sizeof(url), "http://127.0.0.1%s", r->path);
     char key[33];
@@ -159,51 +216,34 @@ static void run(request_t *r)
         return;
     }
 
-    int chunks = total == 0 ? 1 : (total + CHUNK_RAW - 1) / CHUNK_RAW;
-    char *line = malloc(1024);
-    for (int i = 0; line != NULL && i < chunks; i++)
-    {
-        int start = i * CHUNK_RAW;
-        int length = total - start < CHUNK_RAW ? total - start : CHUNK_RAW;
-        if (length < 0)
-        {
-            length = 0;
-        }
-        int head = snprintf(line, 1024, "{\"t\":\"api\",\"id\":%lu,\"s\":%d,\"i\":%d,\"n\":%d,\"d\":\"",
-                            (unsigned long)r->id, status, i, chunks);
-        size_t written = 0;
-        mbedtls_base64_encode((unsigned char *)line + head, 1024 - head - 4, &written, reply + start, (size_t)length);
-        snprintf(line + head + written, 1024 - head - written, "\"}\n");
-        if (!s_send(line))
-        {
-            break;   /* disconnected: drop the rest */
-        }
-    }
-    free(line);
+    send_response(r->id, status, reply, total);
     free(reply);
 }
 
 static void worker(void *arg)
 {
     (void)arg;
-    bool local = web_server_start_local() == ESP_OK;
-    if (!local)
-    {
-        ESP_LOGW(TAG, "Local web service not started");
-    }
+    bool local = false;
+    int64_t last_local = 0;
     request_t *r = NULL;
     uint16_t conn = BLE_HS_CONN_HANDLE_NONE;
-    while (xQueueReceive(s_queue, &r, pdMS_TO_TICKS(IDLE_EXIT_US / 1000)) == pdTRUE)
+    while (true)
     {
+        if (xQueueReceive(s_queue, &r, pdMS_TO_TICKS(IDLE_EXIT_US / 1000)) != pdTRUE)
+        {
+            /* Hand ownership back before checking queued arrivals: a request
+             * racing idle shutdown must either keep this worker or start one. */
+            atomic_store(&s_worker, false);
+            if (uxQueueMessagesWaiting(s_queue) > 0 && !atomic_exchange(&s_worker, true)) continue;
+            break;
+        }
         conn = r->conn;
         link_speed(conn, true);
-        if (local)
+        run(r, &local, &last_local);
+        if (local && esp_timer_get_time() - last_local >= IDLE_EXIT_US)
         {
-            run(r);
-        }
-        else
-        {
-            reply_error(r->id, 503, "Servizio locale non avviato");
+            web_server_stop();
+            local = false;
         }
         free(r->body);
         free(r);
@@ -213,7 +253,6 @@ static void worker(void *arg)
     {
         web_server_stop();
     }
-    atomic_store(&s_worker, false);
     vTaskDelete(NULL);
 }
 

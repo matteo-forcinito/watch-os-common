@@ -27,6 +27,7 @@ static EXT_RAM_BSS_ATTR alarm_t s_alarms[ALARM_MAX];
 static int s_count = 0;
 static SemaphoreHandle_t s_mutex = NULL;
 static StaticSemaphore_t s_mutex_buffer;
+static portMUX_TYPE s_mutex_init = portMUX_INITIALIZER_UNLOCKED;
 static esp_timer_handle_t s_timer = NULL;
 static alarm_ring_cb_t s_on_ring = NULL;
 
@@ -41,10 +42,12 @@ static time_t s_last_fired_minute = 0;
  */
 static void lock(void)
 {
+    portENTER_CRITICAL(&s_mutex_init);
     if (s_mutex == NULL)
     {
         s_mutex = xSemaphoreCreateMutexStatic(&s_mutex_buffer);
     }
+    portEXIT_CRITICAL(&s_mutex_init);
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 }
@@ -56,18 +59,27 @@ static void unlock(void)
 
 /* ------------------------------------------------------------ storage */
 
-static void save(void)
+static esp_err_t save(void)
 {
     nvs_handle_t nvs;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
 
-    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
+    if (err != ESP_OK)
     {
-        nvs_set_blob(nvs, NVS_KEY, s_alarms, sizeof(alarm_t) * (size_t)s_count);
-        nvs_commit(nvs);
-        nvs_close(nvs);
+        return err;
     }
 
-    state_bump(STATE_ALARM_VERSION);
+    err = nvs_set_blob(nvs, NVS_KEY, s_alarms, sizeof(alarm_t) * (size_t)s_count);
+    if (err == ESP_OK)
+    {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+    if (err == ESP_OK)
+    {
+        state_bump(STATE_ALARM_VERSION);
+    }
+    return err;
 }
 
 static uint32_t new_id(void)
@@ -79,7 +91,7 @@ static uint32_t new_id(void)
         max = s_alarms[i].id > max ? s_alarms[i].id : max;
     }
 
-    return max + 1;
+    return max == UINT32_MAX ? 0 : max + 1;
 }
 
 /*
@@ -146,9 +158,26 @@ static void load(void)
     {
         size_t size = sizeof(s_alarms);
 
-        if (nvs_get_blob(nvs, NVS_KEY, s_alarms, &size) == ESP_OK)
+        if (nvs_get_blob(nvs, NVS_KEY, s_alarms, &size) == ESP_OK &&
+            size <= sizeof(s_alarms) && size % sizeof(alarm_t) == 0)
         {
             s_count = (int)(size / sizeof(alarm_t));
+            for (int i = 0; i < s_count; i++)
+            {
+                const alarm_t *a = &s_alarms[i];
+                bool valid = a->id != 0 && a->hour < 24 && a->minute < 60 &&
+                             (a->days & 0x80) == 0 &&
+                             memchr(a->label, '\0', ALARM_LABEL_MAX) != NULL;
+                for (int j = 0; j < i; j++)
+                {
+                    valid = valid && s_alarms[j].id != a->id;
+                }
+                if (!valid)
+                {
+                    s_count = 0;
+                    break;
+                }
+            }
         }
 
         nvs_get_u8(nvs, NVS_IMPORTED, &imported);
@@ -159,16 +188,29 @@ static void load(void)
     {
         import_arduino();
 
-        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
+        /* The import marker and records must survive the same commit. */
+        esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs);
+        if (err == ESP_OK)
         {
-            nvs_set_u8(nvs, NVS_IMPORTED, 1);
-            nvs_commit(nvs);
+            err = nvs_set_blob(nvs, NVS_KEY, s_alarms,
+                               sizeof(alarm_t) * (size_t)s_count);
+            if (err == ESP_OK)
+            {
+                err = nvs_set_u8(nvs, NVS_IMPORTED, 1);
+            }
+            if (err == ESP_OK)
+            {
+                err = nvs_commit(nvs);
+            }
             nvs_close(nvs);
         }
-
-        if (s_count > 0)
+        if (err != ESP_OK)
         {
-            save();
+            s_count = 0;
+        }
+        else
+        {
+            state_bump(STATE_ALARM_VERSION);
         }
     }
 }
@@ -289,7 +331,10 @@ static void check_job(void *arg)
 static void timer_cb(void *arg)
 {
     (void)arg;
-    sys_post(check_job, NULL);
+    if (!sys_post(check_job, NULL))
+    {
+        esp_timer_start_once(s_timer, 1000000);
+    }
 }
 
 static void reschedule(void)
@@ -328,19 +373,28 @@ static void reschedule(void)
         wait_us = 100000;
     }
 
-    esp_timer_stop(s_timer);
-    esp_timer_start_once(s_timer, (uint64_t)wait_us);
+    if (s_timer != NULL)
+    {
+        esp_timer_stop(s_timer);
+        esp_timer_start_once(s_timer, (uint64_t)wait_us);
+    }
 }
 
 /* -------------------------------------------------------------- public */
 
 void alarm_service_init(alarm_ring_cb_t on_ring)
 {
+    lock();
     s_on_ring = on_ring;
     load();
+    unlock();
 
     const esp_timer_create_args_t args = {.callback = timer_cb, .name = "alarm"};
-    esp_timer_create(&args, &s_timer);
+    if (s_timer == NULL && esp_timer_create(&args, &s_timer) != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Unable to create alarm timer");
+        return;
+    }
 
     reschedule();
     ESP_LOGI(TAG, "%d alarms", s_count);
@@ -378,7 +432,8 @@ bool alarm_get(uint32_t id, alarm_t *out)
 
 esp_err_t alarm_save(alarm_t *alarm)
 {
-    if (alarm->hour > 23 || alarm->minute > 59)
+    if (alarm == NULL || alarm->hour > 23 || alarm->minute > 59 ||
+        (alarm->days & 0x80) != 0)
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -387,6 +442,8 @@ esp_err_t alarm_save(alarm_t *alarm)
 
     lock();
 
+    alarm_t candidate = *alarm;
+    int previous_count = s_count;
     int index = -1;
 
     for (int i = 0; i < s_count; i++)
@@ -405,16 +462,33 @@ esp_err_t alarm_save(alarm_t *alarm)
         }
         else
         {
-            alarm->id = new_id();
-            index = s_count++;
+            candidate.id = new_id();
+            if (candidate.id == 0)
+            {
+                err = ESP_ERR_NO_MEM;
+            }
+            else
+            {
+                index = s_count++;
+            }
         }
     }
 
     if (err == ESP_OK)
     {
-        alarm->label[ALARM_LABEL_MAX - 1] = '\0';
-        s_alarms[index] = *alarm;
-        save();
+        alarm_t previous = s_alarms[index];
+        candidate.label[ALARM_LABEL_MAX - 1] = '\0';
+        s_alarms[index] = candidate;
+        err = save();
+        if (err == ESP_OK)
+        {
+            *alarm = candidate;
+        }
+        else
+        {
+            s_alarms[index] = previous;
+            s_count = previous_count;
+        }
     }
 
     unlock();
@@ -434,10 +508,17 @@ esp_err_t alarm_delete(uint32_t id)
     {
         if (s_alarms[i].id == id)
         {
+            alarm_t previous = s_alarms[i];
             memmove(&s_alarms[i], &s_alarms[i + 1], sizeof(alarm_t) * (size_t)(s_count - i - 1));
             s_count--;
-            save();
-            err = ESP_OK;
+            err = save();
+            if (err != ESP_OK)
+            {
+                memmove(&s_alarms[i + 1], &s_alarms[i],
+                        sizeof(alarm_t) * (size_t)(s_count - i));
+                s_alarms[i] = previous;
+                s_count++;
+            }
             break;
         }
     }

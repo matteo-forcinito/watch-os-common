@@ -2,6 +2,7 @@
 #include "ecos_wire.h"
 #include "ecos_link_wire.h"
 #include "ecos_access_wire.h"
+#include "ecos_orbit_wire.h"
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (0)
 
 void *memset(void *to, int value, size_t size)
@@ -47,7 +48,7 @@ int ecos_tests(void)
 {
     uint8_t a[6] = {2, 0, 0, 0, 0, 1}, b[6] = {2, 0, 0, 0, 0, 2};
     uint8_t frame[ECOS_FRAME_MAX + 1] = {0};
-    for (uint8_t type = 0; type < 10; type++)
+    for (uint8_t type = 0; type <= 10; type++)
     {
         ecos_wire_header(frame, type, a, b);
         for (size_t size = 0; size <= sizeof(frame); size++)
@@ -104,18 +105,22 @@ int ecos_tests(void)
     CHECK(ecos_link_get64(link + 17) == epoch);
     CHECK(ecos_link_get32(link + 25) == UINT32_C(0x99aabbcc));
     CHECK(link[17] == 0x11 && link[28] == 0xcc);
-    for (unsigned type = 0; type <= 9; type++)
+    CHECK(ECOS_LINK_ORBIT == 9 && ECOS_LINK_ORBIT_REPLY == 10);
+    for (unsigned type = 0; type <= 12; type++)
     {
         link[4] = (uint8_t)type;
         for (size_t n = 0; n <= sizeof(link); n++)
         {
-            bool valid = type >= 1 && type <= 8 && n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG &&
+            bool valid = type >= 1 && type <= 11 && n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG &&
                          n <= ECOS_LINK_FRAME_MAX;
             CHECK(ecos_link_valid(link, n) == valid);
         }
     }
     link[4] = ECOS_LINK_RING;
     link[3] = '1';
+    CHECK(!ecos_link_valid(link, ECOS_LINK_FRAME_MAX));
+    link[3] = '2';
+    link[4] = 0;
     CHECK(!ecos_link_valid(link, ECOS_LINK_FRAME_MAX));
     CHECK(!ecos_link_newer(0, 1, 0, 0));
     CHECK(!ecos_link_newer(1, 0, 0, 0));
@@ -127,14 +132,52 @@ int ecos_tests(void)
     CHECK(ecos_link_newer(11, 1, 10, UINT32_MAX));
     CHECK(!ecos_link_newer(1, 1, UINT64_MAX, UINT32_MAX));
     CHECK(!ecos_link_newer(10, 1, 10, UINT32_MAX));
+    uint8_t orbit[ECOS_ORBIT_ENVELOPE_MAX + 1], orbit_data[ECOS_ORBIT_DATA_MAX];
+    for (size_t i = 0; i < sizeof(orbit_data); ++i) orbit_data[i] = (uint8_t)(i ^ 0xa5);
+    uint64_t orbit_id = UINT64_C(0x0123456789abcdef), decoded_id;
+    const uint8_t *decoded_data;
+    size_t decoded_size;
+    CHECK(ecos_orbit_pack(orbit, sizeof(orbit), orbit_id, orbit_data, ECOS_ORBIT_DATA_MIN));
+    CHECK(orbit[0] == 1 && orbit[7] == 0xef);
+    CHECK(ecos_orbit_unpack(orbit, ECOS_ORBIT_ENVELOPE_MIN, &decoded_id, &decoded_data, &decoded_size));
+    CHECK(decoded_id == orbit_id && decoded_size == 1 && decoded_data[0] == orbit_data[0]);
+    CHECK(ecos_orbit_ids_match(orbit_id, decoded_id));
+    CHECK(!ecos_orbit_ids_match(orbit_id, decoded_id + 1));
+    CHECK(!ecos_orbit_pack(orbit, sizeof(orbit), 0, orbit_data, 1));
+    CHECK(!ecos_orbit_pack(orbit, sizeof(orbit), orbit_id, orbit_data, 0));
+    CHECK(!ecos_orbit_pack(orbit, sizeof(orbit), orbit_id, orbit_data, ECOS_ORBIT_DATA_MAX + 1));
+    CHECK(!ecos_orbit_pack(orbit, ECOS_ORBIT_ENVELOPE_MIN, orbit_id, orbit_data, 2));
+    CHECK(ecos_orbit_pack(orbit, sizeof(orbit), orbit_id, orbit_data, ECOS_ORBIT_DATA_MAX));
+    CHECK(ecos_orbit_envelope_valid(orbit, ECOS_ORBIT_ENVELOPE_MAX));
+    CHECK(!ecos_orbit_envelope_valid(orbit, ECOS_ORBIT_ENVELOPE_MAX + 1));
+    CHECK(ecos_orbit_unpack(orbit, ECOS_ORBIT_ENVELOPE_MAX, &decoded_id, &decoded_data, &decoded_size));
+    CHECK(decoded_size == ECOS_ORBIT_DATA_MAX && memcmp(decoded_data, orbit_data, decoded_size) == 0);
+    ecos_orbit_cache_t cache = {0};
+    CHECK(!ecos_orbit_cache_matches(&cache, 1, 1));
+    CHECK(!ecos_orbit_cache_store(&cache, 0, 1, orbit, ECOS_ORBIT_ENVELOPE_MAX));
+    CHECK(!ecos_orbit_cache_store(&cache, 1, 0, orbit, ECOS_ORBIT_ENVELOPE_MAX));
+    CHECK(ecos_orbit_cache_store(&cache, 10, 7, orbit, ECOS_ORBIT_ENVELOPE_MAX));
+    CHECK(ecos_orbit_cache_matches(&cache, 10, 7));
+    CHECK(!ecos_orbit_cache_matches(&cache, 9, 7));
+    CHECK(!ecos_orbit_cache_matches(&cache, 10, 6));
+    CHECK(!ecos_orbit_cache_matches(&cache, 10, 8));
+    CHECK(memcmp(cache.envelope, orbit, ECOS_ORBIT_ENVELOPE_MAX) == 0);
+    CHECK(ecos_orbit_cache_store(&cache, 11, 1, orbit, ECOS_ORBIT_ENVELOPE_MIN));
+    CHECK(!ecos_orbit_cache_matches(&cache, 10, 7));
+    CHECK(ecos_orbit_cache_matches(&cache, 11, 1));
+    memset(orbit, 0, ECOS_ORBIT_REQUEST_ID_SIZE);
+    CHECK(!ecos_orbit_envelope_valid(orbit, ECOS_ORBIT_ENVELOPE_MIN));
+    CHECK(!ecos_orbit_unpack(orbit, ECOS_ORBIT_ENVELOPE_MIN, &decoded_id, &decoded_data, &decoded_size));
     ecos_link_status_t status = {.name = "Cilipu", .product = "AMOLED", .version = "test", .battery = 73,
-                                .flags = ECOS_LINK_F_USB, .ip = {192, 168, 1, 9}, .ssid = "home",
+                                .flags = ECOS_LINK_F_USB | ECOS_LINK_F_COMPANION,
+                                .ip = {192, 168, 1, 9}, .ssid = "home",
                                 .uptime_min = UINT32_C(0x12345678), .ram_kb = 123};
     ecos_link_put_status(link, &status);
     ecos_link_status_t decoded;
     ecos_link_get_status(link, &decoded);
     CHECK(memcmp(decoded.name, status.name, 7) == 0);
-    CHECK(decoded.battery == 73 && decoded.flags == ECOS_LINK_F_USB && decoded.ram_kb == 123);
+    CHECK(decoded.battery == 73 &&
+          decoded.flags == (ECOS_LINK_F_USB | ECOS_LINK_F_COMPANION) && decoded.ram_kb == 123);
     CHECK(decoded.uptime_min == UINT32_C(0x12345678) && decoded.ip[3] == 9);
     link[0] = '\n';
     link[72] = 101;

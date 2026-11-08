@@ -15,6 +15,7 @@ idf_component_register(
     PRIV_INCLUDE_DIRS
         "."
         "${CMAKE_CURRENT_LIST_DIR}/../../remote/hub"
+        "${CMAKE_CURRENT_LIST_DIR}/../services/ecos"
     PRIV_REQUIRES
         bt
         esp_hid
@@ -25,6 +26,7 @@ idf_component_register(
         esp_netif
         esp_timer
         esp_pm
+        services
         nvs_flash
         mbedtls
 )

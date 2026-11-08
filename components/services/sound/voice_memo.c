@@ -59,6 +59,11 @@ void voice_memo_snapshot(voice_memo_snapshot_t *out)
     }
 }
 
+bool voice_memo_busy(void)
+{
+    return __atomic_load_n(&s_busy, __ATOMIC_ACQUIRE);
+}
+
 void voice_memo_stop(void)
 {
     __atomic_store_n(&s_stop, true, __ATOMIC_RELEASE);

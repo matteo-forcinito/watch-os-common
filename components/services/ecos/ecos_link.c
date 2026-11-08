@@ -22,6 +22,11 @@
 #include "ecos_internal.h"
 #include "ecos_link_wire.h"
 #include "ecos_access_wire.h"
+#include "ecos_orbit_wire.h"
+#include "ecos_orbit_fragment.h"
+#include "ecos_stream_slot.h"
+#include "services/orbit_state.h"
+#include "ecos_bus.h"
 #include "services/web_server.h"
 #include "services/motion.h"
 #include <math.h>
@@ -68,6 +73,10 @@
 #define CLOCK_VALID 1700000000
 #define CLOCK_WINDOW_S 120
 
+_Static_assert(ECOS_ORBIT_MAX == ECOS_ORBIT_DATA_MAX, "Orbit API and wire bounds must agree");
+_Static_assert(ECOS_LINK_TIME_SIZE + ECOS_ORBIT_ENVELOPE_MAX <= ECOS_LINK_PAYLOAD_MAX,
+               "Orbit envelope must fit the encrypted EL02 payload");
+
 static const char *TAG = "ecos_link";
 static const uint8_t s_hops[] = {1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13};
 
@@ -77,7 +86,7 @@ typedef struct
 {
     uint8_t mac[6];
     bool used, known, reachable;
-    int64_t seen_at;
+    int64_t seen_at, status_seen_at;
     int rssi;
     uint8_t channel;
     ecos_link_status_t status;
@@ -100,6 +109,7 @@ typedef enum
     CMD_WEB_CODE,
     CMD_RESOURCES,
     CMD_PET,
+    CMD_ORBIT,
 } cmd_kind_t;
 
 /* Pet journey step in flight (one at a time). */
@@ -110,6 +120,20 @@ static uint8_t s_pet_mac[6];
 static bool s_pet_waiting;
 static SemaphoreHandle_t s_pet_done, s_pet_call;
 static ecos_pet_handler_t s_pet_handler;
+
+/* One bounded RPC slot. Buffers stay in PSRAM; no extra task or radio lease.
+ * The caller owns the slot until its timeout; the worker copies before send. */
+static EXT_RAM_BSS_ATTR uint8_t s_orbit_request[ECOS_ORBIT_MAX], s_orbit_reply[ECOS_ORBIT_MAX];
+static size_t s_orbit_length;
+static uint64_t s_orbit_request_id;
+static uint8_t s_orbit_mac[6];
+static int s_orbit_result = -1;
+static bool s_orbit_calling, s_orbit_waiting, s_orbit_processing;
+static ecos_orbit_handler_t s_orbit_handler;
+static ecos_stream_handler_t s_stream_handler;
+static EXT_RAM_BSS_ATTR ecos_stream_slot_t s_stream;
+static StaticSemaphore_t s_stream_gate_storage;
+static SemaphoreHandle_t s_stream_gate;
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static EXT_RAM_BSS_ATTR member_info_t s_info[ECOS_PEERS_MAX + 2];
@@ -147,20 +171,79 @@ typedef struct
 } link_sent_t;
 
 static QueueHandle_t s_rx, s_sent;
+static unsigned s_rx_users;
+
+typedef struct
+{
+    uint8_t mac[6];
+    uint8_t local_mac[6];
+    ecos_family_ble_send_t send;
+    void *context;
+    unsigned users;
+    bool active;
+    bool closing;
+    bool hold;
+} ble_link_t;
+
+static ble_link_t s_ble_link;
+
+static bool queue_frame(const uint8_t mac[6], int8_t rssi, const uint8_t *data, size_t length)
+{
+    if (mac == NULL || data == NULL || length == 0 || length > ECOS_LINK_FRAME_MAX)
+    {
+        return false;
+    }
+    QueueHandle_t rx;
+    portENTER_CRITICAL(&s_lock);
+    rx = s_rx;
+    if (rx != NULL)
+    {
+        ++s_rx_users;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (rx == NULL)
+    {
+        return false;
+    }
+    link_frame_t frame;
+    memcpy(frame.mac, mac, sizeof(frame.mac));
+    frame.length = (uint8_t)length;
+    frame.rssi = rssi;
+    memcpy(frame.data, data, length);
+    bool queued = xQueueSend(rx, &frame, 0) == pdTRUE;
+    portENTER_CRITICAL(&s_lock);
+    --s_rx_users;
+    portEXIT_CRITICAL(&s_lock);
+    return queued;
+}
+
+static QueueHandle_t unpublish_rx(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    QueueHandle_t rx = s_rx;
+    s_rx = NULL;
+    portEXIT_CRITICAL(&s_lock);
+    for (;;)
+    {
+        portENTER_CRITICAL(&s_lock);
+        unsigned users = s_rx_users;
+        portEXIT_CRITICAL(&s_lock);
+        if (users == 0)
+        {
+            return rx;
+        }
+        vTaskDelay(1);
+    }
+}
 
 static void on_radio(const esp_now_recv_info_t *info, const uint8_t *data, int length)
 {
-    QueueHandle_t rx = s_rx;
-    if (rx == NULL || info == NULL || length <= 0 || length > ECOS_LINK_FRAME_MAX)
+    if (info == NULL || info->src_addr == NULL || length <= 0)
     {
         return;
     }
-    link_frame_t frame;
-    memcpy(frame.mac, info->src_addr, 6);
-    frame.length = (uint8_t)length;
-    frame.rssi = info->rx_ctrl != NULL ? (int8_t)info->rx_ctrl->rssi : 0;
-    memcpy(frame.data, data, (size_t)length);
-    xQueueSend(rx, &frame, 0);
+    int8_t rssi = info->rx_ctrl != NULL ? (int8_t)info->rx_ctrl->rssi : 0;
+    queue_frame(info->src_addr, rssi, data, (size_t)length);
 }
 
 static void on_sent(const esp_now_send_info_t *info, esp_now_send_status_t status)
@@ -186,6 +269,10 @@ typedef struct
     uint64_t last_boot;
     uint32_t last_seq;
     int64_t last_access_us;
+    /* Re-answer an identical authenticated RPC retransmission without running
+     * its side effect again. Session lives in PSRAM and is wiped on close. */
+    ecos_orbit_cache_t orbit;
+    ecos_orbit_fragment_t fragment;
 } link_peer_t;
 
 typedef struct
@@ -195,6 +282,8 @@ typedef struct
     int count;
     link_peer_t peers[ECOS_PEERS_MAX];
     uint8_t store[ECOS_STORE_SIZE];
+    uint8_t orbit_tx[ECOS_LINK_FRAME_MAX];
+    size_t orbit_tx_length;
 } session_t;
 
 static void set_message(const char *format, const char *name)
@@ -231,7 +320,7 @@ static bool wanted(void)
 {
     if (family_disabled()) return false;
     portENTER_CRITICAL(&s_lock);
-    bool want = s_holds > 0 || esp_timer_get_time() < s_web_until || s_refresh || s_cmd != CMD_NONE;
+    bool want = s_holds > 0 || esp_timer_get_time() < s_web_until || s_refresh || s_cmd != CMD_NONE || s_orbit_waiting;
     portEXIT_CRITICAL(&s_lock);
     return want || auto_wanted();
 }
@@ -538,9 +627,11 @@ static void my_status(ecos_link_status_t *out)
     portENTER_CRITICAL(&s_lock);
     ringing = s_ringing_here;
     portEXIT_CRITICAL(&s_lock);
-    out->flags = (state_get(STATE_CHARGING) ? ECOS_LINK_F_CHARGING : 0) | (powered() ? ECOS_LINK_F_USB : 0) |
+    out->flags = (state_get(STATE_CHARGING) ? ECOS_LINK_F_CHARGING : 0) |
+                 (state_get(STATE_USB) ? ECOS_LINK_F_USB : 0) | (powered() ? ECOS_LINK_F_POWERED : 0) |
                  (auto_wanted() ? ECOS_LINK_F_LISTENING : 0) | (ringing ? ECOS_LINK_F_RINGING : 0) |
-                 (recovery_active() ? ECOS_LINK_F_RECOVERY : 0);
+                 (recovery_active() ? ECOS_LINK_F_RECOVERY : 0) |
+                 (ecos_family_companion(NULL) ? ECOS_LINK_F_COMPANION : 0);
     if (wifi_is_connected())
     {
         char ip[16];
@@ -557,7 +648,42 @@ static void my_status(ecos_link_status_t *out)
     out->ram_kb = (uint16_t)(free_kb > 65535 ? 65535 : free_kb);
 }
 
-/* Seal and send one frame. With wait_ack: true when the device acknowledged it. */
+/* 0 = use ESP-NOW, 1 = BLE enqueue accepted, -1 = BLE enqueue rejected. */
+static int ble_send_bound(const uint8_t mac[6], const uint8_t *frame, size_t length)
+{
+    ecos_family_ble_send_t send = NULL;
+    void *context = NULL;
+    portENTER_CRITICAL(&s_lock);
+    if (s_ble_link.active && memcmp(s_ble_link.mac, mac, 6) == 0)
+    {
+        ++s_ble_link.users;
+        send = s_ble_link.send;
+        context = s_ble_link.context;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (send == NULL)
+    {
+        return 0;
+    }
+
+    bool accepted = send(frame, length, context);
+    portENTER_CRITICAL(&s_lock);
+    --s_ble_link.users;
+    portEXIT_CRITICAL(&s_lock);
+    return accepted ? 1 : -1;
+}
+
+static int send_frame(const uint8_t mac[6], const uint8_t *frame, size_t length)
+{
+    int ble = ble_send_bound(mac, frame, length);
+    if (ble != 0)
+    {
+        return ble;
+    }
+    return ecos_bus_send(mac, frame, length) == ESP_OK ? 0 : -1;
+}
+
+/* With wait_ack, BLE confirms local enqueue; ESP-NOW waits for the MAC ACK. */
 static bool seal_send(session_t *s, link_peer_t *peer, uint8_t type, const uint8_t *payload, size_t length,
                       bool wait_ack)
 {
@@ -575,14 +701,20 @@ static bool seal_send(session_t *s, link_peer_t *peer, uint8_t type, const uint8
         return false;
     }
     link_sent_t result;
+    if (type == ECOS_LINK_ORBIT)
+    {
+        s->orbit_tx_length = ECOS_LINK_HEADER + written;
+        memcpy(s->orbit_tx, frame, s->orbit_tx_length);
+    }
     while (xQueueReceive(s_sent, &result, 0) == pdTRUE)
     {
     }
-    if (esp_now_send(peer->mac, frame, ECOS_LINK_HEADER + written) != ESP_OK)
+    int transport = send_frame(peer->mac, frame, ECOS_LINK_HEADER + written);
+    if (transport < 0)
     {
         return false;
     }
-    if (!wait_ack)
+    if (transport > 0 || !wait_ack)
     {
         return true;
     }
@@ -742,6 +874,16 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
     uint32_t seq = ecos_link_get32(p + 25);
     if (!ecos_link_newer(boot, seq, peer->last_boot, peer->last_seq))
     {
+        /* The AEAD was checked above. Only the exact last handled RPC can
+         * retrieve its cached answer; stale commands are never executed. */
+        if (p[4] == ECOS_LINK_ORBIT && ecos_orbit_cache_matches(&peer->orbit, boot, seq))
+        {
+            uint8_t answer[ECOS_LINK_TIME_SIZE + ECOS_ORBIT_ENVELOPE_MAX];
+            time_t now = time(NULL);
+            ecos_link_put32(answer, now > CLOCK_VALID ? (uint32_t)now : 0);
+            memcpy(answer + ECOS_LINK_TIME_SIZE, peer->orbit.envelope, peer->orbit.length);
+            seal_send(s, peer, ECOS_LINK_ORBIT_REPLY, answer, ECOS_LINK_TIME_SIZE + peer->orbit.length, true);
+        }
         return;
     }
     uint8_t type = p[4];
@@ -758,6 +900,9 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
         (type == ECOS_LINK_RING && (body_length != 1 || body[0] > 1)) ||
         (type == ECOS_LINK_MESSAGE && (body_length == 0 || body_length >= ECOS_LINK_TEXT_MAX)) ||
         ((type == ECOS_LINK_PET || type == ECOS_LINK_PET_REPLY) && (body_length == 0 || body_length > ECOS_PET_MAX)) ||
+        ((type == ECOS_LINK_ORBIT || type == ECOS_LINK_ORBIT_REPLY) &&
+         !ecos_orbit_envelope_valid(body, body_length)) ||
+        (type == ECOS_LINK_STREAM && (body_length == 0 || body_length > ECOS_STREAM_MAX)) ||
         (type == ECOS_LINK_ACCESS_REQ && !ecos_access_request_valid(body, body_length)) ||
         (type == ECOS_LINK_ACCESS_REPLY && body_length != ECOS_ACCESS_REPLY_SIZE))
     {
@@ -769,7 +914,7 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
     {
         return;
     }
-    if ((type == ECOS_LINK_RING || type == ECOS_LINK_MESSAGE || type == ECOS_LINK_PET ||
+    if ((type == ECOS_LINK_RING || type == ECOS_LINK_MESSAGE || type == ECOS_LINK_PET || type == ECOS_LINK_ORBIT ||
          (type == ECOS_LINK_ACCESS_REQ && body[8] == ECOS_ACCESS_WEB)) &&
         !replay_record(peer, true, boot, seq))
     {
@@ -779,12 +924,13 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
     peer->last_seq = seq;
 
     uint8_t channel = wifi_radio_channel();
+    int64_t seen_at = esp_timer_get_time();
     portENTER_CRITICAL(&s_lock);
     member_info_t *info = info_slot(peer->mac);
     memcpy(info->fingerprint, peer->fingerprint, 16);
     info->last_boot = boot;
     info->last_seq = seq;
-    info->seen_at = esp_timer_get_time();
+    info->seen_at = seen_at;
     info->rssi = frame->rssi;
     info->channel = channel;
     info->reachable = true;
@@ -792,10 +938,80 @@ static void handle_frame(session_t *s, const link_frame_t *frame)
     {
         ecos_link_get_status(body, &info->status);
         info->known = true;
+        info->status_seen_at = seen_at;
     }
     portEXIT_CRITICAL(&s_lock);
 
-    if (type == ECOS_LINK_ACCESS_REQ)
+    if (type == ECOS_LINK_STREAM)
+    {
+        portENTER_CRITICAL(&s_lock);
+        ecos_stream_handler_t handler = ecos_stream_matches(&s_stream, peer->mac) ? s_stream_handler : NULL;
+        portEXIT_CRITICAL(&s_lock);
+        if (handler != NULL)
+        {
+            char id[13];
+            id_text(peer->mac, id);
+            handler(id, body, body_length);
+        }
+    }
+    else if (type == ECOS_LINK_ORBIT)
+    {
+        ecos_orbit_handler_t handler;
+        portENTER_CRITICAL(&s_lock);
+        handler = s_orbit_handler;
+        portEXIT_CRITICAL(&s_lock);
+        uint8_t answer[ECOS_LINK_TIME_SIZE + 8 + ECOS_ORBIT_MAX];
+        char id[13];
+        id_text(peer->mac, id);
+        uint8_t *output = answer + ECOS_LINK_TIME_SIZE + 8;
+        size_t count = 0;
+        if (body_length >= 12 && memcmp(body + 8, "OF01", 4) == 0)
+        {
+            ecos_orbit_fragment_result_t result = ecos_orbit_fragment_accept(&peer->fragment, body + 8, body_length - 8);
+            if (result == ECOS_ORBIT_FRAGMENT_MORE)
+            {
+                count = ecos_orbit_fragment_ack(output, ECOS_ORBIT_MAX, peer->fragment.used);
+            }
+            else if (result == ECOS_ORBIT_FRAGMENT_READY)
+            {
+                count = handler ? handler(id, peer->fragment.data, peer->fragment.used, output, ECOS_ORBIT_MAX) : 0;
+                if (count <= ECOS_ORBIT_MAX)
+                {
+                    memcpy(peer->fragment.reply, output, count);
+                    peer->fragment.reply_length = count;
+                }
+            }
+            else if (result == ECOS_ORBIT_FRAGMENT_REPLIED)
+            {
+                count = peer->fragment.reply_length;
+                memcpy(output, peer->fragment.reply, count);
+            }
+        }
+        else if (handler != NULL)
+        {
+            count = handler(id, body + 8, body_length - 8, output, ECOS_ORBIT_MAX);
+        }
+        if (count > 0 && count <= ECOS_ORBIT_MAX)
+        {
+            ecos_link_put32(answer, now > CLOCK_VALID ? (uint32_t)now : 0);
+            memcpy(answer + ECOS_LINK_TIME_SIZE, body, 8);
+            ecos_orbit_cache_store(&peer->orbit, boot, seq, answer + ECOS_LINK_TIME_SIZE, 8 + count);
+            seal_send(s, peer, ECOS_LINK_ORBIT_REPLY, answer, ECOS_LINK_TIME_SIZE + 8 + count, true);
+        }
+    }
+    else if (type == ECOS_LINK_ORBIT_REPLY)
+    {
+        portENTER_CRITICAL(&s_lock);
+        if (s_orbit_waiting && ecos_orbit_ids_match(s_orbit_request_id, ecos_orbit_get_request_id(body)) &&
+            memcmp(s_orbit_mac, peer->mac, 6) == 0)
+        {
+            memcpy(s_orbit_reply, body + 8, body_length - 8);
+            s_orbit_result = (int)(body_length - 8);
+            s_orbit_waiting = false;
+        }
+        portEXIT_CRITICAL(&s_lock);
+    }
+    else if (type == ECOS_LINK_ACCESS_REQ)
     {
         peer->last_access_us = access_now;
         answer_access(s, peer, body);
@@ -897,15 +1113,48 @@ static void receive_for(session_t *s, int ms)
 /* Free radio: wait where the joined devices are (the home network's channel). */
 static uint8_t park_channel(void)
 {
+    uint8_t pinned = wifi_radio_pinned_channel();
+    if (pinned >= 1 && pinned <= 13) return pinned;
     uint8_t home = wifi_home_channel();
-    return home >= 1 && home <= 13 ? home : 1;
+    uint8_t shared = 0;
+    size_t shared_length = 0;
+    static const uint8_t key[] = "ecos/channel";
+    if (orbit_state_get(key, sizeof(key) - 1, &shared, sizeof(shared), &shared_length, NULL, NULL) &&
+        shared_length == 1 && shared >= 1 && shared <= 13) home = shared;
+    portENTER_CRITICAL(&s_lock);
+    if (s_stream.active)
+    {
+        for (size_t i = 0; i < sizeof(s_info) / sizeof(s_info[0]); ++i)
+        {
+            if (memcmp(s_info[i].mac, s_stream.mac, 6) == 0 && s_info[i].channel >= 1 && s_info[i].channel <= 13)
+            {
+                home = s_info[i].channel;
+                break;
+            }
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    return home >= 1 && home <= 13 ? home : wifi_radio_common_channel();
 }
 
 static void park(void)
 {
     if (!wifi_is_connected())
     {
-        wifi_radio_set_channel(park_channel());
+        uint8_t channel = park_channel();
+        if (wifi_radio_set_channel(channel) && !ecos_family_stream_active() &&
+            wifi_radio_common_channel_set(channel))
+        {
+            static uint8_t announced;
+            static const uint8_t key[] = "ecos/channel";
+            uint8_t shared = 0;
+            size_t length = 0;
+            bool present = orbit_state_get(key, sizeof(key) - 1, &shared, sizeof(shared), &length, NULL, NULL);
+            if ((present && (length != 1 || shared != channel)) || (!present && announced != channel))
+            {
+                if (orbit_state_put(key, sizeof(key) - 1, &channel, 1)) announced = channel;
+            }
+        }
     }
 }
 
@@ -943,7 +1192,7 @@ static int search(session_t *s, link_peer_t *only)
         }
         if (!wifi_is_connected())
         {
-            wifi_radio_set_channel(channels[c]);
+            if (!wifi_radio_set_channel(channels[c])) continue;
         }
         bool any = false;
         for (int i = 0; i < s->count; i++)
@@ -993,7 +1242,7 @@ static void act(session_t *s, cmd_kind_t kind, const uint8_t mac[6], const char 
         set_message("Dispositivo non abbinato", NULL);
         return;
     }
-    uint8_t payload[ECOS_LINK_TIME_SIZE + ECOS_PET_MAX];
+    uint8_t payload[ECOS_LINK_PAYLOAD_MAX];
     time_t now = time(NULL);
     ecos_link_put32(payload, now > CLOCK_VALID ? (uint32_t)now : 0);
     size_t length = ECOS_LINK_TIME_SIZE;
@@ -1018,6 +1267,21 @@ static void act(session_t *s, cmd_kind_t kind, const uint8_t mac[6], const char 
         info->pending_operation = operation;
         info->pending_until = esp_timer_get_time() + 10000000;
         portEXIT_CRITICAL(&s_lock);
+    }
+    else if (kind == CMD_ORBIT)
+    {
+        s->orbit_tx_length = 0;
+        portENTER_CRITICAL(&s_lock);
+        bool waiting = s_orbit_waiting;
+        bool packed = ecos_orbit_pack(payload + length, sizeof(payload) - length, s_orbit_request_id,
+                                      s_orbit_request, s_orbit_length);
+        length += ECOS_ORBIT_REQUEST_ID_SIZE + s_orbit_length;
+        portEXIT_CRITICAL(&s_lock);
+        if (!waiting || !packed)
+        {
+            return;   /* caller timed out before this command was taken */
+        }
+        type = ECOS_LINK_ORBIT;
     }
     else if (kind == CMD_PET)
     {
@@ -1046,11 +1310,34 @@ static void act(session_t *s, cmd_kind_t kind, const uint8_t mac[6], const char 
     channel = info_slot(mac)->channel;
     portEXIT_CRITICAL(&s_lock);
     bool sent = false;
+    if (kind == CMD_ORBIT)
+    {
+        /* Discover before issuing a side effect. Never retransmit an Orbit
+         * command with a new sequence after an ambiguous radio result. */
+        if (search(s, peer) <= 0)
+        {
+            return;
+        }
+        portENTER_CRITICAL(&s_lock);
+        channel = info_slot(mac)->channel;
+        portEXIT_CRITICAL(&s_lock);
+    }
+    if (kind == CMD_ORBIT)
+    {
+        portENTER_CRITICAL(&s_lock);
+        bool waiting = s_orbit_waiting;
+        portEXIT_CRITICAL(&s_lock);
+        if (!waiting)
+        {
+            park();
+            return;
+        }
+    }
     if (channel != 0 && (wifi_is_connected() ? wifi_radio_channel() == channel : wifi_radio_set_channel(channel)))
     {
         sent = seal_send(s, peer, type, payload, length, true);
     }
-    if (!sent && search(s, peer) > 0)
+    if (!sent && kind != CMD_ORBIT && search(s, peer) > 0)
     {
         portENTER_CRITICAL(&s_lock);
         channel = info_slot(mac)->channel;
@@ -1059,6 +1346,37 @@ static void act(session_t *s, cmd_kind_t kind, const uint8_t mac[6], const char 
         {
             sent = seal_send(s, peer, type, payload, length, true);
         }
+    }
+    if (kind == CMD_ORBIT)
+    {
+        /* Application replies, rather than radio ACKs, confirm completion.
+         * Retransmit the exact sealed frame: same nonce, ciphertext and ID;
+         * the receiver's cache replays the answer without another side effect. */
+        for (unsigned attempt = 0; s->orbit_tx_length > 0 && attempt < 3; ++attempt)
+        {
+            int64_t until = esp_timer_get_time() + REPLY_WAIT_MS * (int64_t)(attempt + 1) * 1000;
+            do
+            {
+                receive_for(s, 10);
+                portENTER_CRITICAL(&s_lock);
+                bool pending = s_orbit_waiting;
+                portEXIT_CRITICAL(&s_lock);
+                if (!pending) break;
+            } while (esp_timer_get_time() < until);
+            portENTER_CRITICAL(&s_lock);
+            bool waiting = s_orbit_waiting;
+            portEXIT_CRITICAL(&s_lock);
+            if (!waiting)
+            {
+                break;
+            }
+            if (attempt < 2)
+            {
+                send_frame(peer->mac, s->orbit_tx, s->orbit_tx_length);
+            }
+        }
+        park();
+        return;
     }
     if (sent)
     {
@@ -1092,9 +1410,24 @@ static void link_task(void *arg);
 
 static void start_link(void)
 {
-    if (family_disabled()) return;
+    if (family_disabled())
+    {
+        portENTER_CRITICAL(&s_lock);
+        if (s_cmd == CMD_ORBIT)
+        {
+            s_cmd = CMD_NONE;
+            s_orbit_waiting = false;
+        }
+        portEXIT_CRITICAL(&s_lock);
+        return;
+    }
     portENTER_CRITICAL(&s_lock);
     bool start = !s_running && !s_suspend;
+    if (!s_running && s_suspend && s_cmd == CMD_ORBIT)
+    {
+        s_cmd = CMD_NONE;
+        s_orbit_waiting = false;
+    }
     if (start)
     {
         s_running = true;
@@ -1104,6 +1437,11 @@ static void start_link(void)
     {
         portENTER_CRITICAL(&s_lock);
         s_running = false;
+        if (s_cmd == CMD_ORBIT)
+        {
+            s_cmd = CMD_NONE;
+            s_orbit_waiting = false;
+        }
         portEXIT_CRITICAL(&s_lock);
         set_message("Memoria insufficiente per la radio", NULL);
     }
@@ -1115,12 +1453,16 @@ static void start_job(void *arg)
     if (wanted()) start_link();
 }
 
+static bool ble_termination_required(bool radio, bool policy_off, bool suspended, bool restart)
+{
+    return !radio || policy_off || suspended || restart;
+}
+
 static void link_task(void *arg)
 {
     (void)arg;
     session_t *s = heap_caps_calloc(1, sizeof(*s), MALLOC_CAP_SPIRAM);
     bool radio = false, fast = false, espnow = false, lowered = false, restart = false;
-    int8_t tx_power = 0;
     if (s == NULL || psa_crypto_init() != PSA_SUCCESS || esp_read_mac(s->mac, ESP_MAC_WIFI_STA) != ESP_OK)
     {
         set_message("Memoria insufficiente", NULL);
@@ -1142,31 +1484,29 @@ static void link_task(void *arg)
         goto done;
     }
     s->boot = s_boot_epoch;
-    if (wifi_radio_acquire() != ESP_OK)
-    {
-        set_message("Radio non disponibile (memoria)", NULL);
-        goto done;
-    }
-    radio = true;
-    wifi_set_fast(true);   /* modem sleep would miss the others' frames */
-    fast = true;
-    s_rx = xQueueCreateWithCaps(8, sizeof(link_frame_t), MALLOC_CAP_SPIRAM);
-    s_sent = xQueueCreateWithCaps(8, sizeof(link_sent_t), MALLOC_CAP_SPIRAM);
-    if (s_rx == NULL || s_sent == NULL || esp_now_init() != ESP_OK)
+    QueueHandle_t rx_queue = xQueueCreateWithCaps(8, sizeof(link_frame_t), MALLOC_CAP_SPIRAM);
+    QueueHandle_t sent_queue = xQueueCreateWithCaps(8, sizeof(link_sent_t), MALLOC_CAP_SPIRAM);
+    portENTER_CRITICAL(&s_lock);
+    s_rx = rx_queue;
+    s_sent = sent_queue;
+    portEXIT_CRITICAL(&s_lock);
+    if (rx_queue == NULL || sent_queue == NULL || ecos_bus_open("EL02", on_radio, on_sent, 0) != ESP_OK)
     {
         set_message("ESP-NOW non disponibile", NULL);
         goto done;
     }
     espnow = true;
-    esp_now_register_recv_cb(on_radio);
-    esp_now_register_send_cb(on_sent);
+    wifi_set_fast(true);
+    fast = true;
     for (int i = 0; i < s->count; i++)
     {
-        esp_now_peer_info_t peer = {.channel = 0, .ifidx = WIFI_IF_STA, .encrypt = false};
-        memcpy(peer.peer_addr, s->peers[i].mac, 6);
-        esp_now_add_peer(&peer);
+        if (ecos_bus_peer(s->peers[i].mac) != ESP_OK)
+        {
+            set_message("Elenco radio non disponibile", NULL);
+            goto done;
+        }
     }
-    esp_wifi_get_max_tx_power(&tx_power);
+    radio = true;   /* startup completed: queued work may now be retried */
     park();
     ESP_LOGI(TAG, "Radio on, %d paired, channel %u", s->count, wifi_radio_channel());
 
@@ -1176,6 +1516,11 @@ static void link_task(void *arg)
         portENTER_CRITICAL(&s_lock);
         bool stop = s_suspend, reload = s_reload, refresh = s_refresh;
         cmd_kind_t cmd = s_cmd;
+        if (cmd == CMD_ORBIT)
+        {
+            s_busy = true;   /* claim before a caller can time out and replace the slot */
+            s_orbit_processing = !refresh;
+        }
         uint8_t mac[6];
         char text[ECOS_LINK_TEXT_MAX];
         memcpy(mac, s_cmd_mac, 6);
@@ -1201,7 +1546,15 @@ static void link_task(void *arg)
             }
             else if (esp_timer_get_time() - idle_since > IDLE_STOP_US)
             {
-                break;
+                /* Commit idle shutdown under the same lock as conditional
+                 * holds, so gossip cannot acquire a radio already closing. */
+                portENTER_CRITICAL(&s_lock);
+                bool close = s_holds == 0 && s_cmd == CMD_NONE && !s_refresh &&
+                             esp_timer_get_time() >= s_web_until && !s_orbit_waiting;
+                if (close) s_listening = false;
+                portEXIT_CRITICAL(&s_lock);
+                if (close) break;
+                idle_since = 0;
             }
         }
         else
@@ -1211,14 +1564,13 @@ static void link_task(void *arg)
         /* Reduced power without a network (no saturation side by side); a
          * joined network or recovery hotspot keeps full power. */
         bool joined = wifi_is_connected() || recovery_active();
-        if (!joined && !lowered && tx_power > LINK_TX_POWER)
+        if (!joined && !lowered)
         {
-            lowered = esp_wifi_set_max_tx_power(LINK_TX_POWER) == ESP_OK;
+            lowered = ecos_bus_power("EL02", LINK_TX_POWER) == ESP_OK;
         }
         else if (joined && lowered)
         {
-            esp_wifi_set_max_tx_power(tx_power);
-            lowered = false;
+            lowered = ecos_bus_power("EL02", 0) != ESP_OK;
         }
         portENTER_CRITICAL(&s_lock);
         s_listening = true;
@@ -1242,33 +1594,73 @@ static void link_task(void *arg)
             portENTER_CRITICAL(&s_lock);
             s_busy = true;
             s_cmd = CMD_NONE;
+            s_orbit_processing = cmd == CMD_ORBIT;
             portEXIT_CRITICAL(&s_lock);
             act(s, cmd, mac, text);
             portENTER_CRITICAL(&s_lock);
             s_busy = false;
+            s_orbit_processing = false;
             portEXIT_CRITICAL(&s_lock);
         }
-        receive_for(s, 100);
+        /* Audio has a 15 ms cadence; the same family worker drains its lossy
+         * mailbox without allocating a second radio task or blocking for ACKs. */
+        uint8_t stream_mac[6], stream_payload[ECOS_LINK_TIME_SIZE + ECOS_STREAM_MAX];
+        portENTER_CRITICAL(&s_lock);
+        bool streaming = s_stream.active;
+        size_t stream_length = ecos_stream_take(&s_stream, stream_mac, stream_payload + ECOS_LINK_TIME_SIZE, ECOS_STREAM_MAX);
+        portEXIT_CRITICAL(&s_lock);
+        if (stream_length > 0)
+        {
+            link_peer_t *peer = find_peer(s, stream_mac);
+            time_t now = time(NULL);
+            ecos_link_put32(stream_payload, now > CLOCK_VALID ? (uint32_t)now : 0);
+            park();
+            if (peer != NULL) seal_send(s, peer, ECOS_LINK_STREAM, stream_payload,
+                                        ECOS_LINK_TIME_SIZE + stream_length, false);
+        }
+        receive_for(s, streaming ? 5 : 100);
     }
 
 done:
     portENTER_CRITICAL(&s_lock);
     s_listening = false;
     s_busy = false;
+    s_orbit_processing = false;
     portEXIT_CRITICAL(&s_lock);
-    if (lowered)
+    if (s_stream_gate != NULL)
     {
-        esp_wifi_set_max_tx_power(tx_power);
+        xSemaphoreTake(s_stream_gate, portMAX_DELAY);
+        portENTER_CRITICAL(&s_lock);
+        memset(&s_stream, 0, sizeof(s_stream));
+        portEXIT_CRITICAL(&s_lock);
+        wifi_radio_channel_release("OA01");
+        xSemaphoreGive(s_stream_gate);
     }
     if (espnow)
     {
-        esp_now_unregister_recv_cb();
-        esp_now_unregister_send_cb();
-        esp_now_deinit();
+        ecos_bus_close("EL02");   /* restores the TX power when nobody else needs it lower */
     }
-    QueueHandle_t rx = s_rx, sent = s_sent;
-    s_rx = NULL;
+    bool policy_off = family_disabled();
+    uint8_t ble_mac[6];
+    portENTER_CRITICAL(&s_lock);
+    bool ble_terminate = ble_termination_required(radio, policy_off, s_suspend, restart) && s_ble_link.active;
+    void *ble_context = ble_terminate ? s_ble_link.context : NULL;
+    if (ble_terminate)
+    {
+        memcpy(ble_mac, s_ble_link.mac, sizeof(ble_mac));
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (ble_context != NULL)
+    {
+        /* A null frame with zero length is the terminal lease notification. */
+        ble_send_bound(ble_mac, NULL, 0);
+        ecos_family_ble_close(ble_context);
+    }
+    QueueHandle_t rx = unpublish_rx();
+    portENTER_CRITICAL(&s_lock);
+    QueueHandle_t sent = s_sent;
     s_sent = NULL;
+    portEXIT_CRITICAL(&s_lock);
     if (rx != NULL)
     {
         vQueueDeleteWithCaps(rx);
@@ -1280,10 +1672,6 @@ done:
     if (fast)
     {
         wifi_set_fast(false);
-    }
-    if (radio)
-    {
-        wifi_radio_release();
     }
     if (s != NULL)
     {
@@ -1297,6 +1685,9 @@ done:
     }
     portENTER_CRITICAL(&s_lock);
     s_running = false;
+    /* No caller must wait out its whole timeout after failed startup,
+     * suspension or a policy stop. No response means an unknown outcome. */
+    s_orbit_waiting = false;
     /* Requests that came too late for this run, or keys to reload. */
     bool again = restart || s_refresh || s_cmd != CMD_NONE;
     if (!radio)
@@ -1331,6 +1722,7 @@ static void auto_check(void *arg)
     }
     idle = !s_running && !s_suspend;
     portEXIT_CRITICAL(&s_lock);
+    orbit_state_tick();
     if (idle && auto_wanted())
     {
         ecos_snapshot_t snapshot;
@@ -1344,6 +1736,8 @@ static void auto_check(void *arg)
 
 void ecos_link_init(void)
 {
+    if (s_stream_gate == NULL) s_stream_gate = xSemaphoreCreateMutexStatic(&s_stream_gate_storage);
+    if (!orbit_state_init()) ESP_LOGW(TAG, "Orbit state unavailable");
     esp_timer_create_args_t args = {.callback = auto_check, .name = "ecos_auto"};
     if (s_auto_timer == NULL && esp_timer_create(&args, &s_auto_timer) == ESP_OK)
     {
@@ -1478,8 +1872,10 @@ void ecos_family(ecos_family_t *out)
                 snprintf(m->version, sizeof(m->version), "%s", st->version);
                 m->battery = st->battery;
                 m->recovery = (st->flags & ECOS_LINK_F_RECOVERY) != 0;
+                m->companion = (st->flags & ECOS_LINK_F_COMPANION) != 0;
                 m->charging = (st->flags & ECOS_LINK_F_CHARGING) != 0;
                 m->usb = (st->flags & ECOS_LINK_F_USB) != 0;
+                m->powered = (st->flags & ECOS_LINK_F_POWERED) != 0;
                 m->listening = (st->flags & ECOS_LINK_F_LISTENING) != 0;
                 m->wifi = (st->flags & ECOS_LINK_F_WIFI) != 0;
                 m->ringing = (st->flags & ECOS_LINK_F_RINGING) != 0;
@@ -1511,6 +1907,16 @@ void ecos_family_hold(bool on)
     {
         start_link();
     }
+}
+
+bool ecos_family_hold_active(void)
+{
+    if (family_disabled()) return false;
+    portENTER_CRITICAL(&s_lock);
+    bool active = s_running && s_listening && !s_suspend;
+    if (active) ++s_holds;
+    portEXIT_CRITICAL(&s_lock);
+    return active;
 }
 
 void ecos_family_touch(void)
@@ -1658,4 +2064,315 @@ int ecos_family_pet(const char *id, const uint8_t *step, size_t length, uint8_t 
 out:
     xSemaphoreGive(s_pet_call);
     return result;
+}
+
+void ecos_family_set_orbit_handler(ecos_orbit_handler_t handler)
+{
+    portENTER_CRITICAL(&s_lock);
+    s_orbit_handler = handler;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+void ecos_family_set_stream_handler(ecos_stream_handler_t handler)
+{
+    portENTER_CRITICAL(&s_lock);
+    s_stream_handler = handler;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+bool ecos_family_stream_active(void)
+{
+    portENTER_CRITICAL(&s_lock);
+    bool active = s_stream.active;
+    portEXIT_CRITICAL(&s_lock);
+    return active;
+}
+
+bool ecos_family_stream_open(const char *id)
+{
+    uint8_t mac[6];
+    if (!parse_id(id, mac) || family_disabled() || s_stream_gate == NULL) return false;
+    xSemaphoreTake(s_stream_gate, portMAX_DELAY);
+    portENTER_CRITICAL(&s_lock);
+    bool available = s_running && s_listening && !s_suspend && !s_stream.active;
+    uint8_t channel = 0;
+    for (size_t i = 0; i < sizeof(s_info) / sizeof(s_info[0]); ++i)
+    {
+        if (s_info[i].used && memcmp(s_info[i].mac, mac, 6) == 0) channel = s_info[i].channel;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (channel < 1 || channel > 13) channel = wifi_radio_channel();
+    bool reserved = available && wifi_radio_channel_reserve("OA01", channel);
+    portENTER_CRITICAL(&s_lock);
+    bool opened = reserved && s_running && s_listening && !s_suspend && ecos_stream_open(&s_stream, mac);
+    portEXIT_CRITICAL(&s_lock);
+    if (reserved && !opened) wifi_radio_channel_release("OA01");
+    xSemaphoreGive(s_stream_gate);
+    return opened;
+}
+
+void ecos_family_stream_close(const char *id)
+{
+    uint8_t mac[6];
+    if (!parse_id(id, mac) || s_stream_gate == NULL) return;
+    xSemaphoreTake(s_stream_gate, portMAX_DELAY);
+    portENTER_CRITICAL(&s_lock);
+    bool owned = ecos_stream_matches(&s_stream, mac);
+    ecos_stream_close(&s_stream, mac);
+    portEXIT_CRITICAL(&s_lock);
+    if (owned) wifi_radio_channel_release("OA01");
+    xSemaphoreGive(s_stream_gate);
+}
+
+bool ecos_family_stream_send(const char *id, const uint8_t *data, size_t length)
+{
+    uint8_t mac[6];
+    if (!parse_id(id, mac) || family_disabled()) return false;
+    portENTER_CRITICAL(&s_lock);
+    bool accepted = s_running && s_listening && !s_suspend && ecos_stream_put(&s_stream, mac, data, length);
+    portEXIT_CRITICAL(&s_lock);
+    return accepted;
+}
+
+int ecos_family_orbit(const char *id, const uint8_t *request, size_t length,
+                      uint8_t *reply, size_t max, int timeout_ms)
+{
+    uint8_t mac[6];
+    if (request == NULL || reply == NULL || length == 0 || length > ECOS_ORBIT_MAX ||
+        max == 0 || timeout_ms <= 0 || timeout_ms > 30000 || !parse_id(id, mac) || family_disabled())
+    {
+        return -1;
+    }
+    uint64_t request_id;
+    do
+    {
+        esp_fill_random(&request_id, sizeof(request_id));
+    } while (request_id == 0);
+    portENTER_CRITICAL(&s_lock);
+    bool available = !s_orbit_calling && s_cmd == CMD_NONE && !s_busy && !s_suspend;
+    if (available)
+    {
+        s_orbit_calling = true;
+        s_orbit_waiting = true;
+        s_orbit_result = -1;
+        s_orbit_request_id = request_id;
+        memcpy(s_orbit_request, request, length);
+        s_orbit_length = length;
+        memcpy(s_orbit_mac, mac, 6);
+        memcpy(s_cmd_mac, mac, 6);
+        s_cmd = CMD_ORBIT;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (!available)
+    {
+        return -1;
+    }
+    start_link();
+    int result = -1;
+    int64_t until = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    while (esp_timer_get_time() < until)
+    {
+        portENTER_CRITICAL(&s_lock);
+        bool answered = !s_orbit_waiting && !s_orbit_processing;
+        portEXIT_CRITICAL(&s_lock);
+        if (answered)
+        {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    portENTER_CRITICAL(&s_lock);
+    if (s_orbit_result > 0 && (size_t)s_orbit_result <= max)
+    {
+        result = s_orbit_result;
+        memcpy(reply, s_orbit_reply, (size_t)result);
+    }
+    s_orbit_waiting = false;
+    /* Cancel work not yet taken. A worker already in act() has a local copy;
+     * s_busy prevents the next caller from overwriting its request metadata. */
+    if (s_cmd == CMD_ORBIT)
+    {
+        s_cmd = CMD_NONE;
+    }
+    s_orbit_calling = false;
+    portEXIT_CRITICAL(&s_lock);
+    return result;
+}
+
+bool ecos_family_ble_open(ecos_family_ble_send_t send, void *context, const uint8_t mac[6])
+{
+    if (send == NULL || context == NULL || mac == NULL || family_disabled())
+    {
+        return false;
+    }
+
+    uint8_t store[ECOS_STORE_SIZE];
+    if (!ecos_store_load(store))
+    {
+        return false;
+    }
+    bool paired = false;
+    for (unsigned i = 0; i < store[1] && i < ECOS_PEERS_MAX; ++i)
+    {
+        const uint8_t *record = store + 2 + i * ECOS_RECORD_SIZE;
+        if (memcmp(record, mac, 6) == 0)
+        {
+            paired = true;
+            break;
+        }
+    }
+    mbedtls_platform_zeroize(store, sizeof(store));
+    if (!paired)
+    {
+        return false;
+    }
+
+    uint8_t local_mac[6];
+    if (esp_read_mac(local_mac, ESP_MAC_WIFI_STA) != ESP_OK)
+    {
+        return false;
+    }
+    portENTER_CRITICAL(&s_lock);
+    bool reserved = !s_ble_link.active && !s_ble_link.closing;
+    if (reserved)
+    {
+        memcpy(s_ble_link.mac, mac, 6);
+        memcpy(s_ble_link.local_mac, local_mac, 6);
+        s_ble_link.send = send;
+        s_ble_link.context = context;
+        s_ble_link.users = 0;
+        s_ble_link.active = true;
+        s_ble_link.hold = true;
+        ++s_holds;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (!reserved)
+    {
+        return false;
+    }
+
+    start_link();
+    portENTER_CRITICAL(&s_lock);
+    bool started = s_running && s_ble_link.active && s_ble_link.context == context && !s_suspend;
+    portEXIT_CRITICAL(&s_lock);
+    if (!started || family_disabled())
+    {
+        ecos_family_ble_close(context);
+        return false;
+    }
+    return true;
+}
+
+bool ecos_family_ble_receive(const uint8_t *frame, size_t length, void *context)
+{
+    if (context == NULL || frame == NULL || !ecos_link_valid(frame, length))
+    {
+        return false;
+    }
+    uint8_t peer_mac[6], local_mac[6];
+    portENTER_CRITICAL(&s_lock);
+    bool matched = s_ble_link.active && s_ble_link.context == context;
+    if (matched)
+    {
+        ++s_ble_link.users;
+        memcpy(peer_mac, s_ble_link.mac, 6);
+        memcpy(local_mac, s_ble_link.local_mac, 6);
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (!matched)
+    {
+        return false;
+    }
+
+    bool valid = memcmp(frame + 5, peer_mac, 6) == 0 && memcmp(frame + 11, local_mac, 6) == 0;
+    bool queued = valid && queue_frame(peer_mac, 0, frame, length);
+    portENTER_CRITICAL(&s_lock);
+    --s_ble_link.users;
+    portEXIT_CRITICAL(&s_lock);
+    return queued;
+}
+
+bool ecos_family_companion(char id[13])
+{
+    int64_t now = esp_timer_get_time();
+    uint8_t peer_mac[6];
+    bool available = false;
+    portENTER_CRITICAL(&s_lock);
+    if (s_ble_link.active)
+    {
+        for (size_t i = 0; i < sizeof(s_info) / sizeof(s_info[0]); ++i)
+        {
+            const member_info_t *info = &s_info[i];
+            if (info->used && memcmp(info->mac, s_ble_link.mac, sizeof(peer_mac)) == 0 && info->known &&
+                info->reachable && info->status_seen_at != 0 && now >= info->status_seen_at &&
+                now - info->status_seen_at <= 30000000 &&
+                (info->status.flags & ECOS_LINK_F_COMPANION) != 0)
+            {
+                memcpy(peer_mac, info->mac, sizeof(peer_mac));
+                available = true;
+                break;
+            }
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (available && id != NULL)
+    {
+        id_text(peer_mac, id);
+    }
+    return available;
+}
+
+void ecos_family_ble_close(void *context)
+{
+    if (context == NULL)
+    {
+        return;
+    }
+    bool owner = false;
+    bool release_hold = false;
+    portENTER_CRITICAL(&s_lock);
+    if (s_ble_link.context == context && s_ble_link.active)
+    {
+        owner = true;
+        s_ble_link.active = false;
+        s_ble_link.closing = true;
+        release_hold = s_ble_link.hold;
+        s_ble_link.hold = false;
+        for (size_t i = 0; i < sizeof(s_info) / sizeof(s_info[0]); ++i)
+        {
+            if (s_info[i].used && memcmp(s_info[i].mac, s_ble_link.mac, 6) == 0)
+            {
+                s_info[i].reachable = false;
+                break;
+            }
+        }
+    }
+    else if (s_ble_link.context != context || !s_ble_link.closing)
+    {
+        portEXIT_CRITICAL(&s_lock);
+        return;
+    }
+    portEXIT_CRITICAL(&s_lock);
+
+    if (release_hold)
+    {
+        ecos_family_hold(false);
+    }
+    for (;;)
+    {
+        portENTER_CRITICAL(&s_lock);
+        bool same = s_ble_link.context == context;
+        unsigned users = same ? s_ble_link.users : 0;
+        if (owner && same && users == 0 && s_ble_link.closing)
+        {
+            memset(&s_ble_link, 0, sizeof(s_ble_link));
+            same = false;
+        }
+        portEXIT_CRITICAL(&s_lock);
+        if (!same || (!owner && users == 0))
+        {
+            return;
+        }
+        vTaskDelay(1);
+    }
 }

@@ -1,5 +1,7 @@
 #include "companion/ble_companion.h"
 #include "ble_bridge.h"
+#include "ble_ecos.h"
+#include "ble_ecos_bus.h"
 
 #include "core/clock.h"
 #include "core/power.h"
@@ -131,6 +133,12 @@ static bool bridge_send(const char *line)
     return send_chunks(line, 50);
 }
 
+static bool ecos_send(const char *line, unsigned epoch)
+{
+    return epoch == atomic_load(&s_control_epoch) && s_conn != BLE_HS_CONN_HANDLE_NONE &&
+           atomic_load(&s_running) && bridge_send(line);
+}
+
 static void send_json(cJSON *json)
 {
     char *text = cJSON_PrintUnformatted(json);
@@ -172,6 +180,9 @@ static void send_version(void)
     cJSON_AddStringToObject(json, "fw", fw_update_running_version());
     cJSON_AddNumberToObject(json, "control", 1);
     cJSON_AddNumberToObject(json, "bridge", 1);   /* app API over Bluetooth, see ble_bridge.c */
+#if CONFIG_WATCH_ECOS_PAIRING
+    cJSON_AddNumberToObject(json, "ecos", 1); /* Public EC01 handshake, same family credential. */
+#endif
     cJSON_AddStringToObject(json, "hw", board_info()->name);
     send_json(json);
 }
@@ -376,14 +387,16 @@ static void handle_gb(const cJSON *msg)
     const char *type = json_string(msg, "t");
 
     if (strcmp(type, "control") == 0) { control_request(msg); }
-    else if (strcmp(type, "api") == 0)
+    else if (strcmp(type, "api") == 0 || strcmp(type, "ecos") == 0 || strcmp(type, "ecosbus") == 0)
     {
         /* The whole API, like the paired browser: only across an encrypted bond. */
         struct ble_gap_conn_desc desc;
         uint16_t conn = s_conn;
         if (ble_gap_conn_find(conn, &desc) == 0 && desc.sec_state.encrypted && desc.sec_state.bonded)
         {
-            ble_bridge_request(msg, conn);
+            if (strcmp(type, "ecosbus") == 0) ble_ecos_bus_request(msg, atomic_load(&s_control_epoch));
+            else if (strcmp(type, "ecos") == 0) ble_ecos_request(msg, atomic_load(&s_control_epoch));
+            else ble_bridge_request(msg, conn);
         }
         else
         {
@@ -611,10 +624,12 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
         case BLE_GAP_EVENT_DISCONNECT:
             portENTER_CRITICAL(&s_lock);
-            s_control_epoch++;
+            unsigned ecos_epoch = s_control_epoch++;
             bool release_control = s_control_lease;
             s_control_lease = false;
             portEXIT_CRITICAL(&s_lock);
+            ble_ecos_disconnect(ecos_epoch);
+            ble_ecos_bus_disconnect(ecos_epoch);
             if (release_control && !sys_post(control_stop, NULL)) {
                 /* Retain ownership so the next connection can reuse/release it. */
                 portENTER_CRITICAL(&s_lock);
@@ -944,10 +959,12 @@ static void stop(void)
     xSemaphoreTake(s_control_guard, portMAX_DELAY);
     s_running = false;
     portENTER_CRITICAL(&s_lock);
-    s_control_epoch++;
+    unsigned ecos_epoch = s_control_epoch++;
     bool release_control = s_control_lease;
     s_control_lease = false;
     portEXIT_CRITICAL(&s_lock);
+    ble_ecos_disconnect(ecos_epoch);
+    ble_ecos_bus_disconnect(ecos_epoch);
     xSemaphoreGive(s_control_guard);
     if (release_control) web_server_stop();
 
@@ -1030,6 +1047,8 @@ esp_err_t ble_companion_init(void)
     if (s_send_lock == NULL) s_send_lock = xSemaphoreCreateMutex();
     if (s_send_lock == NULL) return ESP_ERR_NO_MEM;
     ble_bridge_init(bridge_send);
+    ble_ecos_init(ecos_send);
+    ble_ecos_bus_init(ecos_send);
     s_line = heap_caps_malloc(BLE_LINE_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     if (s_line == NULL)

@@ -1,4 +1,5 @@
 #include "services/wifi.h"
+#include "wifi_channel.h"
 #include "core/settings.h"
 #include "services/storage.h"
 
@@ -52,6 +53,9 @@ static unsigned s_radio_refs; /* ESP-NOW needs STA even alongside the fallback A
 static unsigned s_scans;       /* STA must stay enabled through concurrent radio owners. */
 static int s_last_reason = 0;   /* wifi_err_reason_t of the last disconnection */
 static uint8_t s_home_channel = 0;   /* channel of the last network joined */
+static uint8_t s_common_channel = 1;
+static wifi_channel_policy_t s_channel_policy;
+static const uint8_t s_intercom_owner[WIFI_CHANNEL_OWNER_SIZE] = {'O', 'A', '0', '1'};
 static esp_pm_lock_handle_t s_ap_lock = NULL;   /* no light sleep while our access point runs */
 
 static EXT_RAM_BSS_ATTR wifi_known_t s_known[WIFI_KNOWN_MAX];
@@ -100,6 +104,7 @@ static void known_load(void)
 {
     nvs_handle_t nvs;
     s_known_count = 0;
+    s_common_channel = 1;
 
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK)
     {
@@ -108,6 +113,12 @@ static void known_load(void)
 
     size_t preferred_size = sizeof(s_preferred);
     if (nvs_get_str(nvs, "preferred", s_preferred, &preferred_size) != ESP_OK) s_preferred[0] = '\0';
+    uint8_t common_channel = 0;
+    if (nvs_get_u8(nvs, "channel", &common_channel) == ESP_OK &&
+        wifi_channel_valid(common_channel))
+    {
+        s_common_channel = common_channel;
+    }
     size_t size = sizeof(s_known);
 
     if (nvs_get_blob(nvs, NVS_KEY, s_known, &size) == ESP_OK &&
@@ -367,6 +378,7 @@ static wifi_mode_t wanted_mode(bool need_sta)
  * The network interfaces live and die with it.
  */
 static bool s_driver = false;
+static bool s_driver_ready;
 
 bool wifi_activity_snapshot(wifi_activity_t *out)
 {
@@ -377,11 +389,18 @@ bool wifi_activity_snapshot(wifi_activity_t *out)
     return true;
 }
 
+static void driver_down(void);
+
 static bool driver_up(void)
 {
-    if (s_driver)
+    if (s_driver && s_driver_ready)
     {
         return true;
+    }
+    if (s_driver)
+    {
+        driver_down();   /* retry an earlier failed storage/setup rollback */
+        if (s_driver) return false;
     }
 
     if (s_sta == NULL)
@@ -394,31 +413,48 @@ static bool driver_up(void)
         s_ap = esp_netif_create_default_wifi_ap();
     }
 
+    if (s_sta == NULL || s_ap == NULL)
+    {
+        driver_down();
+        return false;
+    }
+
     wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
     esp_err_t err = esp_wifi_init(&config);
 
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Driver not started: %s", esp_err_to_name(err));
+        driver_down();   /* esp_wifi_init owns its rollback; netifs are ours */
         sys_heap_log("wifi init");
         return false;
     }
-
-    esp_wifi_set_storage(WIFI_STORAGE_RAM);   /* our list is in NVS already */
     s_driver = true;
+    err = esp_wifi_set_storage(WIFI_STORAGE_RAM);   /* our list is in NVS already */
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Driver storage failed: %s", esp_err_to_name(err));
+        driver_down();
+        return false;
+    }
+    s_driver_ready = true;
 
     return true;
 }
 
 static void driver_down(void)
 {
-    if (!s_driver)
+    if (s_driver)
     {
-        return;
+        esp_err_t err = esp_wifi_deinit();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Driver cleanup failed: %s", esp_err_to_name(err));
+            return;   /* keep ownership: never destroy netifs still used by the driver */
+        }
+        s_driver = false;
+        s_driver_ready = false;
     }
-
-    esp_wifi_deinit();
-    s_driver = false;
 
     if (s_sta != NULL)
     {
@@ -450,6 +486,10 @@ static bool radio_on(wifi_mode_t mode)
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Radio mode/start failed: %s", esp_err_to_name(err));
+        if (!s_started)
+        {
+            driver_down();   /* preserve an already-running radio held by another client */
+        }
         return false;
     }
 
@@ -492,16 +532,19 @@ static void ap_set(bool on)
 
 static void radio_off(void)
 {
-    if (!s_started)
-    {
-        return;
-    }
-
     s_sta_wanted = false;
-    ap_set(false);
     xEventGroupClearBits(s_events, CONNECTED_BIT | FAILED_BIT);
-    esp_wifi_stop();
-    s_started = false;
+    if (s_started)
+    {
+        esp_err_t err = esp_wifi_stop();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Radio stop failed: %s", esp_err_to_name(err));
+            return;
+        }
+        s_started = false;
+    }
+    ap_set(false);
     driver_down();
     state_set(STATE_WIFI, STATE_WIFI_OFF);
     ESP_LOGI(TAG, "Off");
@@ -516,6 +559,43 @@ static void off_job(void *arg)
     if (s_refs == 0)
     {
         radio_off();
+        if (s_driver || s_started || s_sta != NULL || s_ap != NULL)
+        {
+            esp_timer_start_once(s_off_timer, 1000000);   /* retry cleanup without allocating a task */
+        }
+    }
+    else if (s_radio_refs > 0 && s_refs == (int)s_radio_refs &&
+             !s_ap_on && s_scans == 0)
+    {
+        /* A radio lease keeps the driver alive, but no longer needs a joined
+         * network. Disconnect first so the shared channel can be restored. */
+        s_sta_wanted = false;
+        esp_err_t disconnected = esp_wifi_disconnect();
+        bool retry = disconnected != ESP_OK && disconnected != ESP_ERR_WIFI_NOT_CONNECT;
+        if (!retry)
+        {
+            xEventGroupClearBits(s_events, CONNECTED_BIT | FAILED_BIT);
+            state_set(STATE_WIFI, STATE_WIFI_OFF);
+            uint8_t pinned = wifi_channel_pinned(&s_channel_policy);
+            if (wifi_channel_valid(pinned))
+            {
+                uint8_t current = 0;
+                wifi_second_chan_t second;
+                if (esp_wifi_get_channel(&current, &second) != ESP_OK)
+                {
+                    retry = true;
+                }
+                else if (current != pinned &&
+                         esp_wifi_set_channel(pinned, WIFI_SECOND_CHAN_NONE) != ESP_OK)
+                {
+                    retry = true;
+                }
+            }
+        }
+        if (retry)
+        {
+            esp_timer_start_once(s_off_timer, 1000000);
+        }
     }
 
     xSemaphoreGive(s_mutex);
@@ -525,12 +605,24 @@ static void off_job(void *arg)
 static void off_timer_cb(void *arg)
 {
     (void)arg;
-    sys_post(off_job, NULL);
+    if (!sys_post(off_job, NULL))
+    {
+        esp_timer_start_once(s_off_timer, 1000000);   /* a full sys queue must not strand the radio */
+    }
+}
+
+static bool intercom_channel_reserved(void)
+{
+    return wifi_channel_owner_has_reservation(&s_channel_policy, s_intercom_owner);
 }
 
 /* Join one network. Called with the mutex held. */
 static esp_err_t join(const char *ssid, const char *password, uint32_t timeout_ms)
 {
+    if (intercom_channel_reserved())
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (ssid == NULL || ssid[0] == '\0' || strlen(ssid) > 32 ||
         (password != NULL && strlen(password) > 64)) return ESP_ERR_INVALID_ARG;
     wifi_config_t config = {0};
@@ -705,15 +797,23 @@ esp_err_t wifi_acquire(uint32_t timeout_ms)
 
     if (!wifi_is_connected())
     {
-        /* Background jobs wait: joining now would kick the phone off our access point. */
-        err = ap_has_clients() ? ESP_ERR_INVALID_STATE : join_best_known(timeout_ms);
+        /* Preserve active OA01 audio; a joined network can still be reused above. */
+        if (intercom_channel_reserved())
+        {
+            err = ESP_ERR_INVALID_STATE;
+        }
+        else
+        {
+            /* Background jobs wait: joining now would kick the phone off our access point. */
+            err = ap_has_clients() ? ESP_ERR_INVALID_STATE : join_best_known(timeout_ms);
+        }
     }
 
     if (err != ESP_OK)
     {
         s_refs--;
 
-        if (s_refs == 0)
+        if (s_refs == 0 || s_refs == (int)s_radio_refs)
         {
             esp_timer_start_once(s_off_timer, 1000);
         }
@@ -735,7 +835,7 @@ esp_err_t wifi_radio_acquire(void)
     {
         s_refs--;
         s_radio_refs--;
-        if (s_refs == 0)
+        if (s_refs == 0 || s_refs == (int)s_radio_refs)
         {
             esp_timer_start_once(s_off_timer, 1000);
         }
@@ -762,9 +862,125 @@ uint8_t wifi_home_channel(void)
 
 bool wifi_radio_set_channel(uint8_t channel)
 {
+    if (xSemaphoreTake(s_mutex, 0) != pdTRUE)
+    {
+        return false;
+    }
+    uint8_t current = 0;
+    wifi_second_chan_t second;
+    bool ok = s_started && wifi_channel_valid(channel) &&
+              esp_wifi_get_channel(&current, &second) == ESP_OK &&
+              wifi_channel_allowed(&s_channel_policy, channel,
+                                   s_ap_on || wifi_is_connected(), current);
+    if (ok && current != channel)
+    {
+        ok = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) == ESP_OK;
+    }
+    xSemaphoreGive(s_mutex);
+    return ok;
+}
+
+bool wifi_radio_channel_reserve(const char owner[4], uint8_t channel)
+{
+    if (owner == NULL)
+    {
+        return false;
+    }
+    if (xSemaphoreTake(s_mutex, 0) != pdTRUE)
+    {
+        return false;
+    }
+    uint8_t current = 0;
+    wifi_second_chan_t second;
+    bool ok = s_started &&
+              esp_wifi_get_channel(&current, &second) == ESP_OK &&
+              wifi_channel_valid(current);
+    wifi_channel_policy_t candidate = s_channel_policy;
+    bool network_bound = s_ap_on || wifi_is_connected();
+    if (ok)
+    {
+        ok = wifi_channel_reserve(&candidate, (const uint8_t *)owner, channel,
+                                  network_bound, current);
+    }
+    if (ok && current != channel)
+    {
+        ok = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) == ESP_OK;
+    }
+    if (ok)
+    {
+        s_channel_policy = candidate;
+    }
+    xSemaphoreGive(s_mutex);
+    return ok;
+}
+
+void wifi_radio_channel_release(const char owner[4])
+{
+    if (owner == NULL)
+    {
+        return;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    bool ok = s_started && !s_ap_on && !wifi_is_connected() && channel >= 1 && channel <= 13 &&
-              esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE) == ESP_OK;
+    (void)wifi_channel_release(&s_channel_policy, (const uint8_t *)owner);
+    xSemaphoreGive(s_mutex);
+}
+
+uint8_t wifi_radio_pinned_channel(void)
+{
+    if (xSemaphoreTake(s_mutex, 0) != pdTRUE)
+    {
+        return 0;
+    }
+    uint8_t channel = wifi_channel_pinned(&s_channel_policy);
+    xSemaphoreGive(s_mutex);
+    return channel;
+}
+
+uint8_t wifi_radio_common_channel(void)
+{
+    if (xSemaphoreTake(s_mutex, 0) != pdTRUE)
+    {
+        return 0;
+    }
+    uint8_t channel = s_common_channel;
+    xSemaphoreGive(s_mutex);
+    return channel;
+}
+
+bool wifi_radio_common_channel_set(uint8_t channel)
+{
+    if (!wifi_channel_valid(channel))
+    {
+        return false;
+    }
+    if (xSemaphoreTake(s_mutex, 0) != pdTRUE)
+    {
+        return false;
+    }
+    uint8_t pinned = wifi_channel_pinned(&s_channel_policy);
+    bool ok = pinned == 0 || pinned == channel;
+    if (ok && channel != s_common_channel)
+    {
+        nvs_handle_t nvs;
+        ok = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK;
+        if (ok)
+        {
+            esp_err_t err = nvs_set_u8(nvs, "channel", channel);
+            if (err == ESP_OK)
+            {
+                err = nvs_commit(nvs);
+            }
+            if (err == ESP_OK)
+            {
+                s_common_channel = channel;
+            }
+            else
+            {
+                ok = false;
+            }
+            nvs_close(nvs);
+        }
+    }
     xSemaphoreGive(s_mutex);
     return ok;
 }
@@ -780,7 +996,15 @@ void wifi_radio_release(void)
             esp_timer_stop(s_off_timer);
             esp_timer_start_once(s_off_timer, OFF_DELAY_US);
         }
-        if (s_ap_on) radio_on(wanted_mode(false));
+        else if (s_refs == (int)s_radio_refs)
+        {
+            esp_timer_stop(s_off_timer);
+            esp_timer_start_once(s_off_timer, OFF_DELAY_US);
+        }
+        if (s_ap_on)
+        {
+            radio_on(wanted_mode(false));
+        }
     }
     xSemaphoreGive(s_mutex);
 }
@@ -789,10 +1013,14 @@ void wifi_release(void)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
-    if (s_refs > 0 && --s_refs == 0)
+    if (s_refs > (int)s_radio_refs)
     {
-        esp_timer_stop(s_off_timer);
-        esp_timer_start_once(s_off_timer, OFF_DELAY_US);
+        s_refs--;
+        if (s_refs == 0 || s_refs == (int)s_radio_refs)
+        {
+            esp_timer_stop(s_off_timer);
+            esp_timer_start_once(s_off_timer, OFF_DELAY_US);
+        }
     }
 
     xSemaphoreGive(s_mutex);
@@ -802,10 +1030,14 @@ void wifi_release_now(void)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
-    if (s_refs > 0 && --s_refs == 0)
+    if (s_refs > (int)s_radio_refs)
     {
-        esp_timer_stop(s_off_timer);
-        esp_timer_start_once(s_off_timer, 1000);   /* the usual off path, without waiting */
+        s_refs--;
+        if (s_refs == 0 || s_refs == (int)s_radio_refs)
+        {
+            esp_timer_stop(s_off_timer);
+            esp_timer_start_once(s_off_timer, 1000);   /* the usual off path, without waiting */
+        }
     }
 
     xSemaphoreGive(s_mutex);
@@ -896,7 +1128,13 @@ bool wifi_get_ip(char *out, size_t size)
 /* One scan: the raw records (free them), *found their count. NULL if none. */
 static wifi_ap_record_t *scan_run(bool hidden, uint16_t *found)
 {
+    *found = 0;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (intercom_channel_reserved())
+    {
+        xSemaphoreGive(s_mutex);
+        return NULL;
+    }
     bool was_started = s_started;
     s_scans++;
     radio_on(wanted_mode(true));
@@ -904,8 +1142,6 @@ static wifi_ap_record_t *scan_run(bool hidden, uint16_t *found)
 
     wifi_scan_config_t scan = {.show_hidden = hidden};
     wifi_ap_record_t *records = NULL;
-    *found = 0;
-
     /* Two jobs asking for the network at once (weather + market) used to scan
      * together: the driver ends the first scan early and both found nothing. */
     xSemaphoreTake(s_scan_mutex, portMAX_DELAY);
@@ -937,10 +1173,12 @@ static wifi_ap_record_t *scan_run(bool hidden, uint16_t *found)
     {
         radio_on(wanted_mode(false));   /* back to a pure access point */
     }
-    if (!was_started && s_refs == 0)
+    if ((!was_started && s_refs == 0) ||
+        (s_radio_refs > 0 && s_refs == (int)s_radio_refs && !s_ap_on))
     {
         esp_timer_stop(s_off_timer);
-        esp_timer_start_once(s_off_timer, OFF_DELAY_US);
+        esp_timer_start_once(s_off_timer,
+                             s_refs == (int)s_radio_refs ? 1000 : OFF_DELAY_US);
     }
     xSemaphoreGive(s_mutex);
     return records;
@@ -1032,7 +1270,8 @@ esp_err_t wifi_connect_new(const char *ssid, const char *password, uint32_t time
         if (err == ESP_OK && save_preferred_locked(ssid) != ESP_OK)
             ESP_LOGW(TAG, "Connected; preferred network could not be persisted");
     }
-    if (err != ESP_OK && --s_refs == 0)
+    if (err != ESP_OK && --s_refs >= 0 &&
+        (s_refs == 0 || s_refs == (int)s_radio_refs))
     {
         esp_timer_start_once(s_off_timer, 1000);
     }
@@ -1066,7 +1305,9 @@ esp_err_t wifi_connect_saved(const char *ssid, uint32_t timeout_ms)
     esp_err_t err = join(s_known[index].ssid, s_known[index].password, timeout_ms);
     if (err == ESP_OK && save_preferred_locked(ssid) != ESP_OK)
         ESP_LOGW(TAG, "Connected; preferred network could not be persisted");
-    if (err != ESP_OK && --s_refs == 0) esp_timer_start_once(s_off_timer, 1000);
+    if (err != ESP_OK && --s_refs >= 0 &&
+        (s_refs == 0 || s_refs == (int)s_radio_refs))
+        esp_timer_start_once(s_off_timer, 1000);
     xSemaphoreGive(s_mutex);
     return err;
 }

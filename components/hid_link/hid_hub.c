@@ -1,7 +1,7 @@
 /*
  * Remote Hub transport (see include/hid_link/hid_hub.h).
  *
- * Radio: ESP-NOW on a fixed channel, without ESP-NOW encryption (no shared PMK
+ * Radio: ESP-NOW on the reserved family channel, without ESP-NOW encryption (no shared PMK
  * to get wrong). Every data frame is sealed here with AES-128-GCM:
  *
  *   0..1 "RH"  2 version 2  3 kind  4..15 random nonce  16..39 sealed packet  40..55 tag
@@ -25,15 +25,17 @@
 
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_mac.h"
-#include "esp_netif.h"
-#include "esp_now.h"
 #include "esp_pm.h"
 #include "esp_random.h"
 #include "esp_timer.h"
-#include "esp_wifi.h"
+#include "../services/ecos/ecos_bus.h"
+#include "services/wifi.h"
+#include "hid_hub_ecos.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/idf_additions.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
@@ -45,7 +47,7 @@
 
 static const char *TAG = "hid_hub";
 
-#define CHANNEL 1
+#define HID_BUS_TAG "RHUB"
 #define FRAME_SIZE (16 + HUB_PACKET_SIZE + 16)
 #define PUBLIC_KEY 65
 #define PAIR_SIZE (4 + HID_HUB_NAME + PUBLIC_KEY + 16)
@@ -130,9 +132,12 @@ static hub_state_t s_state;
 static pairing_t s_pair;
 static SemaphoreHandle_t s_lock;   /* config, pairing and peer list for the UI */
 static SemaphoreHandle_t s_sender; /* one transaction at a time (session, sequence) */
+static SemaphoreHandle_t s_start_gate;
 static QueueHandle_t s_rx, s_local, s_ack;
+static TaskHandle_t s_worker_task, s_heartbeat_task;
 static esp_pm_lock_handle_t s_power;
 static atomic_bool s_started;
+static atomic_bool s_starting;
 static atomic_uint s_received, s_retries, s_dropped, s_rejected, s_connected_mask;
 static uint64_t s_nonce[HUB_NODES]; /* worker-owned HELLO nonces */
 static uint64_t s_boot_nonce, s_session;
@@ -142,6 +147,9 @@ static uint8_t s_pending_packet[HUB_PACKET_SIZE];
 static int8_t s_rssi[HID_HUB_PEERS];
 
 static const uint8_t s_broadcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+static const uint8_t s_bus_pattern[4] = {'R', 0x40, 0, 0};
+static const uint8_t s_bus_mask[4] = {0xff, 0xe7, 0, 0};
+static bool s_bus_open;
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
 
@@ -297,6 +305,94 @@ static bool hmac(const uint8_t *key, size_t key_length, const uint8_t *message, 
     return ok;
 }
 
+static bool family_store(uint8_t store[HID_ECOS_STORE])
+{
+    memset(store, 0, HID_ECOS_STORE);
+    nvs_handle_t handle;
+    if (nvs_open("ecos", NVS_READONLY, &handle) != ESP_OK) return false;
+    size_t length = HID_ECOS_STORE;
+    esp_err_t error = nvs_get_blob(handle, "peers", store, &length);
+    nvs_close(handle);
+    return error == ESP_OK && hid_ecos_store(store, length);
+}
+
+static bool family_key(const uint8_t mac[6], uint8_t key[16])
+{
+    uint8_t self[6], store[HID_ECOS_STORE], context[24], material[32] = {0};
+    const uint8_t *record = family_store(store) ? hid_ecos_find(store, mac) : NULL;
+    bool ok = record != NULL && esp_read_mac(self, ESP_MAC_WIFI_STA) == ESP_OK &&
+              hid_ecos_context(self, mac, context) &&
+              hmac(record + 30, 32, context, sizeof(context), material);
+    if (ok) memcpy(key, material, 16);
+    memset(material, 0, sizeof(material));
+    memset(store, 0, sizeof(store));
+    return ok;
+}
+
+int hid_hub_family_peers(hid_hub_peer_info_t *out, int max)
+{
+    if (out == NULL || max <= 0) return 0;
+    uint8_t store[HID_ECOS_STORE];
+    int count = 0;
+    if (family_store(store))
+    {
+        for (unsigned i = 0; i < store[1] && count < max; ++i)
+        {
+            const uint8_t *record = store + 2 + i * HID_ECOS_RECORD;
+            hid_hub_peer_info_t *peer = &out[count++];
+            memset(peer, 0, sizeof(*peer));
+            memcpy(peer->mac, record, 6);
+            memcpy(peer->name, record + 6, HID_HUB_NAME - 1);
+        }
+    }
+    memset(store, 0, sizeof(store));
+    return count;
+}
+
+esp_err_t hid_hub_family_authorize(const uint8_t mac[6])
+{
+    uint8_t store[HID_ECOS_STORE], key[16] = {0};
+    const uint8_t *record = family_store(store) ? hid_ecos_find(store, mac) : NULL;
+    if (record == NULL)
+    {
+        memset(store, 0, sizeof(store));
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (psa_crypto_init() != PSA_SUCCESS || !family_key(mac, key))
+    {
+        memset(store, 0, sizeof(store));
+        return ESP_FAIL;
+    }
+    if (!atomic_load(&s_started)) config_load();
+    if (s_lock != NULL) xSemaphoreTake(s_lock, portMAX_DELAY);
+    config_t next = s_config;
+    int slot = -1;
+    if (next.role == HID_HUB_SATELLITE) slot = 0;
+    else if (next.role == HID_HUB_HUB)
+    {
+        for (int i = 0; i < HID_HUB_PEERS; ++i)
+            if (next.peers[i].used && memcmp(next.peers[i].mac, mac, 6) == 0) slot = i;
+        for (int i = 0; slot < 0 && i < HID_HUB_PEERS; ++i)
+            if (!next.peers[i].used) slot = i;
+    }
+    esp_err_t error = next.role == HID_HUB_OFF ? ESP_ERR_INVALID_STATE : ESP_ERR_NO_MEM;
+    if (slot >= 0)
+    {
+        peer_t *peer = &next.peers[slot];
+        memset(peer, 0, sizeof(*peer));
+        peer->used = 2; /* Bind the explicit grant to this ECOS credential. */
+        memcpy(peer->key, key, sizeof(peer->key));
+        memcpy(peer->mac, mac, 6);
+        memcpy(peer->name, record + 6, HID_HUB_NAME - 1);
+        error = config_save(&next);
+    }
+    if (s_lock != NULL) xSemaphoreGive(s_lock);
+    memset(&next, 0, sizeof(next));
+    memset(store, 0, sizeof(store));
+    memset(key, 0, sizeof(key));
+    return error;
+}
+
 static bool confirm_tag(bool from_hub, uint8_t tag[32])
 {
     uint8_t message[3 + 32];
@@ -361,13 +457,9 @@ static void receive_frame(const esp_now_recv_info_t *info, const uint8_t *data, 
         atomic_fetch_add(&s_dropped, 1);
 }
 
-static void add_radio_peer(const uint8_t mac[6])
+static esp_err_t add_radio_peer(const uint8_t mac[6])
 {
-    if (esp_now_is_peer_exist(mac))
-        return;
-    esp_now_peer_info_t peer = {.channel = CHANNEL, .ifidx = WIFI_IF_STA, .encrypt = false};
-    memcpy(peer.peer_addr, mac, 6);
-    esp_now_add_peer(&peer);
+    return ecos_bus_peer(mac);
 }
 
 static int peer_index(const uint8_t mac[6])
@@ -390,7 +482,7 @@ static void respond(unsigned node, const uint8_t reply[HUB_PACKET_SIZE])
     }
     uint8_t frame[FRAME_SIZE];
     if (seal(node - 1, reply, frame))
-        esp_now_send(s_config.peers[node - 1].mac, frame, FRAME_SIZE);
+        ecos_bus_send_tag(HID_BUS_TAG, s_config.peers[node - 1].mac, frame, FRAME_SIZE);
 }
 
 /* Owner of s_sender: send one request and wait for its matching reply. */
@@ -411,7 +503,7 @@ static bool exchange(const uint8_t *packet, uint8_t *reply)
         {
             uint8_t frame[FRAME_SIZE];
             if (!s_config.peers[0].used || !seal(0, packet, frame) ||
-                esp_now_send(s_config.peers[0].mac, frame, FRAME_SIZE) != ESP_OK)
+                ecos_bus_send_tag(HID_BUS_TAG, s_config.peers[0].mac, frame, FRAME_SIZE) != ESP_OK)
             {
                 vTaskDelay(pdMS_TO_TICKS(5));
                 continue;
@@ -514,6 +606,7 @@ static esp_err_t forward(uint8_t id, const uint8_t *data, uint16_t length)
 static void heartbeat_task(void *arg)
 {
     (void)arg;
+    xSemaphoreTake(s_start_gate, portMAX_DELAY);
     for (;;)
     {
         vTaskDelay(pdMS_TO_TICKS(150));
@@ -655,7 +748,7 @@ static void send_confirm(void)
     if (!confirm_tag(is_hub(), tag))
         return;
     memcpy(frame + 4, tag, 16);
-    esp_now_send(s_pair.peer_mac, frame, sizeof(frame));
+    ecos_bus_send_tag(HID_BUS_TAG, s_pair.peer_mac, frame, sizeof(frame));
     memset(tag, 0, sizeof(tag));
 }
 
@@ -862,12 +955,12 @@ static void pair_tick(void)
     if (phase == HID_HUB_PAIR_OPEN && is_hub())
     {
         pair_frame(KIND_BEACON, frame);
-        esp_now_send(s_broadcast, frame, sizeof(frame));
+        ecos_bus_send_tag(HID_BUS_TAG, s_broadcast, frame, sizeof(frame));
     }
     else if (phase == HID_HUB_PAIR_CODE && !is_hub())
     {
         pair_frame(KIND_JOIN, frame); /* until the hub shows the code too */
-        esp_now_send(s_pair.peer_mac, frame, sizeof(frame));
+        ecos_bus_send_tag(HID_BUS_TAG, s_pair.peer_mac, frame, sizeof(frame));
     }
     else if (phase == HID_HUB_PAIR_CONFIRMED)
         send_confirm();
@@ -897,6 +990,7 @@ static void log_stats(void)
 static void worker(void *arg)
 {
     (void)arg;
+    xSemaphoreTake(s_start_gate, portMAX_DELAY);
     uint32_t epoch = UINT32_MAX;
     for (;;)
     {
@@ -955,55 +1049,98 @@ static void worker(void *arg)
 
 esp_err_t hid_hub_start(const char *name)
 {
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&s_starting, &expected, true)) return ESP_ERR_INVALID_STATE;
     if (atomic_load(&s_started))
+    {
+        atomic_store(&s_starting, false);
         return ESP_ERR_INVALID_STATE;
+    }
     config_load();
     if (s_config.role == HID_HUB_OFF)
+    {
+        atomic_store(&s_starting, false);
         return ESP_ERR_NOT_SUPPORTED;
+    }
     snprintf(s_name, sizeof(s_name), "%s", name ? name : "Remote");
     s_lock = xSemaphoreCreateMutex();
     s_sender = xSemaphoreCreateMutex();
-    s_rx = xQueueCreate(16, sizeof(rx_t));
-    s_local = xQueueCreate(8, sizeof(local_t));
-    s_ack = xQueueCreate(8, HUB_PACKET_SIZE);
-    if (!s_lock || !s_sender || !s_rx || !s_local || !s_ack || psa_crypto_init() != PSA_SUCCESS)
-        return ESP_ERR_NO_MEM;
-    esp_err_t error = esp_event_loop_create_default();
-    if (error != ESP_OK && error != ESP_ERR_INVALID_STATE)
-        return error;
-    ESP_ERROR_CHECK(esp_netif_init());
-    wifi_init_config_t wifi = WIFI_INIT_CONFIG_DEFAULT();
-    if ((error = esp_wifi_init(&wifi)) != ESP_OK || (error = esp_wifi_set_storage(WIFI_STORAGE_RAM)) != ESP_OK ||
-        (error = esp_wifi_set_mode(WIFI_MODE_STA)) != ESP_OK || (error = esp_wifi_start()) != ESP_OK ||
-        (error = esp_wifi_set_channel(CHANNEL, WIFI_SECOND_CHAN_NONE)) != ESP_OK ||
-        (error = esp_now_init()) != ESP_OK || (error = esp_now_register_recv_cb(receive_frame)) != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Radio start: %s", esp_err_to_name(error));
-        return error;
-    }
-    /* Modem sleep would miss frames; with Bluetooth the coexistence scheduler shares the radio. */
-    esp_wifi_set_ps(hid_link_transport() == HID_LINK_BLE ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
-    esp_read_mac(s_mac, ESP_MAC_WIFI_STA);
-    add_radio_peer(s_broadcast);
+    s_rx = xQueueCreateWithCaps(16, sizeof(rx_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_local = xQueueCreateWithCaps(8, sizeof(local_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_ack = xQueueCreateWithCaps(8, HUB_PACKET_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_start_gate = xSemaphoreCreateCounting(2, 0);
+    esp_err_t error = ESP_ERR_NO_MEM;
+    bool power_acquired = false;
+    bool channel_reserved = false;
+    if (!s_lock || !s_sender || !s_rx || !s_local || !s_ack || !s_start_gate)
+        goto fail;
+    if (psa_crypto_init() != PSA_SUCCESS) { error = ESP_FAIL; goto fail; }
+    error = ecos_bus_open_mask(HID_BUS_TAG, s_bus_pattern, s_bus_mask, receive_frame, NULL, 0);
+    if (error != ESP_OK) goto fail;
+    s_bus_open = true;
+    uint8_t channel = wifi_is_connected() ? wifi_radio_channel() : wifi_radio_pinned_channel();
+    if (channel == 0) channel = wifi_radio_common_channel();
+    if (!wifi_radio_channel_reserve(HID_BUS_TAG, channel)) { error = ESP_ERR_INVALID_STATE; goto fail; }
+    channel_reserved = true;
+    if ((error = esp_read_mac(s_mac, ESP_MAC_WIFI_STA)) != ESP_OK) goto fail;
+    if ((error = add_radio_peer(s_broadcast)) != ESP_OK) goto fail;
     for (int i = 0; i < HID_HUB_PEERS; i++)
         if (s_config.peers[i].used)
         {
-            s_keys[i] = import_aes(s_config.peers[i].key);
-            add_radio_peer(s_config.peers[i].mac);
+            uint8_t key[16];
+            if (s_config.peers[i].used == 2)
+            {
+                if (!family_key(s_config.peers[i].mac, key) ||
+                    memcmp(key, s_config.peers[i].key, sizeof(key)) != 0)
+                {
+                    /* Revoked/changed ECOS membership never falls back to a
+                     * stale legacy key. Other explicitly paired peers work. */
+                    s_config.peers[i].used = 0;
+                    memset(key, 0, sizeof(key));
+                    continue;
+                }
+            }
+            else memcpy(key, s_config.peers[i].key, sizeof(key));
+            s_keys[i] = import_aes(key);
+            memset(key, 0, sizeof(key));
+            if (!s_keys[i]) { error = ESP_FAIL; goto fail; }
+            if (add_radio_peer(s_config.peers[i].mac) != ESP_OK) { error = ESP_FAIL; goto fail; }
         }
-    if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "remote_hub", &s_power) == ESP_OK)
-        esp_pm_lock_acquire(s_power);
+    error = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "remote_hub", &s_power);
+    if (error != ESP_OK) goto fail;
+    error = esp_pm_lock_acquire(s_power);
+    if (error != ESP_OK) goto fail;
+    power_acquired = true;
     hub_state_init(&s_state);
     s_boot_nonce = random_session();
     s_sender_epoch = hid_link_version();
+    if (xTaskCreatePinnedToCore(worker, "hub", 5120, NULL, 5, &s_worker_task, 0) != pdPASS) { error = ESP_ERR_NO_MEM; goto fail; }
+    if (!is_hub() && xTaskCreatePinnedToCore(heartbeat_task, "hub_beat", 3072, NULL, 4, &s_heartbeat_task, 0) != pdPASS) { error = ESP_ERR_NO_MEM; goto fail; }
     atomic_store(&s_started, true);
-    if (xTaskCreatePinnedToCore(worker, "hub", 5120, NULL, 5, NULL, 0) != pdPASS ||
-        (!is_hub() && xTaskCreatePinnedToCore(heartbeat_task, "hub_beat", 3072, NULL, 4, NULL, 0) != pdPASS))
-        return ESP_ERR_NO_MEM;
+    xSemaphoreGive(s_start_gate);
+    if (!is_hub()) xSemaphoreGive(s_start_gate);
     hid_link_set_router(forward);
-    ESP_LOGI(TAG, "%s on channel %d, %s", is_hub() ? "Hub" : "Satellite", CHANNEL,
+    atomic_store(&s_starting, false);
+    ESP_LOGI(TAG, "%s on channel %d, %s", is_hub() ? "Hub" : "Satellite", channel,
              hid_link_transport() == HID_LINK_BLE ? "Bluetooth" : hid_link_transport() == HID_LINK_USB ? "USB" : "radio");
     return ESP_OK;
+
+fail:
+    atomic_store(&s_started, false);
+    if (s_worker_task) { vTaskDelete(s_worker_task); s_worker_task=NULL; }
+    if (s_heartbeat_task) { vTaskDelete(s_heartbeat_task); s_heartbeat_task=NULL; }
+    if (s_power) { if (power_acquired) esp_pm_lock_release(s_power); esp_pm_lock_delete(s_power); s_power=NULL; }
+    for (int i=0;i<HID_HUB_PEERS;i++) if(s_keys[i]) { psa_destroy_key(s_keys[i]); s_keys[i]=0; }
+    if (channel_reserved) wifi_radio_channel_release(HID_BUS_TAG);
+    if (s_bus_open) { ecos_bus_close(HID_BUS_TAG); s_bus_open=false; }
+    if (s_rx) { vQueueDeleteWithCaps(s_rx); s_rx=NULL; }
+    if (s_local) { vQueueDeleteWithCaps(s_local); s_local=NULL; }
+    if (s_ack) { vQueueDeleteWithCaps(s_ack); s_ack=NULL; }
+    if (s_sender) { vSemaphoreDelete(s_sender); s_sender=NULL; }
+    if (s_lock) { vSemaphoreDelete(s_lock); s_lock=NULL; }
+    if (s_start_gate) { vSemaphoreDelete(s_start_gate); s_start_gate=NULL; }
+    atomic_store(&s_starting, false);
+    return error;
 }
 
 /* ------------------------------------------------------------ UI API */
@@ -1049,8 +1186,6 @@ esp_err_t hid_hub_forget(int index)
         error = config_save(&next);
         if (error == ESP_OK)
         {
-            if (atomic_load(&s_started))
-                esp_now_del_peer(s_config.peers[slot].mac);
             s_config = next;
             if (s_keys[slot])
                 psa_destroy_key(s_keys[slot]);

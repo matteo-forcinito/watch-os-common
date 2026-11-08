@@ -13,7 +13,13 @@
 #include "esp_heap_caps.h"
 #include "services/ecos.h"
 #include "services/sound.h"
+#include "services/notify.h"
+#include "cJSON.h"
+#include "../link/link_house.h"
+#include "../link/link_intercom.h"
+#include "../link/link_routes.h"
 #include "ui/ui.h"
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -162,6 +168,35 @@ static void list_deleted(lv_event_t *e)
     free(ui);
 }
 
+static void house_click(lv_event_t *e)
+{
+    const char *action = lv_event_get_user_data(e);
+    cJSON *json = cJSON_CreateObject();
+    bool queued = false;
+    if (json != NULL)
+    {
+        if (strcmp(action, "aura") == 0)
+        {
+            cJSON_AddStringToObject(json, "scene", "aura");
+            queued = link_house_scene(json, false);
+        }
+        else
+        {
+            cJSON_AddStringToObject(json, "action", action);
+            if (strcmp(action, "start") == 0) cJSON_AddNumberToObject(json, "seconds", 60);
+            queued = link_house_timer(json, false);
+        }
+    }
+    if (!queued)
+    {
+        notify_t notification = {0};
+        snprintf(notification.app, sizeof(notification.app), "Ecosistema");
+        snprintf(notification.title, sizeof(notification.title), "Comando non accodato");
+        snprintf(notification.body, sizeof(notification.body), "Operazione occupata o memoria insufficiente");
+        notify_add(&notification);
+    }
+}
+
 static void list_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
@@ -182,6 +217,9 @@ static void list_create(lv_obj_t *screen, void *arg)
     lv_obj_set_style_pad_row(ui->list, 10, 0);
     ui->shown = -1;
     ui->search = ui_button(page, "Cerca di nuovo", UI_COLOR_BLUE, search_click, ui);
+    ui_button(page, "Aura di famiglia", UI_COLOR_BLUE, house_click, (void *)"aura");
+    ui_button(page, "Timer famiglia 60 s", UI_COLOR_ORANGE, house_click, (void *)"start");
+    ui_button(page, "Ferma timer famiglia", UI_COLOR_BLUE, house_click, (void *)"stop");
     ui_row(page, LV_SYMBOL_PLUS, UI_COLOR_GREEN, "Abbina un dispositivo", NULL, apps_open_cb, (void *)"ecos.pair");
     ui_text(page, "Rispondono i dispositivi in carica a schermo spento (Watcher, Knob, un orologio sul caricatore) "
                   "o con Ecosistema aperto. Radio diretta e cifrata, senza router.", true);
@@ -207,6 +245,132 @@ typedef struct
     bool ringing;
     ecos_family_t family;
 } device_ui_t;
+
+typedef struct
+{
+    char id[13];
+    const char *request;
+} orbit_job_t;
+
+static atomic_bool s_orbit_job;
+
+static void orbit_task(void *arg)
+{
+    orbit_job_t *job = arg;
+    uint8_t reply[ECOS_ORBIT_MAX + 1];
+    int length = ecos_family_orbit(job->id, (const uint8_t *)job->request, strlen(job->request),
+                                   reply, ECOS_ORBIT_MAX, 12000);
+    int outcome = -1;
+    if (length > 0)
+    {
+        reply[length] = 0;
+        cJSON *result = cJSON_Parse((const char *)reply);
+        const cJSON *ok = cJSON_GetObjectItemCaseSensitive(result, "ok");
+        if (cJSON_IsBool(ok)) outcome = cJSON_IsTrue(ok) ? 1 : 0;
+        cJSON_Delete(result);
+    }
+    notify_t result = {.id = 0x4f524254, .app = "Ecosistema", .title = "Orbit"};
+    snprintf(result.body, sizeof(result.body), "%s", outcome > 0 ? "Comando accettato dal membro" :
+             outcome == 0 ? "Il membro non ha accettato il comando" :
+             "Esito non confermato. Controlla il membro prima di riprovare.");
+    notify_add(&result);
+    free(job);
+    atomic_store(&s_orbit_job, false);
+    vTaskDelete(NULL);
+}
+
+static void orbit_click(lv_event_t *e)
+{
+    device_ui_t *ui = lv_event_get_user_data(e);
+    if (atomic_exchange(&s_orbit_job, true))
+    {
+        lv_label_set_text(ui->status, "Attendi la risposta Orbit");
+        return;
+    }
+    orbit_job_t *job = heap_caps_calloc(1, sizeof(*job), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (job != NULL)
+    {
+        snprintf(job->id, sizeof(job->id), "%s", ui->id);
+        job->request = lv_obj_get_user_data(lv_event_get_target_obj(e));
+    }
+    if (job == NULL || !sys_task_create(orbit_task, "orbit_command", 4096, job, 3, SYS_CORE_ANY))
+    {
+        free(job);
+        atomic_store(&s_orbit_job, false);
+        lv_label_set_text(ui->status, "Memoria insufficiente per Orbit");
+        return;
+    }
+    lv_label_set_text(ui->status, "Invio Orbit: esito nelle notifiche");
+}
+
+static void intercom_click(lv_event_t *e)
+{
+    device_ui_t *ui = lv_event_get_user_data(e);
+    bool stop = lv_obj_get_user_data(lv_event_get_target_obj(e)) != NULL;
+    if (stop)
+    {
+        link_intercom_stop();
+        lv_label_set_text(ui->status, "Chiusura interfono richiesta");
+    }
+    else
+    {
+        bool queued = link_intercom_start(ui->id, 10);
+        lv_label_set_text(ui->status, queued ? "Interfono accodato: microfono acceso durante la voce" :
+                                              "Interfono occupato o microfono non disponibile");
+    }
+}
+
+typedef struct { char id[13]; bool enabled; } route_setting_t;
+
+static void route_setting_job(void *arg)
+{
+    route_setting_t *job = arg;
+    const char *types[] = {"tap", "dial", "dial_done", "orbi"};
+    unsigned applied = 0;
+    for (size_t i = 0; i < sizeof(types) / sizeof(*types); ++i)
+    {
+        cJSON *request = cJSON_CreateObject();
+        if (request == NULL) continue;
+        cJSON_AddStringToObject(request, "type", types[i]);
+        if (!job->enabled)
+        {
+            cJSON *current = link_routes_config(request);
+            const char *target = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(current, "target"));
+            bool matches = target != NULL && strcmp(target, job->id) == 0;
+            cJSON_Delete(current);
+            if (!matches) { ++applied; cJSON_Delete(request); continue; }
+            cJSON_AddNullToObject(request, "target");
+        }
+        else cJSON_AddStringToObject(request, "target", job->id);
+        cJSON *out = link_routes_config(request);
+        if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(out, "ok"))) ++applied;
+        cJSON_Delete(out);
+        cJSON_Delete(request);
+    }
+    notify_t notification = {0};
+    snprintf(notification.app, sizeof(notification.app), "Ecosistema");
+    snprintf(notification.title, sizeof(notification.title), "Instradamento input");
+    snprintf(notification.body, sizeof(notification.body), "%u di 4 regole applicate", applied);
+    notify_add(&notification);
+    free(job);
+}
+
+static void route_setting_click(lv_event_t *e)
+{
+    device_ui_t *ui = lv_event_get_user_data(e);
+    route_setting_t *job = heap_caps_calloc(1, sizeof(*job), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (job != NULL)
+    {
+        snprintf(job->id, sizeof(job->id), "%s", ui->id);
+        job->enabled = lv_obj_get_user_data(lv_event_get_target_obj(e)) != NULL;
+    }
+    if (job == NULL || !sys_post(route_setting_job, job))
+    {
+        free(job);
+        lv_label_set_text(ui->status, "Regola non accodata");
+    }
+    else lv_label_set_text(ui->status, "Regole accodate: esito nelle notifiche");
+}
 
 static const ecos_member_t *device_member(device_ui_t *ui)
 {
@@ -423,6 +587,17 @@ static void device_create(lv_obj_t *screen, void *arg)
     ui_button(page, "Cambia permesso codice web", UI_COLOR_ORANGE, grant_web_click, ui);
     ui_button(page, "Cambia permesso risorse", UI_COLOR_ORANGE, grant_resources_click, ui);
     ui->ring = ui_button(page, "Fai suonare", UI_COLOR_ORANGE, ring_click, ui);
+    ui_section(page, "Orbit tra dispositivi");
+    lv_obj_t *orbit = ui_button(page, "Mostra aura", UI_COLOR_BLUE, orbit_click, ui);
+    lv_obj_set_user_data(orbit, (void *)"{\"op\":\"scene\",\"scene\":\"aura\",\"color\":3368703,\"hold_ms\":8000}");
+    orbit = ui_button(page, "Cancella scena", UI_COLOR_BLUE, orbit_click, ui);
+    lv_obj_set_user_data(orbit, (void *)"{\"op\":\"scene\",\"scene\":\"clear\"}");
+    ui_button(page, "Parla al membro per 10 s", UI_COLOR_ORANGE, intercom_click, ui);
+    orbit = ui_button(page, "Ferma interfono", UI_COLOR_BLUE, intercom_click, ui);
+    lv_obj_set_user_data(orbit, (void *)1);
+    orbit = ui_button(page, "Instrada input verso il membro", UI_COLOR_BLUE, route_setting_click, ui);
+    lv_obj_set_user_data(orbit, (void *)1);
+    ui_button(page, "Rimuovi queste rotte input", UI_COLOR_BLUE, route_setting_click, ui);
     ui_section(page, "Messaggio rapido");
     for (size_t i = 0; i < sizeof(s_quick) / sizeof(s_quick[0]); i++)
     {

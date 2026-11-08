@@ -41,6 +41,7 @@ typedef struct
 
 void voice_memo_format_name(const char *name, char *out, size_t capacity);
 void voice_memo_snapshot(voice_memo_snapshot_t *out);
+bool voice_memo_busy(void);
 bool voice_memo_record(void);
 bool voice_memo_play(int index);
 bool voice_memo_delete(int index);

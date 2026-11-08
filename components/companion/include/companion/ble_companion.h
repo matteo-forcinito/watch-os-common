@@ -29,6 +29,14 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+
+/* Optional direct API handler, invoked only after bonded/encrypted BLE auth.
+ * Return false for an unsupported path. A handled reply is heap-owned and
+ * freed by the bridge; no HTTP server is needed for these operations. */
+typedef bool (*ble_api_handler_t)(const char *path, const char *body,
+                                 uint8_t **reply, size_t *length, int *status);
+void ble_companion_set_api_handler(ble_api_handler_t handler);
 
 #include "esp_err.h"
 

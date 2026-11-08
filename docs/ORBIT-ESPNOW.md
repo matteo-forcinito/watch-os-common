@@ -1,6 +1,9 @@
 # Orbit su ESP-NOW: un solo bus tra i dispositivi, Bluetooth per la companion
 
-Documento tecnico, 5 novembre 2026. Stato: proposta approvata, da sviluppare per fasi.
+Documento tecnico, aggiornato il 8 novembre 2026. Stato: fase 1b verificata su 1.8 e 1.75C;
+fase 2 verificata host e su queste due board (Watcher aperto); fase 3 parzialmente implementata,
+verificata automaticamente e compilata sulle sei board; fase 4 migrata al bus,
+verificata in build sulle sei board per Remote e Solco; fasi 5 e 6 parziali. Checkpoint: `ORBIT-ESPNOW-PROGRESS.md`.
 Riferimenti: `ECOS.md` (visione), `ECOS-PAIRING.md` (abbinamento EC01), `ECOS-CHIUSURA.md`
 (trasporto Famiglia EL02), `ORBIT-LINK.md` (rotte HTTP attuali), `REMOTE-CONTROL.md`.
 
@@ -121,6 +124,185 @@ Il driver Wi-Fi passa da 66 a 27 KB di RAM interna. Accettazione della fase 1b r
 il Watcher va rimisurato quando torna collegato. Con tutte le radio accese restano 46-54 KB liberi:
 il bus ECOS (fase 2) deve stare dentro pochi KB interni e tenere i buffer in PSRAM.
 
+**Cleanup completato nel codice il 6/11:** i fallimenti di init, storage, modalità
+e start rilasciano il driver e le interfacce di rete possedute. Lo spegnimento
+pulisce anche un avvio parziale; errori di stop/deinit e coda sys piena vengono
+riprovati dal timer esistente. Una radio già usata da altri client viene conservata.
+Test host sulle funzioni C di produzione con fault injection superati
+(`python components/services/wifi/tests/run_driver_tests.py`). Il recupero effettivo
+dell'heap su errore/OOM richiede ancora una misura sul dispositivo: le tabelle
+precedenti restano misure storiche, non risultati di questa correzione.
+
+### Fase 2: implementazione compatibile EC01/EL02 (5/11)
+
+Il bus `services/ecos/ecos_bus.c` è ora integrato nella build. Abbinamento EC01 e
+Famiglia EL02 usano un solo proprietario di ESP-NOW: primo servizio aperto = lease radio,
+ultimo chiuso = deinizializzazione e rilascio. Il bus smista per intestazione a quattro byte;
+le chiavi, la cifratura, gli ACK applicativi e la protezione replay restano nei servizi.
+Il formato EB01 descritto sotto resta il progetto delle fasi successive, non è ancora trasmesso.
+
+- Nessun task o coda del bus; tabella di quattro servizi e mutex statici (poche centinaia
+  di byte interni: 190 byte di simboli statici nella build AMOLED 1.8, esclusi
+  eventuali padding del linker; nessuna allocazione heap del bus neppure dopo il primo utilizzo).
+- Code RX dell'abbinamento e RX/TX della Famiglia in PSRAM. La chiusura disabilita il
+  servizio e aspetta le callback già avviate prima che il chiamante liberi le code.
+- Potenza: minimo dei limiti richiesti, senza superare il valore precedente della radio;
+  ripristino quando il limite viene tolto. Errori di registrazione delle callback annullano
+  l'avvio e restituiscono il lease.
+- L'abbinamento continua a sospendere Famiglia durante la ricerca: i due servizi condividono
+  la radio, ma non possono cercare contemporaneamente su canali diversi.
+- Gli esiti TX sono attribuiti al solo servizio che ha inviato, con generazione
+  dello slot e un singolo invio radio pendente. La chiusura non attribuisce un
+  esito tardivo a un servizio riaperto, anche se usa lo stesso MAC.
+- Hub Remote e Solco restano firmware separati ma usano lo stesso bus; le
+  maschere RX preservano i formati legacy RH/RP e SL02. Build in verifica.
+
+Test host del codice C di produzione: `python components/services/ecos/tests/run_bus_tests.py`
+(MSVC su Windows, `--vcvars` per un'installazione diversa). Copertura: lease multipli,
+smistamento, limiti e ripristino potenza, errori d'avvio, tabella piena e callback in corso.
+
+Console locale QA (`WATCH_LOCAL_QA_CONSOLE=1`, esclusa dalle build normali):
+`family on|off`, `family refresh`, `family ring <id>`, `family stop <id>`,
+`family message <id>`, `family`. Il messaggio di prova fisso è `Orbit bus QA`;
+lo snapshot espone solo la presenza di quel messaggio, senza stampare altre notifiche.
+Le prove della fase 2 si possono fare a coppie, sostituendo un dispositivo alla volta:
+non occorrono tre collegamenti USB simultanei.
+
+**Prova hardware 1.8 e 1.75C superata (5/11, build locale QA 1.18.0):**
+ricerca, suona, ferma e messaggio ricevuto in entrambe le direzioni, sul canale 1,
+con entrambe le station scollegate dal router. Integrità heap verificata prima,
+durante e dopo. Abbinamenti e NVS conservati; aggiornato solo lo slot Watch OS,
+lasciando Remote e l'altra copia OS dove presenti.
+
+| Board | RAM interna prima | Durante il lease | Dopo la prova | Blocco massimo dopo |
+|---|---|---|---|---|
+| AMOLED 1.8 | 115,8 KiB | 82,3 KiB | 114,4 KiB | 36 KiB |
+| AMOLED 1.75C | 72,8 KiB | 40,2 KiB | 72,5 KiB | 25 KiB |
+
+Questa prova comprende notifiche e schermata dello squillo: il confronto complessivo
+non isola da solo il costo del bus. Il bus ha 190 byte statici e nessuna allocazione
+heap propria; i task e le code dei servizi vengono rilasciati alla chiusura.
+
+**Accettazione hardware ancora aperta sul Watcher**: ripetere trova/suona/messaggi
+e confronto health a Wi-Fi scollegato, collegandolo in coppia con una AMOLED.
+Una build o un test host non certificano la prova sul dispositivo assente.
+
+### Fase 3: primo ingresso Orbit sui dispositivi (6/11)
+
+Il trasporto transitorio usa EL02 anche per Orbit (tipi 9 richiesta e 10 risposta),
+senza introdurre un secondo proprietario della radio o un worker permanente.
+Ogni corpo contiene un ID di richiesta non nullo a 64 bit e 1–144 byte opachi;
+la risposta deve corrispondere sia all'ID sia al MAC abbinato. Le chiavi e il nonce
+restano quelli EL02, e il replay viene persistito prima di eseguire un comando.
+
+Il mittente attende una risposta applicativa e può ritrasmettere lo stesso frame
+cifrato tre volte in totale. La cache di risposta per peer vive nella sessione in
+PSRAM: una ritrasmissione con la stessa epoca/sequenza riceve la risposta già calcolata,
+senza ripetere l'azione. Dopo un riavvio la protezione replay persistente impedisce
+di ripetere l'azione, ma la cache non è conservata: un timeout resta un esito ignoto,
+non autorizza a ripetere automaticamente il comando con un nuovo ID.
+
+Il dispatcher applicativo riusa gli ingressi HTTP per scene, timer e memo. Sono
+disponibili richieste JSON compatte `scene`, `events`, `timer`, `memo`; eventi e nomi
+dei memo sono letti uno per volta. Non vengono troncati messaggi o risposte JSON:
+superare il limite produce errore esplicito. Nella schermata di un membro sono
+disponibili **Mostra aura** e **Cancella scena**, con esito nelle notifiche.
+
+Test host codec e cache replay superati; test del dispatcher e build sono riportati
+nel checkpoint con il loro esito effettivo. Non sono state eseguite nuove prove radio
+né flash: 1.8 e 1.75C sono in download mode.
+
+Sono ora collegati anche la frammentazione OF01 (richieste fino a 1024 byte,
+risposte fino a 144), il coordinatore deterministico e lo stato LWW in PSRAM.
+Il contatore Lamport riserva blocchi durevoli in NVS; il gossip confronta riassunti
+e trasferisce solo differenze, con un worker transitorio e senza accendere una
+radio spenta. I tombstone impediscono la ricomparsa di chiavi cancellate.
+Le chiavi e i valori restano in PSRAM: dopo un reboot si recuperano dai peer svegli.
+
+In Ecosistema sono disponibili **Aura di famiglia**, **Timer famiglia 60 s** e
+**Ferma timer famiglia**. Il primo nodo secondo alimentazione, batteria, nome e MAC
+coordina il fanout. Un ACK "in coda" non certifica l'esecuzione su tutta la famiglia;
+il coordinatore pubblica il conteggio di esiti accettati, rifiutati e ignoti.
+La precedenza della companion come nodo ECOS e il proxy del gateway sono implementati e verificati automaticamente; resta la prova radio su hardware.
+
+La prima build integrata 1.8 è superata; la nuova matrice delle sei board è nel
+checkpoint. Test host verificano frammenti/duplicati, modello e gossip, dispatcher,
+coordinatore, attesa delle RPC e fallimenti del timer. Non costituiscono prove radio.
+L'instradamento autonomo degli eventi e l'interfono sono integrati e verificati
+con test host sulle funzioni di produzione; resta il collaudo radio.
+Le letture sensori cached sono esposte come `sensor` sul bus e
+`/api/link/sensors?part=accel|gyro|temperature` su BLE/HTTP: valori interi in
+mg, mdps e mC, età in millisecondi e freschezza esplicita entro un secondo.
+Queste letture non avviano l'IMU e non trasformano un campione vecchio in uno nuovo.
+Il codec ADPCM comune e i pacchetti indipendenti da 15 ms sono verificati su host;
+trasporto e lifecycle dell'interfono sono integrati: sessione autenticata,
+half duplex massimo 30 secondi, jitter buffer limitato in PSRAM, stop/timeout
+e mutua esclusione con registrazione memo e audio HTTP. L'interfaccia del membro
+offre una conversazione di 10 secondi e lo stop. Latenza e qualita richiedono hardware.
+
+Le rotte input sono chiavi LWW `ecos/route/<MAC sorgente>/<tipo>`, per tap, dial,
+dial_done e orbi. Si configurano dalla schermata del membro oppure tramite
+`/api/link/route`. Il destinatario applica l'input alla scena e registra il MAC
+sorgente senza reinoltrarlo. Coda PSRAM limitata a otto eventi, nessun retry
+con nuovo ID su esito ignoto; lo stream audio sospende nuovi inoltri.
+
+Le sei build OS del 7 novembre sono superate e puntano al checkout condiviso.
+Sono verifiche software: non sostituiscono la scena coordinata su tre dispositivi
+e l'interfono tra due richiesti dai criteri di accettazione.
+
+### Remote e Solco (fase 4 parziale)
+
+I due firmware aprono un servizio sul bus comune e non possiedono piu
+direttamente ESP-NOW. Il bus gestisce lease, callback, smistamento e invii.
+Remote conserva il pairing legacy e offre **Usa membro ECOS**: il consenso HID
+va dato su entrambi i dispositivi. La chiave Remote deriva dalla credenziale ECOS
+con dominio separato e MAC ordinati; la rimozione o rotazione della credenziale
+invalida il consenso al riavvio. Nessun accesso automatico al PC per la famiglia.
+Test host su grant/NVS/rollback superati, build firmware in corso. Le code Remote
+sono in PSRAM; la gestione comune del canale e le prenotazioni sono implementate e verificate host e nelle sei build Remote/Solco. Solco conserva le chiavi derivate dalle credenziali ECOS
+e usa un adapter radio standalone, senza server IP o componente servizi completo.
+I test di rollback startup e teardown passano; tutte le sei build Solco sono
+superate. La matrice Remote dopo tuning RAM e ancora in verifica; risultati
+effettivi e correzioni delle configurazioni generate sono nel checkpoint.
+
+### Ponte di famiglia e companion (fase 5 parziale)
+
+Il ponte BLE esistente, riservato a un collegamento bonded e cifrato, raggiunge
+`GET /api/link/family` e `POST /api/link/relay` tramite un handler diretto.
+Queste richieste, scene, timer, eventi e letture sensori non richiedono il server
+HTTP neppure sul gateway. Il fallback delle altre API conserva il loopback
+esistente, avviato solo al bisogno e chiuso dopo otto secondi senza richieste HTTP.
+I peer ricevono RPC EL02 cifrate e non avviano server IP o connessioni al router.
+Il relay accetta soltanto i percorsi Orbit previsti, con limiti espliciti;
+un timeout viene restituito come esito ignoto senza ripetere il comando.
+Scene, timer, eventi e metadati dei peer sono accessibili dalla companion tramite
+un solo collegamento Bluetooth. Le richieste di audio PCM e API non migrate
+restano escluse dal relay. Il cursore degli eventi avanza sul singolo evento
+restituito, senza saltare il backlog.
+
+La companion crea collegamenti di famiglia distinti, disabilita il bootstrap
+Wi-Fi per questi peer e rimuove i collegamenti quando il gateway sparisce;
+può riscoprirli attraverso un altro ponte connesso. Test Flutter dedicati superati.
+La companion dispone anche di identita ECOS persistente e pairing EC01 via NUS,
+con lo stesso ECDH/commitment/SAS e consenso su entrambi i nodi. Salvataggio
+fallito, disconnessione o sessione obsoleta non producono una conferma SAVED.
+Test host C, test Dart e prova automatica dell'interfaccia di consenso superati.
+Il nuovo ponte trasporta frame EL02 autenticati con le credenziali proprie del
+nodo: epoch persistito prima dell'invio, replay persistito prima della consegna.
+Codec verificato contro fixture Python AES-GCM indipendente; integrazione C e
+build aggiornate sono in verifica. Si mantiene EL02 compatibile invece di
+introdurre un secondo formato EB01 prima di chiudere questa transizione.
+La priorita del companion usa uno status EL02 autenticato, legato al peer BLE
+attivo e fresco entro30 secondi. Il gateway annuncia la presenza come proxy ai
+suoi peer: questi possono eleggerlo senza una seconda chiave con il telefono.
+Il gateway inoltra i lavori al companion, che invia solo operazioni locali di
+scena/timer; non avvia una nuova elezione. Un solo lavoro e ammesso alla volta;
+frammenti e comandi ripetuti non duplicano gli effetti. Al distacco il gateway
+invalida subito la presenza e torna al coordinamento locale.
+I49 test companion e i test C di presenza/delega sono superati; le build finali
+aggiornate sono concluse: OS, Remote e Solco hanno sei target ciascuno con exit 0. Il canale comune e verificato automaticamente; le prove fisiche restano aperte.
+Nessuna nuova prova BLE o radio e stata eseguita sui dispositivi.
+
 ## 3. Vincoli tecnici
 
 1. **ESP-NOW vive nel driver Wi-Fi.** Richiede `esp_wifi_init/start` (radio in modalità station,
@@ -225,12 +407,31 @@ annunciato nello stato di casa.
 - Fine principale: **non avere mai Wi-Fi collegato e Bluetooth attivi insieme per lavoro tra
   dispositivi**. Restano insieme solo il bus ESP-NOW (radio Wi-Fi senza IP) e il Bluetooth verso
   la companion.
-- Task del bus: uno, con stack interno da 6 KB, solo durante un lease; code e stato in PSRAM.
+- Fase 2: nessun task del bus; i servizi mantengono i propri task e code in PSRAM.
+  Per le fasi successive, un eventuale worker condiviso ha un budget previsto di 6 KB interni
+  solo durante un lease; dimensione da confermare con misure.
 - Ascolto continuo solo sui nodi alimentati; i nodi a batteria partecipano a finestre (a schermo
   acceso o su evento), come oggi la Famiglia.
 - Budget da fissare dopo la fase 1, con misure su 1.75C, AMOLED 1.8 e Watcher.
 
 ## 6. Fasi e criteri di accettazione
+
+Checklist operativa (gli esiti automatici non sostituiscono il collaudo radio):
+
+| Attivita | Stato effettivo | Prossima verifica |
+|---|---|---|
+| Bus unico, smistamento EC01/EL02/Remote/Solco, rollback Wi-Fi | Completato e verificato automaticamente | Concorrenza radio su hardware |
+| Stato replicato, scene, eventi, timer, memo, sensori, rotte e interfono | Completato e verificato automaticamente; OS6 finali compilati | Collaudo scena3 nodi/interfono2 e memoria runtime |
+| Migrazione Solco | Completato e verificato automaticamente; build6 superate | Clock/audio sui dispositivi |
+| Migrazione Remote e consenso HID da credenziale ECOS | Completato e verificato automaticamente; build6 finali superate | Collaudo HID |
+| Famiglia e relay Orbit attraverso un solo BLE senza HTTP/router | Completato e verificato automaticamente | Collaudo BLE e cache Windows |
+| Nodo companion EC01, identita e consenso persistenti | Completato e verificato automaticamente; OS6 finali superati | Pairing fisico |
+| Ponte frame EL02 con chiavi proprie della companion | Completato e verificato automaticamente; OS6 e Windows debug superati | Integrazione fisica BLE/ESP-NOW |
+| Priorita companion, proxy gateway e handler coordinatore | Completato e verificato automaticamente; OS6 e Windows debug superati | Collaudo failover e fanout tra nodi |
+| Canale comune dinamico e annuncio nello stato replicato | Completato e verificato automaticamente: pin condivisi, annuncio LWW, Remote/Solco e 18 build exit 0 | Verifica radio fisica ancora aperta |
+| Sveglie di casa | Mancante: replica e ingressi RPC; servizio locale in correzione e test | Persistenza atomica, identita condivisa e gestione one-shot senza riattivazioni |
+| API residue e server web solo su richiesta | Parzialmente implementato | Completare ingressi necessari; fallback locale8s per API residue |
+| Heap reale, coesistenza radio e qualita audio | Bloccato da collaudo hardware | Nessun flash autorizzato; Watcher non disponibile |
 
 1. **Misure** (nessuna modifica funzionale). RAM interna libera e blocco più grande in sei stati:
    radio spente, solo Bluetooth, solo ESP-NOW, ESP-NOW + Bluetooth, Wi-Fi collegato,

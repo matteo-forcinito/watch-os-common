@@ -10,6 +10,9 @@
 #include "hid_link/hid_hub.h"
 #include "extapp_sdk.h"
 #include "ui/ui.h"
+#include "core/lv_port.h"
+#include "core/sys.h"
+#include "esp_heap_caps.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -204,6 +207,83 @@ static void open_pairing(lv_event_t *e)
     app_open_app(&s_pairing_app, NULL);
 }
 
+typedef struct
+{
+    uint8_t mac[6];
+    esp_err_t error;
+} family_grant_t;
+
+static void family_granted(void *arg)
+{
+    family_grant_t *grant = arg;
+    esp_err_t error = grant->error;
+    heap_caps_free(grant);
+    if (error == ESP_OK) extapp_restart_self();
+    else ui_toast("Consenso non salvato: verifica abbinamento e spazio hub");
+}
+
+static void family_grant_worker(void *arg)
+{
+    family_grant_t *grant = arg;
+    grant->error = hid_hub_family_authorize(grant->mac);
+    if (!ui_async(family_granted, grant)) heap_caps_free(grant);
+}
+
+static void family_confirmed(bool confirmed, void *arg)
+{
+    if (!confirmed) heap_caps_free(arg);
+    else if (!sys_post(family_grant_worker, arg))
+    {
+        heap_caps_free(arg);
+        ui_toast("Servizio occupato: riprova");
+    }
+}
+
+static void family_choose(lv_event_t *event)
+{
+    family_grant_t *grant = heap_caps_calloc(1, sizeof(*grant), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (grant == NULL) return;
+    memcpy(grant->mac, lv_event_get_user_data(event), 6);
+    ui_confirm("Consenti Remote", "Il membro potra inviare comandi al computer tramite l'hub. "
+               "Conferma anche sull'altro dispositivo. Remote si riavvia.",
+               "Consenti", UI_COLOR_BLUE, family_confirmed, grant);
+}
+
+static void family_row_deleted(lv_event_t *event)
+{
+    lv_free(lv_event_get_user_data(event));
+}
+
+static void family_create(lv_obj_t *screen, void *arg)
+{
+    (void)arg;
+    lv_obj_t *page = ui_page(screen, "Membri ECOS");
+    ui_text(page, "Scegli il membro gia abbinato in Ecosistema. Il consenso Remote va dato su entrambi.", true);
+    hid_hub_peer_info_t peers[6];
+    int count = hid_hub_family_peers(peers, 6);
+    for (int i = 0; i < count; ++i)
+    {
+        uint8_t *mac = lv_malloc(6);
+        if (mac == NULL) break;
+        memcpy(mac, peers[i].mac, 6);
+        lv_obj_t *row = ui_row(page, LV_SYMBOL_WIFI, UI_COLOR_BLUE, peers[i].name,
+                               "consenti", family_choose, mac);
+        lv_obj_add_event_cb(row, family_row_deleted, LV_EVENT_DELETE, mac);
+    }
+    if (count == 0) ui_text(page, "Abbina prima i dispositivi in Watch OS > Ecosistema.", true);
+}
+
+static const app_t s_family_app = {
+    .id = "remote.hub.family", .name = "Membri ECOS", .flags = APP_FLAG_HIDDEN,
+    .create = family_create,
+};
+
+static void open_family(lv_event_t *event)
+{
+    (void)event;
+    app_open_app(&s_family_app, NULL);
+}
+
 static void forget_confirmed(bool confirmed, void *user_data)
 {
     if (confirmed && hid_hub_forget((int)(intptr_t)user_data) == ESP_OK)
@@ -244,6 +324,8 @@ static void hub_create(lv_obj_t *screen, void *arg)
         ui_button(page, "Aggiungi dispositivo", UI_COLOR_BLUE, open_pairing, NULL);
     if (role == HID_HUB_SATELLITE)
         ui_button(page, count ? "Cambia hub" : "Cerca hub", UI_COLOR_BLUE, open_pairing, NULL);
+    if (role == HID_HUB_SATELLITE || count < HID_HUB_PEERS)
+        ui_button(page, "Usa membro ECOS", UI_COLOR_BLUE, open_family, NULL);
     ui_text(page,
             role == HID_HUB_HUB ? "Collegamento al PC: quello scelto nella pagina Remote (USB o Bluetooth). Tocca un "
                                   "satellite per rimuoverlo."
@@ -257,4 +339,5 @@ void remote_hub_register(void)
 {
     app_register(&remote_hub_app);
     app_register(&s_pairing_app);
+    app_register(&s_family_app);
 }

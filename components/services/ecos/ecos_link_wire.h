@@ -32,6 +32,9 @@
 #define ECOS_LINK_MESSAGE 4      /* payload: bounded text bytes, length from frame */
 #define ECOS_LINK_PET 7          /* payload: a pet journey step (opaque, apps/pet/pet_travel.c) */
 #define ECOS_LINK_PET_REPLY 8    /* payload: the step's answer */
+#define ECOS_LINK_ORBIT 9        /* request ID (8 bytes), bounded opaque RPC */
+#define ECOS_LINK_ORBIT_REPLY 10
+#define ECOS_LINK_STREAM 11      /* lossy application-session data, no RPC ID */
 
 /* Every payload starts with the sender's clock (unix seconds, 0 = unknown). */
 #define ECOS_LINK_TIME_SIZE 4
@@ -45,6 +48,8 @@
 #define ECOS_LINK_F_WIFI (1 << 3)
 #define ECOS_LINK_F_RINGING (1 << 4)
 #define ECOS_LINK_F_RECOVERY (1 << 5)
+#define ECOS_LINK_F_POWERED (1 << 6)
+#define ECOS_LINK_F_COMPANION (1 << 7)
 
 typedef struct
 {
@@ -105,7 +110,7 @@ static inline void ecos_link_header(uint8_t *p, uint8_t type, const uint8_t send
 static inline bool ecos_link_valid(const uint8_t *p, size_t n)
 {
     return n >= ECOS_LINK_HEADER + ECOS_LINK_TIME_SIZE + ECOS_LINK_TAG && n <= ECOS_LINK_FRAME_MAX &&
-           memcmp(p, "EL02", 4) == 0 && p[4] >= ECOS_LINK_STATUS_REQ && p[4] <= ECOS_LINK_PET_REPLY;
+           memcmp(p, "EL02", 4) == 0 && p[4] >= ECOS_LINK_STATUS_REQ && p[4] <= ECOS_LINK_STREAM;
 }
 
 /* Fixed-size text field: copies at most size-1 bytes, always terminated. */

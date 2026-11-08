@@ -61,9 +61,18 @@ esp_err_t wifi_radio_acquire(void);
 void wifi_radio_release(void);
 /* Current radio channel (1..13), 0 if the radio is off. */
 uint8_t wifi_radio_channel(void);
-/* Move the radio to `channel`; refused (false) while joined to a network or
- * serving the access point: then everyone must use the network's channel. */
+/* Move the radio to `channel` if shared policy allows it. While joined or
+ * serving the access point only the current network channel is allowed. */
 bool wifi_radio_set_channel(uint8_t channel);
+/* Hold a shared channel for a radio client (four-byte stable owner tag). */
+bool wifi_radio_channel_reserve(const char owner[4], uint8_t channel);
+void wifi_radio_channel_release(const char owner[4]);
+/* Nonblocking snapshots return 0 if Wi-Fi is busy or no channel is available. */
+uint8_t wifi_radio_pinned_channel(void);
+/* Last saved shared channel for devices with no network authority (default 1). */
+uint8_t wifi_radio_common_channel(void);
+/* Nonblocking; false if Wi-Fi is busy, invalid, or a pin conflicts. */
+bool wifi_radio_common_channel_set(uint8_t channel);
 /* Channel of the last network joined since boot (0 = none yet): devices that
  * listen without a network wait there, where the joined ones are. */
 uint8_t wifi_home_channel(void);
