@@ -525,3 +525,35 @@ Preservare le modifiche preesistenti, inclusa `apps/market/market_app.c`.
 - Matrice allarmi orbit-alarm-builds.json finale:6/6 actualEXIT0. Snapshot implementato congelato per release. Sveglie condivise restano escluse dal perimetro pubblicato; nessuna dichiarazione che tutta la roadmap sia completata.
 - Cataloghi GitHub consultati via CLI ufficiale: tutti6 stable1.18.0. Prossima patch1.18.1, immutabile. Preparazione su checkout isolati puliti, preservando market_app.c e impostazioni VSCode preesistenti.
 - Sequenza prevista: commit/push sorgenti del gruppo, build produzione6 e preflight pacchetti; backup/flash appslot sui MAC noti1.8 e1.75C, verifica boot; solo dopo pubblicazione cataloghi6 e verifica hash remoti.
+
+### Rilascio 1.18.1: riferimenti operativi
+
+- Commit libreria fc1ed21 pubblicato su main. Preservati market_app.c preesistente e gli artefatti test locali non sorgente; nessun binario di test committato. Checkout pulito per build: `.release-work/orbit-common-1.18.1`.
+- Driver `.release-work/release_orbit_1181.py`, sessione50360, job e973468d-c6e3-452c-a7f2-6fcf2815ab5d. Prepara i sei checkout gia isolati in `.release-work/<board>`, porta i commit board di fase1b e le modifiche Remote/Solco, aggiorna1.18.1, push main, build-release(max2), poi verify-only. NON pubblica automaticamente.
+- Output `.release-work/stable-1.18.1/{boards.json,notes.md,*-build.log,*-verify.log,packages}`. Config prod copiata dagli sdkconfig della matrice finale, console dev disabilitata; preflight ricontrolla sourceclean/pin/versione/identita/QA.
+- Backup privati fuori repo `C:/Users/matte/.orbit-backups/1.18.1`. Script orbit_backup_devices.py, sessione71013/job9d2adfdd-3805-4763-92de-2a46a0f1378e. MAC letti e confermati COM3=10:20:ba:46:46:3c, COM10=a0:f2:62:e3:07:94. Primo tentativo shell cmd session15397 uscito127 senza eseguire backup; sostituito dalla sessione PowerShell71013.
+- Flash helper `.release-work/orbit_flash_final.py` NON ancora eseguito. Scrive solo lo slot OS rilevato/precedentemente salvato, verify-flash, watchdog-reset e boot30s; pretende1.18.1+Ready senza panic. Produce hardware-verified.json solo dopo entrambe le verifiche. Se OS non e lo slot attivo si ferma prima di scrivere e serve selezione slot esplicita.
+- Pubblicazione autorizzata: dopo build/preflight e flash/boot avviare `release_orbit_1181.py --publish` sotto monitor. Il driver richiede hardware-verified.json; poi verificare cataloghi6, hash asset scaricati e tag sorgenti. Non dichiarare release/flash riusciti prima degli actualexit.
+
+### Rilascio 1.18.1: pipeline definitiva con cache validate
+
+- Primo driver isolato e973468d interrotto esplicitamente prima di qualsiasi pubblicazione: avrebbe ricompilato tutto SDK; non e un esito riuscito. I suoi sei commit di release restano quelli corretti e sono gia su main remoto.
+- Preparazione sorgenti puliti sulle cartelle originali fa0daeaf-838c-49ac-8400-43a3abb809a7 actualEXIT0. Prima e24e3a54 fallita solo confronto byte CRLF/LF, corretto. Working changes salvati in stash e backup privati .orbit-backups/1.18.1/workspace/restore.json. Preferenze VSCode e market saranno ripristinati a fine packaging; gli edit Remote/Solco sono gia nei commit di release, confrontati ignorando solo CRLF/LF.
+- Tutti6 sdkconfig/compile_commands della matrice automatica sono gia produzione (WATCH_DEV_CONSOLE false, nessuna WATCH_LOCAL_QA_CONSOLE). Build esistenti ora ricompilate per1.18.1 dai main puliti. Driver orbit_cached_release.py, coda orbit_wait_cached_prepare.py, session63941/job926d59ed-49bb-4c1f-a9bd-5050bc4a36b1. Output *-cached-build.log e *-verify.log. boards.json e cached-boards.json puntano ai progetti originali; isolated-boards.json conserva riferimenti precedenti.
+- Backup completo1.8 OSslot0 finito. Stub esptool fallisce sempre leggendo0x31d000; ROM --no-stub supera il punto, quindi backup prosegue conROM e chunk256KiB. Nessuna scrittura ancora a questo checkpoint. BackupROM session53238/job924018f4-818d-4705-970b-2b4b3dc565f4. Backupprecedenti9d2adfdd e1eada673 EXIT1: non conteggiare come completi.
+- Orchestratore finale orbit_finish_release.py, session23010/jobbb01b481-bd41-45f8-934a-cea10ca96fd9. Attende actualEXIT0 build/preflight e backup, poi monitor flash/boot2, pubblicazione6, download/audit6. Infine ripristina preferenze e market anche in caso errore. Stato persistente finalization-status.json. NON avviare un secondo flash/publish in parallelo.
+- Successo finale richiede hardware-verified.json per2 e ota-verified.json per6 piu actualEXIT0 orchestratore. Quest'ultimo confronta binari pubblici con locali, SHA catalogo, manifest e tag commit sorgenti.
+- La release include il lavoro implementato; sveglie condivise ancora escluse e dichiarate nelle note. Non dichiarare tutta ORBIT-ESPNOW.md completata. Nessun eraseflash/NVS.
+- Review read-only routes_finish ha suggerito di conservare lo slot attivo. I metadata confermano OS1.18.0 in entrambi gli slot di entrambi i device: flash helper aggiornato per scrivere SOLO slot1 inattivo e mantenereOS0; verify-flash prima della selezione tramite orbit_select_os.py (sequenza/CRC ufficiali Espressif, stesso adapter keyword gia usato da Solco). Solo otadata cambia oltre allo slot1, mai NVS/partition table. Non dichiarare rollback automatico del bootloader non verificato.
+- Esiti reali: build/preflight926d59ed actualEXIT0 (6/6); backupROM924018f4 actualEXIT0 (2/2); flash/boot75127298-77e1-47b7-a06e-7a2ab289e273 actualEXIT0 (2/2). hardware-verified.json identifica slot1 offset0x620000 su entrambi, OS0 conservato. Adapter OTA letto prima con --check exit0, poi selezione effettiva riuscita.
+- Boot30s: versione1.18.1 e Ready su entrambi, nessun panic/assert/watchdog. Osservazione [ready] 1.8=120KB interni liberi/largest62KB/min56KB;1.75C=45KB/largest31KB/min38KB. Sono due osservazioni di avvio con impostazioni mantenute, NON la matrice completa dei sei stati radio.
+- Mappe produzione6 e sourceproof rifatti con9ed485c5-1e45-40b6-b6ac-1b99af080a24 actualEXIT0, output orbit-os-memory.json; precedente salvato stable-1.18.1/before-release-memory.json.
+- Pubblicazione OTA ora attiva job7fec25a6-3daa-4ee9-bcd0-f724113aae15, avviata solo dopo flash/boot. Attendere orchestratorebb01b481 e audit prima di dichiarare release conclusa.
+
+
+## Release 1.18.1 conclusa e verificata
+
+- Flash e boot2/2 actualEXIT0; OS precedente conservato nello slot0 su entrambi, nuovo attivo slot1. Nessuna scrittura NVS/partition table. Backup privati completi conservati fuori repository.
+- Pubblicazione6/6 job7fec25a6-3daa-4ee9-bcd0-f724113aae15 actualEXIT0. Audit remoto3038471b-3e68-43df-95c9-d879367a7632 actualEXIT0: binari pubblici identici ai locali, SHA/size cataloghi, manifest e tag sorgenti corrispondenti.
+- hardware-verified.json2 e ota-verified.json6 in .release-work/stable-1.18.1. Ripristinate preferenze VSCode e modifica QA market preesistenti; stashes/backup di sicurezza conservati.
+- Perimetro della release chiuso. Restano software futuro: sveglie condivise e ingressi residui della roadmap; verifiche hardware estese radio/audio/memoria. Non marcarli come completati dalla sola release.

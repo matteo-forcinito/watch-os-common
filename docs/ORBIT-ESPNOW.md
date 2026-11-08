@@ -7,6 +7,20 @@ verificata in build sulle sei board per Remote e Solco; fasi 5 e 6 parziali. Che
 Riferimenti: `ECOS.md` (visione), `ECOS-PAIRING.md` (abbinamento EC01), `ECOS-CHIUSURA.md`
 (trasporto Famiglia EL02), `ORBIT-LINK.md` (rotte HTTP attuali), `REMOTE-CONTROL.md`.
 
+## Release stabile 1.18.1 (8 novembre 2026)
+
+Pubblicata per amoled, amoled175, amoled175c, knob, watcher e guition4848.
+Build di produzione e preflight superati su sei target; binari pubblici riscaricati
+e confrontati con quelli locali, SHA-256 dei cataloghi, manifest e tag sorgenti.
+AMOLED 1.8 e 1.75C aggiornati via USB nello slot OS inattivo e avviati con
+versione 1.18.1 e `Ready`, senza panic nei 30 secondi di osservazione per dispositivo.
+Slot OS precedente, NVS e impostazioni conservati. Le altre schede possono
+aggiornarsi da Impostazioni > Aggiornamento sul canale stabile.
+
+Il rilascio chiude il perimetro implementato di questa versione: le sveglie di
+casa condivise restano escluse. Il collaudo radio/audio esteso e la matrice completa
+dei sei stati di memoria restano aperti; il solo avvio non li certifica.
+
 ## 1. Obiettivo
 
 Oggi l'ecosistema usa insieme Wi-Fi, Bluetooth ed ESP-NOW. Accesi insieme consumano quasi
@@ -429,7 +443,7 @@ Checklist operativa (gli esiti automatici non sostituiscono il collaudo radio):
 | Ponte frame EL02 con chiavi proprie della companion | Completato e verificato automaticamente; OS6 e Windows debug superati | Integrazione fisica BLE/ESP-NOW |
 | Priorita companion, proxy gateway e handler coordinatore | Completato e verificato automaticamente; OS6 e Windows debug superati | Collaudo failover e fanout tra nodi |
 | Canale comune dinamico e annuncio nello stato replicato | Completato e verificato automaticamente: pin condivisi, annuncio LWW, Remote/Solco e 18 build exit 0 | Verifica radio fisica ancora aperta |
-| Sveglie di casa | Mancante: replica e ingressi RPC; servizio locale in correzione e test | Persistenza atomica, identita condivisa e gestione one-shot senza riattivazioni |
+| Sveglie di casa | Mancante: replica e ingressi RPC; persistenza locale verificata host e build6 | Persistenza atomica, identita condivisa e gestione one-shot senza riattivazioni |
 | API residue e server web solo su richiesta | Parzialmente implementato | Completare ingressi necessari; fallback locale8s per API residue |
 | Heap reale, coesistenza radio e qualita audio | Bloccato da collaudo hardware | Nessun flash autorizzato; Watcher non disponibile |
 
