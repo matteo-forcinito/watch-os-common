@@ -19,6 +19,7 @@
  */
 #include "remote.h"
 #include "core/lv_port.h"
+#include "core/settings.h"
 #include "core/sys.h"
 #include "hardware/board.h"
 #include "hardware/imu.h"
@@ -114,6 +115,35 @@ static float dead_zone(float rate, float zone)
     return fabsf(rate) < zone ? 0 : rate - copysignf(zone, rate);
 }
 
+/*
+ * The device's "right" side for the chosen grip, in IMU axes (parallel to the
+ * native panel: X along its first, Y along its second side). Auto follows the
+ * screen orientation on rotated boards (a bar held like its screen) and keeps
+ * the gravity-only mapping on round or unrotated watches. False = automatic.
+ */
+static bool grip_axis(float axis[3])
+{
+    static const int8_t sides[4][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}}; /* quarter turns 0..3 */
+    int grip = remote_settings()->air_grip;
+    int turns;
+    if (grip == 0)
+    {
+        turns = settings_get()->screen_rotation & 3;
+        if (turns == 0)
+            return false;
+    }
+    else
+    {
+        /* Horizontal = the landscape mounting (one quarter turn), vertical = portrait. */
+        static const int8_t grip_turns[5] = {0, 1, 0, 3, 2};
+        turns = grip_turns[grip > 4 ? 0 : grip];
+    }
+    axis[0] = sides[turns][0];
+    axis[1] = sides[turns][1];
+    axis[2] = 0;
+    return true;
+}
+
 static void air_worker(void *arg)
 {
     (void)arg;
@@ -197,9 +227,25 @@ static void air_worker(void *arg)
             continue;
         }
         float up[3] = {gravity[0] / length, gravity[1] / length, gravity[2] / length};
-        /* Device X made horizontal; device Y if the watch is held on its side. */
-        float right[3] = {1 - up[0] * up[0], -up[0] * up[1], -up[0] * up[2]};
-        float right_length = sqrtf(dot3(right, right));
+        float right[3];
+        float right_length = 0;
+        float axis[3];
+        if (grip_axis(axis))
+        {
+            /* The chosen grip's "right" side, made horizontal. */
+            float along = dot3(axis, up);
+            for (int i = 0; i < 3; i++)
+                right[i] = axis[i] - along * up[i];
+            right_length = sqrtf(dot3(right, right));
+        }
+        else
+        {
+            /* Device X made horizontal; device Y if the watch is held on its side. */
+            right[0] = 1 - up[0] * up[0];
+            right[1] = -up[0] * up[1];
+            right[2] = -up[0] * up[2];
+            right_length = sqrtf(dot3(right, right));
+        }
         if (right_length < 0.4f)
         {
             right[0] = -up[1] * up[0];
@@ -408,9 +454,26 @@ static void air_touch(lv_event_t *e)
     touch_end(air);
 }
 
+static const char *grip_name(uint8_t grip)
+{
+    static const char *const names[] = {"Auto", "Orizzontale", "Verticale", "Orizz. capovolta", "Vert. capovolta"};
+    return names[grip < 5 ? grip : 0];
+}
+
 static void option_clicked(lv_event_t *e)
 {
     int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i == 4)
+    {
+        /* Cycle the grip; the worker reads it on its next sample. */
+        remote_settings_t settings = *remote_settings();
+        settings.air_grip = (uint8_t)((settings.air_grip + 1) % 5);
+        remote_settings_save(&settings);
+        lv_obj_t *value = ui_row_value(lv_event_get_current_target_obj(e));
+        if (value != NULL)
+            lv_label_set_text(value, grip_name(settings.air_grip));
+        return;
+    }
     if (i == 3)
     {
         atomic_store(&s_recalibrate, true);
@@ -436,6 +499,8 @@ static void air_options_create(lv_obj_t *screen, void *arg)
            option_clicked, (void *)1);
     ui_row(page, LV_SYMBOL_GPS, UI_COLOR_ORANGE, "Sempre attivo", flags & AIR_ALWAYS ? "Si" : "No", option_clicked,
            (void *)2);
+    ui_row(page, LV_SYMBOL_LOOP, UI_COLOR_PURPLE, "Impugnatura", grip_name(remote_settings()->air_grip),
+           option_clicked, (void *)4);
     ui_row(page, LV_SYMBOL_REFRESH, UI_COLOR_BLUE, "Ricalibra", "Tieni fermo", option_clicked, (void *)3);
     ui_text(page,
             "Sul pad: tocca per il clic, tieni fermi dito e polso per il destro. Bordi: scorrimento, volume e "

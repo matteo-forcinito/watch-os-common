@@ -38,6 +38,8 @@ typedef struct
     uint8_t pointer_speed; /* 1..3 */
     uint8_t air_flags;     /* air mouse: 1 invert X, 2 invert Y, 4 always on */
     uint8_t scroll_flags;  /* 1 invert vertical, 2 invert horizontal scroll (edges, knob) */
+    uint8_t air_grip;      /* air mouse hold: 0 auto (screen orientation), 1 horizontal, 2 vertical,
+                              3 horizontal upside down, 4 vertical upside down */
 } remote_settings_t;
 
 /* Settings kept in NVS ("remote" namespace). */

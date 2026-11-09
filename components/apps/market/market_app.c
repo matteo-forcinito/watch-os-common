@@ -894,9 +894,16 @@ static void tone_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* Optional board-specific QA commands (defined by a firmware's main). */
+extern bool devcon_board_command(char *line) __attribute__((weak));
+
 /* Keep application QA commands above the core/services dependency boundary. */
 bool devcon_app_command(char *line)
 {
+    if (devcon_board_command != NULL && devcon_board_command(line))
+    {
+        return true;
+    }
     if (radio_bench_command(line))
     {
         return true;
