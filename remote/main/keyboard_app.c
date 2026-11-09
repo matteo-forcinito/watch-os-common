@@ -1146,7 +1146,7 @@ static void create(lv_obj_t *screen, void *arg)
     kb->pad_w = width;
     kb->pad_h = kb->geometry.pad.h;
     kb->key_w = (float)width / COLS;
-    kb->key_h = (float)kb->pad_h / ROWS;
+    kb->key_h = kb->geometry.keys[0].h;
     kb->layout.key_w = kb->geometry.keys[0].w;
     kb->layout.key_h = kb->key_h;
     kb->pad = lv_obj_create(screen);

@@ -179,7 +179,7 @@ bool ui_round_keyboard_create(lv_obj_t *screen, lv_obj_t *textarea, const char *
     int32_t width = ui_board_info()->width;
     int32_t height = ui_board_info()->height;
     ui_keyboard_layout_t layout;
-    ui_keyboard_layout_init(&layout, width, height, true);
+    ui_keyboard_layout_init(&layout, width, height, ui_board_info()->round);
     lv_obj_t *heading = lv_label_create(screen);
     lv_label_set_text(heading, title);
     lv_label_set_long_mode(heading, LV_LABEL_LONG_MODE_DOTS);

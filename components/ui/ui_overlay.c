@@ -60,7 +60,7 @@ void ui_toast(const char *text)
     lv_obj_set_style_text_color(label, lv_color_hex(TK_TEXT), 0);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(label, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_width(label, 280, 0);
+    lv_obj_set_style_max_width(label, ui_board_info()->width < 320 ? ui_board_info()->width - 48 : 280, 0);
 
     /* Slide down, wait, slide up and delete itself. */
     lv_anim_t in;
@@ -151,12 +151,18 @@ void ui_confirm(const char *title, const char *text, const char *ok_text, uint32
     lv_obj_set_style_pad_row(card, TK_SP_3, 0);
     lv_obj_set_width(card, LV_PCT(88));
     lv_obj_set_height(card, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_height(card, ui_board_info()->height - 12, 0);
+    lv_obj_set_scroll_dir(card, LV_DIR_VER);
+    if (ui_board_info()->width < 260 || ui_board_info()->height < 240)
+        lv_obj_set_style_pad_all(card, 6, 0);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_center(card);
 
     lv_obj_t *title_label = lv_label_create(card);
     lv_label_set_text(title_label, title);
+    lv_obj_set_width(title_label, LV_PCT(100));
+    lv_label_set_long_mode(title_label, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_style_text_font(title_label, UI_FONT_LARGE, 0);
     lv_obj_set_style_text_color(title_label, lv_color_hex(TK_TEXT), 0);
 
@@ -231,7 +237,7 @@ static void keyboard_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
 
-    if (ui_board_info()->round)
+    if (ui_board_info()->round || ui_board_info()->width < 260 || ui_board_info()->height < 240)
     {
         lv_obj_set_scrollable(screen, false);
         s_textarea = lv_textarea_create(screen);

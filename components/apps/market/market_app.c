@@ -446,11 +446,14 @@ static void more_catalog(lv_event_t *event)
 }
 static void show_catalog(market_ui_t *ui)
 {
+    const board_info_t *board = ui_board_info();
+    bool narrow = board->width < 260;
+    bool compact = narrow || board->height < 240;
     lv_obj_t *page = ui_page(ui->content, "Esplora");
     lv_obj_t *toolbar = lv_obj_create(page);
     lv_obj_remove_style_all(toolbar);
-    lv_obj_set_size(toolbar, LV_PCT(100), 42);
-    lv_obj_set_flex_flow(toolbar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(toolbar, LV_PCT(100), narrow ? 126 : 42);
+    lv_obj_set_flex_flow(toolbar, narrow ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(toolbar, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_t *channel = ui_button(toolbar, market_development() ? "Dev" : "Stabile", 0x282842, cycle_channel, ui);
     lv_obj_set_size(channel, 88, 38);
@@ -520,7 +523,7 @@ static void show_catalog(market_ui_t *ui)
                     lv_obj_t *all = ui_button(page, text, UI_COLOR_ORANGE, update_all, ui);
                     lv_port_set_focusable(all);
                 }
-                if (market_view() == 0)
+                if (market_view() == 0 && !compact)
                 {
                     grid = lv_obj_create(page);
                     lv_obj_remove_style_all(grid);
@@ -541,7 +544,7 @@ static void show_catalog(market_ui_t *ui)
                 snprintf(version, sizeof(version), "%s " LV_SYMBOL_RIGHT " %s", entry->installed_version, entry->version);
             else
                 snprintf(version, sizeof(version), "%s%s", entry->version, entry->installed ? " · installata" : "");
-            if (market_view() == 1)
+            if (market_view() == 1 || compact)
             {
                 lv_obj_t *row = ui_row(page, icon, entry->color, entry->name, version, details, &ui->cards[i]);
                 if (update) lv_obj_set_style_text_color(ui_row_value(row), lv_color_hex(UI_COLOR_ORANGE), 0);
@@ -634,6 +637,13 @@ static void show_information(market_ui_t *ui)
 
 static void show_details(market_ui_t *ui)
 {
+    /* A cover scaled from width cannot fit a touch bar. The information page
+     * keeps every action reachable by vertical scrolling on either axis. */
+    if (ui_board_info()->width < 260 || ui_board_info()->height < 240)
+    {
+        show_information(ui);
+        return;
+    }
     market_entry_t *entry = &ui->selected;
     lv_obj_t *scene = ui->content;
     int width = ui_board_info()->width;
@@ -691,6 +701,10 @@ static void show_details(market_ui_t *ui)
 
 static void render(market_ui_t *ui)
 {
+    if (ui->page == 0 && (ui_board_info()->width < 260 || ui_board_info()->height < 240))
+    {
+        ui->page = 1;
+    }
 #if CONFIG_WATCH_DEV_CONSOLE
     printf("@MARKETPAGE %d\n", ui->page);
 #endif

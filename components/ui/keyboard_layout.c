@@ -31,6 +31,34 @@ static void split(ui_key_rect_t band, ui_key_rect_t *out, int count)
 void ui_keyboard_layout_init(ui_keyboard_layout_t *out, int32_t width, int32_t height, bool round)
 {
     memset(out, 0, sizeof(*out));
+    bool bar_landscape = !round && height < 240 && width > height * 2;
+    bool bar_portrait = !round && width < 260 && height > width * 2;
+    if (bar_landscape || bar_portrait)
+    {
+        int32_t top = bar_landscape ? 52 : 68;
+        int32_t control_height = bar_landscape ? 40 : 104;
+        int32_t rows = bar_landscape ? 2 : 7;
+        int32_t columns = UI_KEYBOARD_KEYS / rows;
+        out->header = (ui_key_rect_t){6, 0, width - 12, bar_landscape ? 28 : 36};
+        out->suggestions = (ui_key_rect_t){6, out->header.h, width - 12, top - out->header.h};
+        out->pad = (ui_key_rect_t){0, top, width, height - top - control_height};
+        for (int row = 0; row < rows; row++)
+        {
+            int32_t y0 = out->pad.h * row / rows;
+            int32_t y1 = out->pad.h * (row + 1) / rows;
+            split((ui_key_rect_t){6, y0, width - 12, y1 - y0}, &out->keys[row * columns], columns);
+        }
+        if (bar_portrait)
+        {
+            split((ui_key_rect_t){0, height - 104, width, 52}, out->controls, 3);
+            split((ui_key_rect_t){0, height - 52, width, 52}, &out->controls[3], 3);
+        }
+        else
+        {
+            split((ui_key_rect_t){0, height - 40, width, 40}, out->controls, UI_KEYBOARD_CONTROLS);
+        }
+        return;
+    }
     int32_t pad_top = round ? height * 24 / 100 : 68;
     int32_t pad_bottom = round ? height * 70 / 100 : height - 52;
     out->header =

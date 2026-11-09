@@ -784,13 +784,18 @@ static void pages_create(lv_obj_t *screen, void *arg)
     /* Geometry: a rectangle uses the screen; a round panel the square inside the circle. */
     int cards = settings_get()->launcher_cards;
     int cols = cards == 4 ? 2 : 3, rows = cards == 9 ? 3 : 2;
+    bool narrow = !b->round && b->width < 260;
+    bool short_screen = !b->round && b->height < 240;
+    if (narrow) { cols = 1; rows = 4; cards = 4; }
+    else if (short_screen) { cols = 5; rows = 1; cards = 5; }
     int32_t top = b->round ? b->height * 15 / 100 : 52;
+    if (short_screen) top = 36;
     int32_t width = b->round ? b->width * 70 / 100 : b->width - 20;
     int32_t height = b->round ? b->height * 70 / 100 : b->height - top - 10;
 
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, p->external ? "App esterne" : "App");
-    lv_obj_set_style_text_font(title, ui_font_title, 0);
+    lv_obj_set_style_text_font(title, narrow || short_screen ? UI_FONT_BODY : ui_font_title, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, b->round ? b->height * 4 / 100 : 10);
 
     if (p->count == 0)

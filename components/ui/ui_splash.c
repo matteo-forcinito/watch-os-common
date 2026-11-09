@@ -240,15 +240,15 @@ void ui_splash_show(void)
     /* Glitch copy first, so the real wordmark draws over it. */
     s_splash.ghost = lv_label_create(cover);
     lv_label_set_text_static(s_splash.ghost, SPLASH_WORD " ");
-    lv_obj_set_style_text_font(s_splash.ghost, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_letter_space(s_splash.ghost, 6, 0);
+    lv_obj_set_style_text_font(s_splash.ghost, board->width < 260 ? &lv_font_montserrat_16 : &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_letter_space(s_splash.ghost, board->width < 260 ? 2 : 6, 0);
     lv_obj_set_style_text_color(s_splash.ghost, lv_color_hex(TK_MAGENTA), 0);
     lv_obj_align(s_splash.ghost, LV_ALIGN_CENTER, TK_LW + 1, -TK_SP_3 + 1);
     lv_obj_set_hidden(s_splash.ghost, true);
 
     s_splash.word = lv_label_create(cover);
-    lv_obj_set_style_text_font(s_splash.word, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_letter_space(s_splash.word, 6, 0);
+    lv_obj_set_style_text_font(s_splash.word, board->width < 260 ? &lv_font_montserrat_16 : &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_letter_space(s_splash.word, board->width < 260 ? 2 : 6, 0);
     lv_obj_set_style_text_color(s_splash.word, lv_color_hex(TK_TEXT), 0);
     lv_obj_set_width(s_splash.word, LV_SIZE_CONTENT);
     lv_obj_align(s_splash.word, LV_ALIGN_CENTER, 0, -TK_SP_3);
@@ -257,7 +257,8 @@ void ui_splash_show(void)
     /* Boot log: names on the left (dim), status on the right (lime). */
     lv_obj_t *log = lv_obj_create(cover);
     lv_obj_remove_style_all(log);
-    lv_obj_set_size(log, board->width * 2 / 5, LV_SIZE_CONTENT);
+    lv_obj_set_size(log, board->width < 260 ? board->width - 20 : board->width * 2 / 5, LV_SIZE_CONTENT);
+    if (board->height < 240) lv_obj_set_hidden(log, true);
     lv_obj_align(log, LV_ALIGN_CENTER, 0, board->height / 5);
     lv_obj_set_scrollable(log, false);
 

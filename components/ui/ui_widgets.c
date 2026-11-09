@@ -145,9 +145,10 @@ lv_obj_t *ui_page(lv_obj_t *screen, const char *title)
     lv_obj_set_size(page, LV_PCT(100), LV_PCT(100));
     lv_obj_set_flex_flow(page, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(page, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_hor(page, board->round ? ROUND_PAD_X : PAGE_PAD_X, 0);
-    lv_obj_set_style_pad_top(page, board->round ? ROUND_PAD_TOP : 18, 0);
-    lv_obj_set_style_pad_bottom(page, board->round ? ROUND_PAD_BOTTOM : 48, 0);
+    bool compact = !board->round && (board->width < 260 || board->height < 240);
+    lv_obj_set_style_pad_hor(page, board->round ? ROUND_PAD_X : compact ? 6 : PAGE_PAD_X, 0);
+    lv_obj_set_style_pad_top(page, board->round ? ROUND_PAD_TOP : compact ? 6 : 18, 0);
+    lv_obj_set_style_pad_bottom(page, board->round ? ROUND_PAD_BOTTOM : compact ? 12 : 48, 0);
     lv_obj_set_style_pad_row(page, TK_SP_2, 0);
     lv_obj_set_scroll_dir(page, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_OFF);
@@ -175,7 +176,8 @@ lv_obj_t *ui_title(lv_obj_t *page, const char *text)
     lv_obj_t *label = lv_label_create(page);
     lv_label_set_text(label, text);
     lv_obj_set_width(label, LV_PCT(100));
-    lv_obj_set_style_text_font(label, ui_font_title, 0);
+    lv_obj_set_style_text_font(label, ui_board_info()->width < 260 || ui_board_info()->height < 240
+                                           ? UI_FONT_BODY : ui_font_title, 0);
     lv_obj_set_style_text_color(label, lv_color_hex(TK_TEXT), 0);
     lv_obj_set_style_pad_bottom(label, TK_SP_1, 0);
 
@@ -378,16 +380,17 @@ static int32_t longest_word_width(const char *text, const lv_font_t *font)
 
 static lv_obj_t *row_base(lv_obj_t *page, const char *icon, uint32_t color, const char *text)
 {
+    bool narrow = ui_board_info()->width < 260;
     lv_obj_t *row = lv_obj_create(page);
     ui_make_card(row);
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(row, ROW_HEIGHT, 0);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(row, narrow ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, TK_SP_3, 0);
 
-    if (icon != NULL)
+    if (icon != NULL && !narrow)
     {
         ui_icon_bubble(row, icon, color, BUBBLE_SIZE);
     }
@@ -395,10 +398,12 @@ static lv_obj_t *row_base(lv_obj_t *page, const char *icon, uint32_t color, cons
     lv_obj_t *label = lv_label_create(row);
     lv_label_set_text(label, text);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_set_flex_grow(label, 1);
+    lv_obj_set_flex_grow(label, narrow ? 0 : 1);
+    if (narrow) lv_obj_set_width(label, LV_PCT(100));
 
     /* Narrow rows (round 360 px panel): wrap between words, never inside one ("Spegniment-o"). */
-    lv_obj_set_style_min_width(label, longest_word_width(text, lv_obj_get_style_text_font(label, LV_PART_MAIN)), 0);
+    if (!narrow)
+        lv_obj_set_style_min_width(label, longest_word_width(text, lv_obj_get_style_text_font(label, LV_PART_MAIN)), 0);
 
     return row;
 }
@@ -416,6 +421,11 @@ lv_obj_t *ui_row(lv_obj_t *page, const char *icon, uint32_t color, const char *t
     /* One line, cut with "..." when the row is narrow: the name on the left matters more. */
     lv_label_set_long_mode(value_label, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_style_max_width(value_label, LV_PCT(45), 0);
+    if (ui_board_info()->width < 260)
+    {
+        lv_obj_set_width(value_label, LV_PCT(100));
+        lv_obj_set_style_max_width(value_label, LV_PCT(100), 0);
+    }
     lv_obj_set_height(value_label, lv_font_get_line_height(UI_FONT_SMALL));
     lv_obj_set_user_data(row, value_label);
 
@@ -429,6 +439,7 @@ lv_obj_t *ui_row(lv_obj_t *page, const char *icon, uint32_t color, const char *t
         lv_label_set_text(chevron, LV_SYMBOL_RIGHT);
         lv_obj_set_style_text_color(chevron, lv_color_hex(TK_TEXT_3), 0);
         lv_obj_set_style_text_font(chevron, UI_FONT_SMALL, 0);
+        if (ui_board_info()->width < 260) lv_obj_set_hidden(chevron, true);
     }
     else
     {
@@ -493,6 +504,8 @@ lv_obj_t *ui_slider_row(lv_obj_t *page, const char *icon, const char *text,
 
     lv_obj_t *label = lv_label_create(card);
     lv_label_set_text_fmt(label, "%s  %s", icon != NULL ? icon : "", text);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
 
     lv_obj_t *slider = lv_slider_create(card);
     lv_obj_set_width(slider, LV_PCT(94));
@@ -545,6 +558,17 @@ lv_obj_t *ui_button(lv_obj_t *parent, const char *text, uint32_t color, lv_event
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_font(label, UI_FONT_LARGE, 0);
+    if (ui_board_info()->width < 260 || ui_board_info()->height < 240)
+    {
+        lv_obj_set_flex_flow(button, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(button, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_height(button, LV_SIZE_CONTENT);
+        lv_obj_set_style_min_height(button, TK_ROW_H, 0);
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+    }
     lv_obj_set_style_text_color(label, lv_color_hex(ink), 0);
     lv_obj_center(label);
 
