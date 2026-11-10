@@ -3,6 +3,7 @@
 #include "core/power.h"
 #if CONFIG_WATCH_ECOS_PAIRING
 #include "services/ecos.h"
+#include "services/notify.h"
 #endif
 #include "services/market.h"
 #include "services/extapp.h"
@@ -1020,6 +1021,38 @@ bool devcon_app_command(char *line)
         return true;
     }
 #if CONFIG_WATCH_ECOS_PAIRING
+    if (strncmp(line, "family", 6) == 0 && (line[6] == 0 || line[6] == ' '))
+    {
+        /* Local QA only: keep one lease, inspect peers and exercise EL02. */
+        static bool held;
+        char operation[16] = "", id[13] = "";
+        if (line[6]) sscanf(line + 7, "%15s %12s", operation, id);
+        esp_err_t err = ESP_OK;
+        if (strcmp(operation, "on") == 0 && !held) { ecos_family_hold(true); held = true; }
+        else if (strcmp(operation, "off") == 0 && held) { ecos_family_hold(false); held = false; }
+        else if (strcmp(operation, "refresh") == 0) err = ecos_family_refresh();
+        else if (strcmp(operation, "ring") == 0) err = ecos_family_ring(id, true);
+        else if (strcmp(operation, "stop") == 0) err = ecos_family_ring(id, false);
+        else if (strcmp(operation, "message") == 0) err = ecos_family_message(id, "Orbit bus QA");
+        ecos_family_t *f = malloc(sizeof(*f));
+        if (f == NULL) { printf("@ERR family memory\n"); return true; }
+        ecos_family(f);
+        bool received = false;
+        for (int i = 0; i < notify_count(); i++)
+        {
+            notify_t n;
+            if (notify_get(i, &n) && strcmp(n.app, "Ecosistema") == 0 && strcmp(n.body, "Orbit bus QA") == 0)
+                received = true;
+        }
+        printf("@FAMILY result=%s radio=%d busy=%d count=%d qa_message=%d msg=%s\n",
+               esp_err_to_name(err), f->radio, f->busy, f->count, received, f->message);
+        for (int i = 0; i < f->count; i++)
+            printf("@FAMILYPEER %s known=%d reachable=%d channel=%u wifi=%d ringing=%d\n",
+                   f->members[i].id, f->members[i].known, f->members[i].reachable,
+                   f->members[i].channel, f->members[i].wifi, f->members[i].ringing);
+        free(f);
+        return true;
+    }
     if (strncmp(line, "ecos", 4) == 0 && (line[4] == 0 || line[4] == ' '))
     {
         /* ECOS pairing from the bench: "ecos start [ip]", "ecos confirm", "ecos cancel", "ecos". */
