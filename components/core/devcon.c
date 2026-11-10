@@ -22,6 +22,7 @@
 #include "core/devcon.h"
 
 #include "core/app.h"
+#include "core/clock.h"
 #include "core/lv_port.h"
 #include "core/power.h"
 #include "core/recovery.h"
@@ -517,6 +518,13 @@ __attribute__((weak)) bool devcon_app_command(char *line)
     return false;
 }
 
+extern void board_display_diagnostic(int mode) __attribute__((weak));
+
+static void set_clock_cb(void *arg)
+{
+    clock_set_utc(*(const time_t *)arg);
+}
+
 static void handle(char *line)
 {
     if (devcon_app_command(line)) return;
@@ -757,6 +765,37 @@ static void handle(char *line)
                (unsigned)heap_caps_get_largest_free_block(caps),
                (unsigned)heap_caps_get_minimum_free_size(caps),
                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), ok);
+    }
+    else if (strcmp(cmd, "panel") == 0 && board_display_diagnostic != NULL)
+    {
+        int mode = a1 != NULL ? atoi(a1) : 0;
+        if (mode < 0 || mode > 2) { printf("@ERR panel mode 0..2\n"); return; }
+        if (mode > 0)
+        {
+            power_keep_screen_on(true);
+            power_wake(POWER_WAKE_OTHER);
+            vTaskDelay(pdMS_TO_TICKS(700));
+            lv_port_set_running(false);
+        }
+        board_display_diagnostic(mode);
+        if (mode == 1)
+        {
+            lv_port_set_running(true);
+            lv_port_refresh_now();
+        }
+    }
+    else if (strcmp(cmd, "time-utc") == 0 && a1 != NULL)
+    {
+        char *end;
+        long long seconds = strtoll(a1, &end, 10);
+        if (*end != '\0' || seconds < 1577836800LL || seconds > 4102444800LL)
+        {
+            printf("@ERR expected UTC epoch between 2020 and 2100\n");
+            return;
+        }
+        time_t utc = (time_t)seconds;
+        run_in_ui(set_clock_cb, &utc);
+        printf("@TIME %lld\n", (long long)utc);
     }
     else if (strcmp(cmd, "health") == 0)
     {

@@ -1166,7 +1166,19 @@ static void build_guide(deck_page_t *page, lv_obj_t *screen, int32_t h)
     lv_obj_set_style_text_font(page->guide_text, UI_FONT_BODY, 0);
     lv_obj_set_style_text_color(page->guide_text, ui_color(UI_COLOR_TEXT_DIM), 0);
     lv_label_set_long_mode(page->guide_text, LV_LABEL_LONG_MODE_WRAP);
+    if (remote_bar_panel())
+    {
+        lv_obj_set_pos(page->guide_icon, 20, 56);
+        lv_obj_set_pos(page->guide_title, 92, 40);
+        lv_obj_set_width(page->guide_title, screen_w() - 292);
+        lv_obj_set_style_text_align(page->guide_title, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_pos(page->guide_text, 92, 76);
+        lv_obj_set_size(page->guide_text, screen_w() - 292, 72);
+        lv_obj_set_style_text_font(page->guide_text, UI_FONT_SMALL, 0);
+        lv_obj_set_style_text_align(page->guide_text, LV_TEXT_ALIGN_LEFT, 0);
+    }
     r = strip(h * 80 / 100, h * 12 / 100);
+    if (remote_bar_panel()) r = (ui_key_rect_t){screen_w() - 184, 48, 176, 88};
     page->guide_button = tile(page->guide, r, "", guide_clicked, NULL);
     lv_obj_set_style_border_color(page->guide_button, ui_accent(), 0);
 }
@@ -1200,8 +1212,9 @@ static void deck_create(lv_obj_t *screen, void *arg)
     int32_t w = screen_w(), h = screen_h();
     bool round = board_info()->round;
     bool landscape = w > h + 40;
-    int cols = landscape ? 3 : 2;
-    int rows = landscape ? 3 : 4;
+    bool bar = remote_bar_panel();
+    int cols = bar ? 6 : landscape ? 3 : 2;
+    int rows = bar ? 1 : landscape ? 3 : 4;
     page->per_page = cols * rows;
 
     build_guide(page, screen, h);
@@ -1210,8 +1223,8 @@ static void deck_create(lv_obj_t *screen, void *arg)
      * keep everything inside the central chords. */
     int32_t top = round ? h * 9 / 100 : REMOTE_TOP;
     int32_t bottom = round ? h * 91 / 100 : h - 6;
-    int32_t head_h = 44, title_h = lv_font_get_line_height(UI_FONT_SMALL) + 4;
-    int32_t foot_h = round ? 50 : 52, media_h = lv_font_get_line_height(UI_FONT_SMALL) + 4;
+    int32_t head_h = bar ? 32 : 44, title_h = bar ? 0 : lv_font_get_line_height(UI_FONT_SMALL) + 4;
+    int32_t foot_h = bar ? 0 : round ? 50 : 52, media_h = bar ? 0 : lv_font_get_line_height(UI_FONT_SMALL) + 4;
     int32_t grid_top = top + head_h + title_h;
     int32_t grid_h = bottom - foot_h - media_h - grid_top;
 
@@ -1243,6 +1256,7 @@ static void deck_create(lv_obj_t *screen, void *arg)
 
     ui_key_rect_t r = strip(top + head_h, title_h);
     page->title = line(page->live, r.x, r.y + 2, r.w, UI_FONT_SMALL, UI_COLOR_TEXT_DIM, LV_TEXT_ALIGN_CENTER);
+    if (bar) lv_obj_set_hidden(page->title, true);
 
     for (int i = 0; i < page->per_page; i++)
     {
@@ -1256,14 +1270,20 @@ static void deck_create(lv_obj_t *screen, void *arg)
 
     r = strip(bottom - foot_h - media_h, media_h);
     page->media = line(page->live, r.x, r.y + 2, r.w, UI_FONT_SMALL, UI_COLOR_PINK, LV_TEXT_ALIGN_CENTER);
+    if (bar) lv_obj_set_hidden(page->media, true);
     r = strip(bottom - foot_h, foot_h);
+    if (bar) r = strip(bottom - 52, 52);
     static const uint16_t usages[] = {HIDL_MEDIA_PREVIOUS, HIDL_MEDIA_PLAY_PAUSE, HIDL_MEDIA_NEXT};
     static const char *const symbols[] = {LV_SYMBOL_PREV, LV_SYMBOL_PLAY, LV_SYMBOL_NEXT};
     for (int i = 0; i < 3; i++)
-        tile(page->live, (ui_key_rect_t){r.x + r.w * i / 4, r.y, r.w * (i + 1) / 4 - r.w * i / 4, r.h}, symbols[i],
-             media_clicked, (void *)(intptr_t)usages[i]);
+    {
+        lv_obj_t *button = tile(page->live, (ui_key_rect_t){r.x + r.w * i / 4, r.y, r.w * (i + 1) / 4 - r.w * i / 4, r.h}, symbols[i],
+                                media_clicked, (void *)(intptr_t)usages[i]);
+        if (bar) lv_obj_set_hidden(button, true);
+    }
     page->mic = tile(page->live, (ui_key_rect_t){r.x + r.w * 3 / 4, r.y, r.w - r.w * 3 / 4, r.h}, "Mic",
                      action_clicked, "mic");
+    if (bar) lv_obj_set_hidden(page->mic, true);
 
     /* Switcher on top of both layers */
     remote_switcher_button(screen);

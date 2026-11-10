@@ -48,6 +48,7 @@ static const remote_mode_t s_modes[] = {
 };
 
 static lv_obj_t *s_status;
+static void bar_modes_create(lv_obj_t *screen, bool home);
 static lv_obj_t *s_host; /* "Computer" row, Bluetooth only */
 static uint32_t s_seen_version = UINT32_MAX;
 static hid_link_state_t s_seen_state = HID_LINK_OFF;
@@ -154,6 +155,11 @@ static void leave(lv_event_t *e)
 
 void remote_home_create(lv_obj_t *screen)
 {
+    if (remote_bar_panel())
+    {
+        bar_modes_create(screen, true);
+        return;
+    }
     lv_obj_t *page = ui_page(screen, "Remote");
 
     s_status = ui_text(page, remote_status_text(), false);
@@ -220,7 +226,7 @@ static void choose_mode(lv_event_t *e)
         app_open_app(target, NULL);
 }
 
-static void switcher_tile(lv_obj_t *screen, ui_key_rect_t r, const char *icon, const char *text, uint32_t color,
+static lv_obj_t *switcher_tile(lv_obj_t *screen, ui_key_rect_t r, const char *icon, const char *text, uint32_t color,
                           const app_t *target, bool disabled)
 {
     bool current = target != NULL && target == s_previous_mode;
@@ -260,11 +266,59 @@ static void switcher_tile(lv_obj_t *screen, ui_key_rect_t r, const char *icon, c
         lv_obj_add_state(button, LV_STATE_DISABLED);
     else
         lv_obj_add_event_cb(button, choose_mode, LV_EVENT_CLICKED, (void *)target);
+    return button;
+}
+
+static void bar_modes_create(lv_obj_t *screen, bool home)
+{
+    lv_obj_set_scrollable(screen, false);
+    lv_obj_t *title = lv_label_create(screen);
+    lv_label_set_text(title, home ? "Remote  ·  scorri le modalità" : "Modalità  ·  scorri e scegli");
+    lv_obj_set_style_text_font(title, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_color(title, ui_color(UI_COLOR_TEXT_DIM), 0);
+    lv_obj_set_pos(title, 12, 4);
+
+    lv_obj_t *strip = lv_obj_create(screen);
+    lv_obj_remove_style_all(strip);
+    lv_obj_set_pos(strip, 0, 28);
+    lv_obj_set_size(strip, remote_screen_w(), remote_screen_h() - 28);
+    lv_obj_set_scroll_dir(strip, LV_DIR_HOR);
+    lv_obj_set_scroll_snap_x(strip, LV_SCROLL_SNAP_START);
+    lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_AUTO);
+    const int32_t tile_w = 128;
+    for (int i = 0; i < 12; i++)
+    {
+        ui_key_rect_t rect = {8 + i * tile_w, 0, tile_w, remote_screen_h() - 32};
+        lv_obj_t *button;
+        if (i < 10)
+        {
+            const remote_mode_t *mode = &s_modes[i];
+            button = switcher_tile(strip, rect, mode->icon, mode->label, mode->color, mode->app,
+                                   mode->app == &remote_air_app && !imu_supported());
+        }
+        else if (i == 10)
+            button = switcher_tile(strip, rect, LV_SYMBOL_SETTINGS, "Opzioni", UI_COLOR_GRAY, &remote_options_app, false);
+        else
+        {
+            button = switcher_tile(strip, rect, LV_SYMBOL_HOME, home ? "Esci" : "Remote", UI_COLOR_TEXT, NULL, false);
+            if (home)
+            {
+                lv_obj_remove_event_cb(button, choose_mode);
+                lv_obj_add_event_cb(button, leave, LV_EVENT_CLICKED, NULL);
+            }
+        }
+        lv_obj_add_flag(button, LV_OBJ_FLAG_SNAPPABLE | LV_OBJ_FLAG_SCROLL_CHAIN_HOR);
+    }
 }
 
 static void switcher_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
+    if (remote_bar_panel())
+    {
+        bar_modes_create(screen, false);
+        return;
+    }
     lv_obj_set_scrollable(screen, false);
     int32_t w = remote_screen_w(), h = remote_screen_h();
     bool round = board_info()->round;
@@ -345,7 +399,8 @@ ui_key_rect_t remote_header_band(void)
     int32_t h = remote_screen_h();
     bool round = board_info()->round;
     /* Square panels keep a strip on top for the battery pill. */
-    return ui_keyboard_band(remote_screen_w(), h, round, round ? h * 9 / 100 : REMOTE_TOP, 44, 8);
+    return ui_keyboard_band(remote_screen_w(), h, round, round ? h * 9 / 100 : REMOTE_TOP,
+                            remote_bar_panel() ? 32 : 44, 8);
 }
 
 lv_obj_t *remote_switcher_button(lv_obj_t *screen)

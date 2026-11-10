@@ -50,7 +50,7 @@ static lv_obj_t *button_at(lv_obj_t *screen, ui_key_rect_t rect, const char *tex
     lv_label_set_text(label, text);
     lv_obj_set_width(label, rect.w - 12);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(label, UI_FONT_BODY, 0);
+    lv_obj_set_style_text_font(label, remote_bar_panel() ? UI_FONT_SMALL : UI_FONT_BODY, 0);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_center(label);
     return button;
@@ -104,11 +104,13 @@ static ui_key_rect_t grid_rect(int index)
     ui_key_rect_t header = remote_header_band();
     int32_t top = header.y + header.h + 4;
     int32_t bottom = panel_bottom() - lv_font_get_line_height(UI_FONT_SMALL) - 4;
-    int row = index / 2;
-    int32_t y0 = top + (bottom - top) * row / 4, y1 = top + (bottom - top) * (row + 1) / 4;
+    int cols = remote_bar_panel() ? 4 : 2;
+    int rows = 8 / cols;
+    int row = index / cols, col = index % cols;
+    int32_t y0 = top + (bottom - top) * row / rows, y1 = top + (bottom - top) * (row + 1) / rows;
     ui_key_rect_t band = ui_keyboard_band(remote_screen_w(), h, board_info()->round, y0, y1 - y0, 8);
-    int32_t middle = band.w / 2;
-    return (ui_key_rect_t){band.x + (index % 2 ? middle : 0), band.y, index % 2 ? band.w - middle : middle, band.h};
+    int32_t x0 = band.x + band.w * col / cols, x1 = band.x + band.w * (col + 1) / cols;
+    return (ui_key_rect_t){x0, band.y, x1 - x0, band.h};
 }
 
 static bool mac(void)

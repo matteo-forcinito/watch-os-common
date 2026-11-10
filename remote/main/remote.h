@@ -58,7 +58,7 @@ void remote_connect(void);
 void remote_battery_start(void);
 /* Ask, then return to the launcher. */
 void remote_confirm_exit(void);
-#define REMOTE_TOP 22 /* first row of the header on square panels, below the battery pill */
+#define REMOTE_TOP (remote_bar_panel() ? 0 : 22)
 
 /* "Bluetooth: in attesa" ... for headers. */
 const char *remote_status_text(void);
@@ -106,6 +106,10 @@ static inline int32_t remote_screen_h(void)
 static inline bool remote_landscape(void)
 {
     return remote_screen_w() > remote_screen_h() + 40;
+}
+static inline bool remote_bar_panel(void)
+{
+    return remote_screen_h() < 240 && remote_screen_w() > 2 * remote_screen_h();
 }
 
 /* Edge gestures of the touch surfaces (remote_gestures.c): scroll, volume, brightness. */

@@ -213,7 +213,7 @@ static void battery_tick(lv_timer_t *timer)
     int percent = (int)state_get(STATE_BATTERY);
     int charging = state_get(STATE_CHARGING) != 0;
     /* The text keyboard of square panels writes in the top strip. */
-    bool covered = !board_info()->round && app_current() == &keyboard_app;
+    bool covered = remote_bar_panel() || (!board_info()->round && app_current() == &keyboard_app);
     if (covered != lv_obj_has_flag(s_battery, LV_OBJ_FLAG_HIDDEN) && percent >= 0)
         shown = -2;
     if (percent == shown && charging == shown_charging)
