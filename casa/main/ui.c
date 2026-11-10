@@ -92,6 +92,7 @@ typedef struct
     char selected_device[64];
     int unit_heads[CASA_ENTITIES];
     lv_obj_t *dial, *dial_value, *d_state, *d_extra;
+    lv_obj_t *d_action, *d_room; /* bar thermostat: what it does now, room temperature */
     int32_t pending;          /* dial value waiting to be sent, INT32_MIN = none */
     uint32_t pending_at;
     casa_entity_t *list;
@@ -159,6 +160,10 @@ static lv_obj_t *casa_row(lv_obj_t *parent, const char *icon, uint32_t color, co
 
 static void render(casa_ui_t *ui);
 static bool bar_panel(void);
+static void dial_event(lv_event_t *e);
+static void step_dial(lv_event_t *event);
+static void detail_button(lv_event_t *e);
+static int dial_range(const casa_entity_t *e, int32_t *min, int32_t *max);
 static void all_devices(casa_ui_t *ui, lv_obj_t *page);
 static void make_unit(casa_ui_t *ui, lv_obj_t *parent, tile_t *tile, int width, const casa_entity_t *entity);
 static void home_update(casa_ui_t *ui);
@@ -731,22 +736,17 @@ static void overview(casa_ui_t *ui)
 
 /*
  * Bar panels (172 px on the short side, LCD 3.49): the overview is a strip of
- * cards built from the selected entities, a column in portrait and a row in
- * landscape, scrolled with the finger.
+ * cards in priority order, a column in portrait and a row in landscape.
  *
- *   portrait 172x640                 landscape 640x172
- *   ┌──────────────┐                 ┌──────┬────────┬──────────┬──────┬──────┬───
- *   │ 20:31     ⚙  │  clock          │20:31 │ ALARMO │ Fuori    │Cucina│Ester.│ ...
- *   │ ALARMO       │  alarm          │mar 10│Inserito│ 17,8°    │27,3° │17,8° │
- *   │ Inserito     │                 │   ⚙  │        │ Dentro   │51 %  │63 %  │
- *   │ Fuori  Dentro│  climate        └──────┴────────┴──────────┴──────┴──────┴───
- *   │ 17,8°  27,3° │
- *   │ Cucina 27,3° │  one row per thermometer (battery under 20 % in orange)
- *   │ Esterno 17,8°│
- *   │ Sicurezza    │  camera last event, motion detection switch, motion sensor
- *   │ Attenzione   │  low batteries and offline devices
- *   │ Tutti        │
- *   └──────────────┘
+ *   1 clock      time, date, weather (icon, temperature, city), settings
+ *   2 alarm      Alarmo state in colour, last motion; tap arms/disarms
+ *   3 thermostat what it does now (SCALDA / In pausa / Spento / no sensor),
+ *                target and room temperature; tap = detail (changes confirmed)
+ *   4 climate    outside / inside, then one row per thermometer (battery
+ *                under 20 % in orange), offline ones counted
+ *   5 camera     newest snapshot; tap = refresh, long press = next camera
+ *   6 media      only while a player plays or is paused
+ *   7 devices    every device, with low batteries and offline devices
  *
  * Widgets are built once per layout (casa layout signature) and updated in
  * place on every state change.
@@ -754,34 +754,48 @@ static void overview(casa_ui_t *ui)
 
 #define BAR_SENSORS 8
 #define BAR_LOW_BATTERY 20
+#define BAR_SNAP_EVERY_MS 15000
 #define C_ALARM_ON 0xFF5A6E
 #define C_ALARM_WAIT 0xFFB347
 #define C_COOL 0x79D4D4
+#define C_HEAT 0xFF8A5B
 
 typedef struct
 {
     bool landscape;
-    lv_obj_t *clock, *date;
-    lv_obj_t *alarm_card, *alarm_title, *alarm_state, *alarm_hint;
-    lv_obj_t *climate_card, *outside_value, *outside_meta, *inside_value, *inside_meta, *boiler;
+    /* clock */
+    lv_obj_t *clock, *date, *weather_icon_box, *weather_icon, *weather_text;
+    int weather_code;
+    bool weather_night;
+    /* alarm */
+    lv_obj_t *alarm_card, *alarm_title, *alarm_state, *alarm_hint, *alarm_motion;
+    char motion_sensor[CASA_ID];
+    /* thermostat */
+    lv_obj_t *thermo_card, *thermo_state, *thermo_target, *thermo_room, *thermo_icon;
+    /* climate */
+    lv_obj_t *outside_value, *inside_value, *outside_meta, *inside_meta, *offline_line;
     int sensor_count;
     char sensor_device[BAR_SENSORS][64];
-    lv_obj_t *sensor_card[BAR_SENSORS], *sensor_temp[BAR_SENSORS], *sensor_meta[BAR_SENSORS], *sensor_name[BAR_SENSORS];
-    lv_obj_t *security_card, *security_event, *security_motion, *security_switch;
-    char camera_event[CASA_ID], motion_switch[CASA_ID], motion_sensor[CASA_ID];
-    lv_obj_t *attention_card, *attention_text, *attention_icon;
-    /* camera card */
+    lv_obj_t *sensor_row[BAR_SENSORS], *sensor_name[BAR_SENSORS], *sensor_temp[BAR_SENSORS], *sensor_meta[BAR_SENSORS];
+    /* camera */
     char cameras[4][CASA_ID];
     int camera_count, camera;
-    lv_obj_t *camera_card, *camera_image, *camera_label, *camera_veil;
+    lv_obj_t *camera_card, *camera_image, *camera_label;
     lv_image_dsc_t camera_dsc;
     int camera_w, camera_h;
-    uint32_t snap_revision;
-    uint32_t snap_asked_ms;
+    uint32_t snap_revision, snap_asked_ms;
     bool snap_now;
+    /* media */
+    char media[CASA_ID];
+    lv_obj_t *media_card, *media_title, *media_artist, *media_button;
+    /* devices */
+    lv_obj_t *devices_card, *devices_text;
+    /* the touch that is going on: a drag is never a tap */
+    lv_point_t press;
+    bool moved;
 } bar_view_t;
 
-#define BAR_SNAP_EVERY_MS 15000
+#define BAR_TAP_SLOP 12
 
 static bool bar_panel(void)
 {
@@ -821,14 +835,6 @@ static bool bar_outside(const casa_entity_t *e)
     return false;
 }
 
-static bool bar_contains(const char *text, const char *word)
-{
-    char lower[CASA_ID];
-    snprintf(lower, sizeof(lower), "%s", text);
-    for (char *p = lower; *p; p++) *p = (char)tolower((unsigned char)*p);
-    return strstr(lower, word) != NULL;
-}
-
 /* "2026-11-10T10:07:28+00:00" -> unix time, 0 if not a timestamp. */
 static int64_t bar_parse_time(const char *text)
 {
@@ -841,13 +847,13 @@ static int64_t bar_parse_time(const char *text)
     int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     int64_t days = (int64_t)era * 146097 + doe - 719468;
     int64_t t = days * 86400 + h * 3600 + mi * 60 + s;
-    const char *zone = strpbrk(text + 19, "+-Z");
+    const char *zone = strlen(text) > 19 ? strpbrk(text + 19, "+-Z") : NULL;
     int zh = 0, zm = 0;
     if (zone && *zone != 'Z' && sscanf(zone + 1, "%d:%d", &zh, &zm) >= 1) t -= (*zone == '-' ? -1 : 1) * (zh * 3600 + zm * 60);
     return t;
 }
 
-/* "adesso", "12 min fa", "3 h fa", "ieri 18:40", "8/11 18:40" */
+/* "adesso", "12 min fa", "3 h fa", "oggi 18:40", "8/11 18:40" */
 static void bar_ago(int64_t when, char *out, size_t size)
 {
     time_t now = time(NULL);
@@ -899,8 +905,45 @@ static lv_obj_t *bar_text(lv_obj_t *parent, const lv_font_t *font, uint32_t colo
     return l;
 }
 
+static void bar_card_tint(lv_obj_t *card, uint32_t tint, bool strong)
+{
+    lv_obj_set_style_border_color(card, ui_color(tint), 0);
+    lv_obj_set_style_border_opa(card, strong ? LV_OPA_70 : LV_OPA_20, 0);
+    lv_obj_set_style_bg_grad_color(card, lv_color_mix(ui_color(tint), ui_color(C_TILE), strong ? 80 : 40), 0);
+}
+
+/* Cards bubble their touches to the strip: remember where the finger went down. */
+static void bar_touch(lv_event_t *event)
+{
+    bar_view_t *bar = lv_event_get_user_data(event);
+    lv_indev_t *indev = lv_indev_active();
+    if (bar == NULL || indev == NULL) return;
+    lv_point_t at;
+    lv_indev_get_point(indev, &at);
+    if (lv_event_get_code(event) == LV_EVENT_PRESSED)
+    {
+        bar->press = at;
+        bar->moved = false;
+    }
+    else if (LV_ABS(at.x - bar->press.x) > BAR_TAP_SLOP || LV_ABS(at.y - bar->press.y) > BAR_TAP_SLOP)
+        bar->moved = true;
+}
+
+static bool bar_dragged(void)
+{
+    bar_view_t *bar = s_ui != NULL ? s_ui->bar : NULL;
+    return bar != NULL && bar->moved;
+}
+
+static void bar_alarm(lv_event_t *event)
+{
+    if (bar_dragged()) return;
+    quick_event(event);
+}
+
 static void bar_open_device(lv_event_t *event)
 {
+    if (bar_dragged()) return;
     int index = (int)(intptr_t)event_data(event);
     bar_view_t *bar = s_ui->bar;
     if (bar == NULL || index < 0 || index >= bar->sensor_count) return;
@@ -914,45 +957,39 @@ static void bar_open_device(lv_event_t *event)
 
 static void bar_show_all(lv_event_t *event)
 {
-    bool offline_first = (intptr_t)event_data(event) == 1;
+    (void)event;
+    if (bar_dragged()) return;
     s_ui->view = HOME;
     s_ui->group_mode = 3;
     s_ui->page = 0;
     s_ui->show_unavailable = true;
     s_ui->group[0] = 0;
-    (void)offline_first;
     render(s_ui);
 }
 
-static void bar_toggle(lv_event_t *event)
+static void bar_thermostat(lv_event_t *event)
 {
     (void)event;
-    bar_view_t *bar = s_ui->bar;
-    casa_entity_t e;
-    if (bar == NULL || !bar->motion_switch[0] || !casa_entity(bar->motion_switch, &e) || !casa_tap(&e))
-        ui_toast("Comando non disponibile");
-}
-
-static void bar_climate(lv_event_t *event)
-{
-    (void)event;
+    if (bar_dragged()) return;
     const casa_entity_t *climate = quick_entity(s_ui, CASA_CLIMATE);
     if (climate) open_detail(s_ui, climate->id);
-    else
-    {
-        if (open_embedded(s_ui, ENVIRONMENT, NULL)) return;
-        s_ui->view = ENVIRONMENT;
-        s_ui->page = 0;
-        s_ui->show_unavailable = true;
-        render(s_ui);
-    }
+}
+
+static void bar_media(lv_event_t *event)
+{
+    (void)event;
+    if (bar_dragged()) return;
+    bar_view_t *bar = s_ui->bar;
+    casa_entity_t e;
+    if (bar == NULL || !bar->media[0] || !casa_entity(bar->media, &e)) return;
+    if (!casa_call("media_player", "media_play_pause", e.id, NULL)) ui_toast("Comando non inviato");
 }
 
 /* Tap: a new snapshot now. Long press: the next camera. */
 static void bar_camera_event(lv_event_t *event)
 {
     bar_view_t *bar = s_ui->bar;
-    if (bar == NULL || !bar->camera_count) return;
+    if (bar == NULL || !bar->camera_count || bar_dragged()) return;
     if ((intptr_t)event_data(event) == 1 && bar->camera_count > 1)
     {
         bar->camera = (bar->camera + 1) % bar->camera_count;
@@ -1001,7 +1038,7 @@ static void bar_camera_tick(casa_ui_t *ui)
             time_t taken = (time_t)info.taken;
             struct tm local;
             localtime_r(&taken, &local);
-            snprintf(text, sizeof(text), LV_SYMBOL_VIDEO "  %s  %02d:%02d:%02d", name, local.tm_hour, local.tm_min, local.tm_sec);
+            snprintf(text, sizeof(text), LV_SYMBOL_VIDEO "  %s  %02d:%02d", name, local.tm_hour, local.tm_min);
         }
         else snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %s: %s", name, info.error[0] ? info.error : "in attesa");
         lv_label_set_text(bar->camera_label, text);
@@ -1029,6 +1066,7 @@ static void bar_overview(casa_ui_t *ui)
     int32_t w = ui_board_info()->width, h = ui_board_info()->height;
     bool landscape = w > h;
     bar->landscape = landscape;
+    bar->weather_code = -1;
     const int32_t gap = 8, pad = 6;
 
     lv_obj_t *strip = ui->content;
@@ -1039,98 +1077,145 @@ static void bar_overview(casa_ui_t *ui)
     lv_obj_set_scrollable(strip, true);
     lv_obj_set_scroll_dir(strip, landscape ? LV_DIR_HOR : LV_DIR_VER);
     lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_scroll_snap_x(strip, landscape ? LV_SCROLL_SNAP_START : LV_SCROLL_SNAP_NONE);
     int32_t full = landscape ? h - 2 * pad : w - 2 * pad;   /* card thickness across the strip */
+    lv_obj_add_event_cb(strip, bar_touch, LV_EVENT_PRESSED, bar);
+    lv_obj_add_event_cb(strip, bar_touch, LV_EVENT_PRESSING, bar);
 
-    /* ---- clock */
+    /* ---- 1 clock, date, weather */
     {
-        int32_t cw = landscape ? 150 : full, ch = landscape ? full : 74;
+        int32_t cw = landscape ? 176 : full, ch = landscape ? full : 112;
         lv_obj_t *card = bar_card(strip, cw, ch, C_COOL);
-        bar->clock = bar_text(card, landscape ? ui_font_headline : ui_font_title, C_INK, 14, landscape ? 14 : 8, 0);
-        bar->date = bar_text(card, UI_FONT_SMALL, C_MIST, 15, landscape ? 62 : 46, cw - 30);
+        bar->clock = bar_text(card, landscape ? ui_font_headline : ui_font_title, C_INK, 14, 8, 0);
+        bar->date = bar_text(card, UI_FONT_SMALL, C_MIST, 15, landscape ? 54 : 44, cw - 30);
+        bar->weather_icon_box = plain(card);
+        lv_obj_set_size(bar->weather_icon_box, 40, 40);
+        lv_obj_set_pos(bar->weather_icon_box, 12, ch - 46);
+        bar->weather_text = bar_text(card, UI_FONT_SMALL, C_INK, 58, ch - 36, cw - 70);
         lv_obj_t *gear = panel_button(card, LV_SYMBOL_SETTINGS, C_OFF, open_settings, NULL);
-        lv_obj_set_size(gear, 44, 44);
-        if (landscape) lv_obj_align(gear, LV_ALIGN_BOTTOM_LEFT, 10, -10);
-        else lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -10, 0);
+        lv_obj_set_size(gear, 40, 40);
+        lv_obj_align(gear, LV_ALIGN_TOP_RIGHT, -8, 8);
     }
 
-    /* ---- alarm */
+    /* ---- 2 alarm (with the last motion) */
+    for (int i = 0; i < count && !bar->motion_sensor[0]; i++)
+    {
+        const casa_entity_t *e = &ui->list[i];
+        if (!strncmp(e->id, "binary_sensor.", 14) &&
+            (!strcmp(e->device_class, "motion") || !strcmp(e->device_class, "occupancy") || !strcmp(e->device_class, "presence")))
+            snprintf(bar->motion_sensor, sizeof(bar->motion_sensor), "%s", e->id);
+    }
     if (quick_entity(ui, CASA_ALARM))
     {
-        int32_t cw = landscape ? 176 : full, ch = landscape ? full : 92;
+        int32_t cw = landscape ? 180 : full, ch = landscape ? full : 112;
         lv_obj_t *card = bar_card(strip, cw, ch, C_ALARM_ON);
         bar->alarm_card = card;
         lv_obj_set_clickable(card, true);
-        add_event(card, quick_event, LV_EVENT_SHORT_CLICKED, (void *)0);
-        add_event(card, quick_event, LV_EVENT_LONG_PRESSED, (void *)4);
+        add_event(card, bar_alarm, LV_EVENT_SHORT_CLICKED, (void *)0);
+        add_event(card, bar_alarm, LV_EVENT_LONG_PRESSED, (void *)4);
         lv_port_set_focusable(card);
-        bar->alarm_title = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 10, cw - 28);
-        bar->alarm_state = bar_text(card, landscape ? ui_font_title : UI_FONT_LARGE, C_INK, 14, landscape ? 38 : 32, cw - 28);
-        bar->alarm_hint = bar_text(card, UI_FONT_SMALL, C_MIST, 14, ch - 28, cw - 28);
+        bar->alarm_title = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 8, cw - 28);
+        bar->alarm_state = bar_text(card, UI_FONT_LARGE, C_INK, 14, 30, cw - 28);
+        bar->alarm_hint = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 62, cw - 28);
+        bar->alarm_motion = bar_text(card, UI_FONT_SMALL, C_MIST, 14, ch - 28, cw - 28);
     }
 
-    /* ---- climate */
+    /* ---- 3 thermostat */
+    if (quick_entity(ui, CASA_CLIMATE))
     {
-        int32_t cw = landscape ? 230 : full, ch = landscape ? full : 132;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_WARM);
-        bar->climate_card = card;
+        int32_t cw = landscape ? 190 : full, ch = landscape ? full : 124;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_HEAT);
+        bar->thermo_card = card;
         lv_obj_set_clickable(card, true);
-        add_event(card, bar_climate, LV_EVENT_CLICKED, NULL);
-        int32_t half = (cw - 28) / 2;
-        lv_obj_t *t1 = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 10, half);
-        lv_label_set_text(t1, "Fuori");
-        lv_obj_t *t2 = bar_text(card, UI_FONT_SMALL, C_MIST, 14 + half, 10, half);
-        lv_label_set_text(t2, "Dentro");
-        const lv_font_t *big = landscape ? ui_font_headline : UI_FONT_LARGE;
-        bar->outside_value = bar_text(card, big, C_COOL, 14, 32, half);
-        bar->inside_value = bar_text(card, big, C_WARM, 14 + half, 32, half);
-        int32_t meta_y = 32 + lv_font_get_line_height(big) + 2;
-        bar->outside_meta = bar_text(card, UI_FONT_SMALL, C_MIST, 14, meta_y, half);
-        bar->inside_meta = bar_text(card, UI_FONT_SMALL, C_MIST, 14 + half, meta_y, half);
-        bar->boiler = bar_text(card, UI_FONT_SMALL, C_INK, 14, ch - 28, cw - 28);
+        add_event(card, bar_thermostat, LV_EVENT_CLICKED, NULL);
+        lv_obj_t *title = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 8, cw - 56);
+        lv_label_set_text(title, "Termostato");
+        bar->thermo_icon = bar_text(card, UI_FONT_ICON, C_MIST, cw - 40, 8, 0);
+        bar->thermo_state = bar_text(card, UI_FONT_LARGE, C_INK, 14, 32, cw - 28);
+        bar->thermo_target = bar_text(card, UI_FONT_SMALL, C_INK, 14, ch - 52, cw - 28);
+        bar->thermo_room = bar_text(card, UI_FONT_SMALL, C_MIST, 14, ch - 28, cw - 28);
     }
 
-    /* ---- one card per thermometer: available first */
+    /* ---- 4 climate: outside / inside and one row per thermometer */
     for (int pass = 0; pass < 2; pass++)
         for (int i = 0; i < count && bar->sensor_count < BAR_SENSORS; i++)
         {
             const casa_entity_t *e = &ui->list[i];
             if (strcmp(e->device_class, "temperature") || strncmp(e->id, "sensor.", 7)) continue;
             if ((e->known && e->available) != (pass == 0)) continue;
+            if (pass == 1) continue;   /* offline thermometers are counted, not listed */
             const char *key = e->device_id[0] ? e->device_id : e->id;
             bool seen = false;
             for (int k = 0; k < bar->sensor_count && !seen; k++) seen = !strcmp(bar->sensor_device[k], key);
-            if (seen) continue;
-            int index = bar->sensor_count++;
-            snprintf(bar->sensor_device[index], sizeof(bar->sensor_device[index]), "%.63s", key);
-            int32_t cw = landscape ? 150 : full, ch = landscape ? full : 62;
-            lv_obj_t *card = bar_card(strip, cw, ch, C_COOL);
-            bar->sensor_card[index] = card;
-            lv_obj_set_clickable(card, true);
-            add_event(card, bar_open_device, LV_EVENT_CLICKED, (void *)(intptr_t)index);
-            const char *name = e->device_name[0] ? e->device_name : e->name;
-            /* "Termometro cucina" -> "Cucina": the card already says what it is */
-            const char *short_name = !strncasecmp(name, "Termometro ", 11) ? name + 11 : name;
+            if (!seen) snprintf(bar->sensor_device[bar->sensor_count++], 64, "%.63s", key);
+        }
+    {
+        int rows = bar->sensor_count;
+        int32_t row_h = 28;
+        int32_t cw = landscape ? 150 + (rows > 3 ? 150 : 0) : full;
+        int32_t ch = landscape ? full : 80 + rows * row_h + 26;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_COOL);
+        int32_t half = landscape ? 66 : (cw - 28) / 2;
+        lv_obj_t *t1 = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 8, half);
+        lv_label_set_text(t1, "Fuori");
+        lv_obj_t *t2 = bar_text(card, UI_FONT_SMALL, C_MIST, 14 + half, 8, half);
+        lv_label_set_text(t2, "Dentro");
+        bar->outside_value = bar_text(card, UI_FONT_LARGE, C_COOL, 14, 28, half);
+        bar->inside_value = bar_text(card, UI_FONT_LARGE, C_WARM, 14 + half, 28, half);
+        bar->outside_meta = bar_text(card, UI_FONT_CAPTION, C_MIST, 14, 56, half);
+        bar->inside_meta = bar_text(card, UI_FONT_CAPTION, C_MIST, 14 + half, 56, half);
+        for (int index = 0; index < rows; index++)
+        {
+            int32_t x, y, rw;
             if (landscape)
             {
-                bar->sensor_name[index] = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 10, cw - 28);
-                bar->sensor_temp[index] = bar_text(card, ui_font_headline, C_INK, 14, 40, cw - 28);
-                bar->sensor_meta[index] = bar_text(card, UI_FONT_SMALL, C_MIST, 14, ch - 30, cw - 28);
+                /* rows below the header in the first column, then a second column */
+                int column = index < 3 ? 0 : 1;
+                int line = column ? index - 3 : index;
+                x = 8 + column * 150;
+                y = column ? 8 + line * row_h : 76 + line * row_h;
+                rw = 142;
+                if (column && line > 4) break;
             }
             else
             {
-                bar->sensor_name[index] = bar_text(card, UI_FONT_SMALL, C_INK, 14, 9, cw - 96);
-                bar->sensor_meta[index] = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 35, cw - 28);
-                bar->sensor_temp[index] = bar_text(card, UI_FONT_LARGE, C_INK, cw - 84, 5, 72);
-                lv_obj_set_style_text_align(bar->sensor_temp[index], LV_TEXT_ALIGN_RIGHT, 0);
+                x = 8;
+                y = 80 + index * row_h;
+                rw = cw - 16;
             }
-            lv_label_set_text(bar->sensor_name[index], short_name);
-            char first[2] = {(char)toupper((unsigned char)short_name[0]), 0};
-            if (short_name[0] && first[0] != short_name[0])
-                lv_label_set_text_fmt(bar->sensor_name[index], "%s%s", first, short_name + 1);
+            lv_obj_t *row = plain(card);
+            lv_obj_set_pos(row, x, y);
+            lv_obj_set_size(row, rw, row_h - 2);
+            lv_obj_set_style_radius(row, 10, 0);
+            lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_bg_color(row, ui_color(C_TILE_PRESSED), LV_STATE_PRESSED);
+            lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
+            lv_obj_set_clickable(row, true);
+            lv_obj_add_flag(row, LV_OBJ_FLAG_EVENT_BUBBLE);
+            add_event(row, bar_open_device, LV_EVENT_CLICKED, (void *)(intptr_t)index);
+            bar->sensor_row[index] = row;
+            bar->sensor_name[index] = bar_text(row, UI_FONT_SMALL, C_INK, 6, 4, rw - 70);
+            bar->sensor_temp[index] = bar_text(row, UI_FONT_SMALL, C_INK, rw - 62, 4, 56);
+            lv_obj_set_style_text_align(bar->sensor_temp[index], LV_TEXT_ALIGN_RIGHT, 0);
+            bar->sensor_meta[index] = NULL;
+            /* the name: "Termometro cucina" -> "Cucina" */
+            for (int i = 0; i < count; i++)
+            {
+                const casa_entity_t *e = &ui->list[i];
+                const char *key = e->device_id[0] ? e->device_id : e->id;
+                if (strcmp(key, bar->sensor_device[index]) || strcmp(e->device_class, "temperature")) continue;
+                const char *name = e->device_name[0] ? e->device_name : e->name;
+                const char *short_name = !strncasecmp(name, "Termometro ", 11) ? name + 11 : name;
+                lv_label_set_text_fmt(bar->sensor_name[index], "%c%s", toupper((unsigned char)short_name[0]),
+                                      short_name[0] ? short_name + 1 : "");
+                break;
+            }
         }
+        bar->offline_line = bar_text(card, UI_FONT_CAPTION, C_MIST, 14, ch - 22, cw - 28);
+        lv_obj_set_clickable(card, true);
+        add_event(card, bar_show_all, LV_EVENT_CLICKED, NULL);
+    }
 
-    /* ---- camera: the newest snapshot, available cameras first */
+    /* ---- 5 camera: the newest snapshot, available cameras first */
     for (int pass = 0; pass < 2; pass++)
         for (int i = 0; i < count && bar->camera_count < 4; i++)
         {
@@ -1156,77 +1241,49 @@ static void bar_overview(casa_ui_t *ui)
         lv_obj_set_size(bar->camera_image, bar->camera_w, bar->camera_h);
         lv_obj_add_flag(bar->camera_image, LV_OBJ_FLAG_EVENT_BUBBLE);
         lv_obj_remove_flag(bar->camera_image, LV_OBJ_FLAG_CLICKABLE);
-        /* A dark band under the caption, readable over any picture. */
-        bar->camera_veil = plain(card);
-        lv_obj_set_size(bar->camera_veil, cw, 30);
-        lv_obj_align(bar->camera_veil, LV_ALIGN_BOTTOM_MID, 0, 0);
-        lv_obj_set_style_bg_color(bar->camera_veil, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(bar->camera_veil, LV_OPA_50, 0);
-        lv_obj_add_flag(bar->camera_veil, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_t *veil = plain(card);   /* a dark band under the caption, readable over any picture */
+        lv_obj_set_size(veil, cw, 30);
+        lv_obj_align(veil, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_color(veil, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(veil, LV_OPA_50, 0);
+        lv_obj_add_flag(veil, LV_OBJ_FLAG_EVENT_BUBBLE);
         bar->camera_label = bar_text(card, UI_FONT_SMALL, C_INK, 10, ch - 26, cw - 20);
         lv_label_set_text(bar->camera_label, LV_SYMBOL_VIDEO "  Carico...");
         bar->snap_now = true;
     }
 
-    /* ---- security: camera last event, motion detection switch, motion sensor */
-    for (int i = 0; i < count; i++)
+    /* ---- 6 media: only while something plays or is paused */
+    for (int i = 0; i < count && !bar->media[0]; i++)
     {
         const casa_entity_t *e = &ui->list[i];
-        bool camera = bar_contains(e->id, "camera") || bar_contains(e->device_name, "camera") || bar_contains(e->name, "telecamera");
-        if (!bar->camera_event[0] && camera && !strcmp(e->device_class, "timestamp"))
-            snprintf(bar->camera_event, sizeof(bar->camera_event), "%s", e->id);
-        if (!bar->motion_switch[0] && e->kind == CASA_SWITCH && camera && bar_contains(e->id, "movimento") && bar_contains(e->id, "allarme"))
-            snprintf(bar->motion_switch, sizeof(bar->motion_switch), "%s", e->id);
-        if (!bar->motion_sensor[0] && !strncmp(e->id, "binary_sensor.", 14) &&
-            (!strcmp(e->device_class, "motion") || !strcmp(e->device_class, "occupancy") || !strcmp(e->device_class, "presence")))
-            snprintf(bar->motion_sensor, sizeof(bar->motion_sensor), "%s", e->id);
+        if (e->kind == CASA_MEDIA && e->available && (!strcmp(e->state, "playing") || !strcmp(e->state, "paused")))
+            snprintf(bar->media, sizeof(bar->media), "%s", e->id);
     }
-    if (bar->camera_event[0] || bar->motion_switch[0] || bar->motion_sensor[0])
+    if (bar->media[0])
     {
-        int32_t cw = landscape ? 220 : full, ch = landscape ? full : 168;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_ALARM_WAIT);
-        bar->security_card = card;
-        lv_obj_t *title = bar_text(card, UI_FONT_SMALL, C_ALARM_WAIT, 14, 8, cw - 28);
-        lv_label_set_text(title, LV_SYMBOL_EYE_OPEN "  Sicurezza");
-        lv_obj_t *c1 = bar_text(card, UI_FONT_CAPTION, C_MIST, 14, landscape ? 32 : 36, cw - 28);
-        lv_label_set_text(c1, "MOVIMENTO");
-        bar->security_motion = bar_text(card, UI_FONT_SMALL, C_INK, 14, landscape ? 46 : 52, cw - 28);
-        lv_obj_t *c2 = bar_text(card, UI_FONT_CAPTION, C_MIST, 14, landscape ? 70 : 80, cw - 28);
-        lv_label_set_text(c2, "TELECAMERA");
-        bar->security_event = bar_text(card, UI_FONT_SMALL, C_INK, 14, landscape ? 84 : 96, cw - 28);
-        if (bar->motion_switch[0])
-        {
-            bar->security_switch = panel_button(card, "", C_OFF, bar_toggle, NULL);
-            lv_obj_set_size(bar->security_switch, cw - 20, landscape ? 32 : 36);
-            lv_obj_set_style_min_height(bar->security_switch, landscape ? 32 : 36, 0);
-            lv_obj_align(bar->security_switch, LV_ALIGN_BOTTOM_MID, 0, -6);
-        }
+        int32_t cw = landscape ? 220 : full, ch = landscape ? full : 96;
+        lv_obj_t *card = bar_card(strip, cw, ch, 0xE36FB0);
+        bar->media_card = card;
+        bar->media_title = bar_text(card, UI_FONT_SMALL, C_INK, 14, 10, cw - 78);
+        bar->media_artist = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 34, cw - 78);
+        bar->media_button = panel_button(card, LV_SYMBOL_PLAY, 0xE36FB0, bar_media, NULL);
+        lv_obj_set_size(bar->media_button, 52, 52);
+        lv_obj_align(bar->media_button, landscape ? LV_ALIGN_BOTTOM_RIGHT : LV_ALIGN_RIGHT_MID, -10, landscape ? -10 : 0);
     }
 
-    /* ---- attention: low batteries and offline devices */
+    /* ---- 7 every device, with what needs attention */
     {
-        int32_t cw = landscape ? 170 : full, ch = landscape ? full : 64;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_OK);
-        bar->attention_card = card;
-        lv_obj_set_clickable(card, true);
-        add_event(card, bar_show_all, LV_EVENT_CLICKED, (void *)1);
-        bar->attention_icon = bar_text(card, UI_FONT_ICON, C_OK, 14, landscape ? 14 : (ch - 24) / 2, 0);
-        bar->attention_text = label(card, UI_FONT_SMALL, C_INK, "");
-        lv_obj_set_width(bar->attention_text, landscape ? cw - 28 : cw - 60);
-        lv_label_set_long_mode(bar->attention_text, LV_LABEL_LONG_MODE_WRAP);
-        if (landscape) lv_obj_set_pos(bar->attention_text, 14, 50);
-        else lv_obj_align(bar->attention_text, LV_ALIGN_LEFT_MID, 48, 0);
-    }
-
-    /* ---- every device */
-    {
-        int32_t cw = landscape ? 112 : full, ch = landscape ? full : 52;
+        int32_t cw = landscape ? 150 : full, ch = landscape ? full : 64;
         lv_obj_t *card = bar_card(strip, cw, ch, C_MIST);
+        bar->devices_card = card;
         lv_obj_set_clickable(card, true);
-        add_event(card, bar_show_all, LV_EVENT_CLICKED, (void *)0);
-        lv_obj_t *l = label(card, UI_FONT_SMALL, C_INK, landscape ? LV_SYMBOL_LIST "\nTutti i\ndispositivi" : LV_SYMBOL_LIST "  Tutti i dispositivi");
-        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(l);
+        add_event(card, bar_show_all, LV_EVENT_CLICKED, NULL);
+        lv_obj_t *l = bar_text(card, UI_FONT_SMALL, C_INK, 14, landscape ? 14 : 10, cw - 28);
+        lv_label_set_text(l, LV_SYMBOL_LIST "  Dispositivi");
+        bar->devices_text = label(card, UI_FONT_SMALL, C_MIST, "");
+        lv_obj_set_width(bar->devices_text, cw - 28);
+        lv_label_set_long_mode(bar->devices_text, LV_LABEL_LONG_MODE_WRAP);
+        lv_obj_set_pos(bar->devices_text, 14, landscape ? 44 : 34);
     }
 
     ui->clock_minute = -1;
@@ -1241,10 +1298,12 @@ static void bar_overview_update(casa_ui_t *ui)
     int count = ui->status_now.count;
     char text[96], value[24];
 
-    /* clock */
+    /* 1 clock and weather */
     time_t now = time(NULL);
     struct tm local;
     localtime_r(&now, &local);
+    ui->weather_revision = state_get(STATE_WEATHER_VERSION);
+    ui->alarm_revision = state_get(STATE_ALARM_VERSION); /* else update() would run on every tick */
     if (ui->clock_minute != local.tm_min)
     {
         ui->clock_minute = local.tm_min;
@@ -1254,9 +1313,29 @@ static void bar_overview_update(casa_ui_t *ui)
         static const char *months[] = {"gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"};
         snprintf(text, sizeof(text), "%s %d %s", days[local.tm_wday], local.tm_mday, months[local.tm_mon]);
         lv_label_set_text(bar->date, clock_is_valid() ? text : "");
+        if (ui->status_now.connected) weather_refresh(7200);
     }
+    weather_t weather;
+    bool valid = weather_get(&weather);
+    bool night = clock_is_valid() ? local.tm_hour < 7 || local.tm_hour >= 19 : valid && !weather.is_day;
+    int code = valid ? weather.code : 0;
+    if (code != bar->weather_code || night != bar->weather_night)
+    {
+        if (bar->weather_icon) lv_obj_delete(bar->weather_icon);
+        bar->weather_icon = ui_weather_icon(bar->weather_icon_box, code, night, 40);
+        lv_obj_center(bar->weather_icon);
+        bar->weather_code = code;
+        bar->weather_night = night;
+    }
+    if (valid)
+    {
+        bar_degrees(weather.temp, value, sizeof(value));
+        snprintf(text, sizeof(text), "%s %s", value, weather.city);
+    }
+    else snprintf(text, sizeof(text), "Meteo...");
+    lv_label_set_text(bar->weather_text, text);
 
-    /* alarm */
+    /* 2 alarm */
     const casa_entity_t *alarm = quick_entity(ui, CASA_ALARM);
     if (bar->alarm_card && alarm)
     {
@@ -1270,21 +1349,51 @@ static void bar_overview_update(casa_ui_t *ui)
         {
             tint = C_ALARM_ON;
             state = "Inserito";
-            hint = !strcmp(s, "armed_away") ? "Fuori casa"
-                 : !strcmp(s, "armed_home") ? "In casa"
-                 : !strcmp(s, "armed_night") ? "Notte"
-                 : !strcmp(s, "armed_vacation") ? "Vacanza" : "Personalizzato";
+            hint = !strcmp(s, "armed_away") ? "Fuori casa" : !strcmp(s, "armed_home") ? "In casa"
+                 : !strcmp(s, "armed_night") ? "Notte" : !strcmp(s, "armed_vacation") ? "Vacanza" : "Personalizzato";
         }
         lv_label_set_text(bar->alarm_title, alarm->name[0] ? alarm->name : "Allarme");
         lv_label_set_text(bar->alarm_state, state);
         lv_obj_set_style_text_color(bar->alarm_state, ui_color(tint), 0);
         lv_label_set_text(bar->alarm_hint, hint);
-        lv_obj_set_style_border_color(bar->alarm_card, ui_color(tint), 0);
-        lv_obj_set_style_border_opa(bar->alarm_card, LV_OPA_60, 0);
-        lv_obj_set_style_bg_grad_color(bar->alarm_card, lv_color_mix(ui_color(tint), ui_color(C_TILE), 70), 0);
+        bar_card_tint(bar->alarm_card, tint, true);
+        casa_entity_t motion;
+        if (bar->motion_sensor[0] && casa_entity(bar->motion_sensor, &motion) && motion.known && motion.available)
+        {
+            char ago[24];
+            bar_ago(motion.last_changed, ago, sizeof(ago));
+            snprintf(text, sizeof(text), motion.on ? LV_SYMBOL_EYE_OPEN " Movimento ora" : LV_SYMBOL_EYE_OPEN " %s", ago);
+            lv_obj_set_style_text_color(bar->alarm_motion, ui_color(motion.on ? C_ALARM_ON : C_MIST), 0);
+        }
+        else text[0] = 0;
+        lv_label_set_text(bar->alarm_motion, text);
     }
 
-    /* climate: outside thermometer, indoor average, boiler */
+    /* 3 thermostat: what it does now, unmistakable */
+    const casa_entity_t *climate = quick_entity(ui, CASA_CLIMATE);
+    if (bar->thermo_card && climate)
+    {
+        bool usable = climate->known && climate->available;
+        bool off = !strcmp(climate->state, "off");
+        bool heating = !strcmp(climate->hvac_action, "heating") || !strcmp(climate->hvac_action, "preheating");
+        bool blind = usable && !off && isnan(climate->current_temp);
+        const char *state = !usable ? "Non disponibile" : off ? "Spento" : blind ? "Manca sensore"
+                          : heating ? "SCALDA" : climate->hvac_action[0] ? "In pausa" : "Acceso";
+        uint32_t tint = !usable || off ? C_MIST : blind ? C_ALARM_WAIT : heating ? C_HEAT : C_INK;
+        lv_label_set_text(bar->thermo_state, state);
+        lv_obj_set_style_text_color(bar->thermo_state, ui_color(tint), 0);
+        lv_label_set_text(bar->thermo_icon, heating ? LV_SYMBOL_CHARGE : blind ? LV_SYMBOL_WARNING : LV_SYMBOL_POWER);
+        lv_obj_set_style_text_color(bar->thermo_icon, ui_color(tint), 0);
+        bar_card_tint(bar->thermo_card, heating ? C_HEAT : blind ? C_ALARM_WAIT : C_HEAT, heating || blind);
+        bar_degrees(climate->target_temp, value, sizeof(value));
+        snprintf(text, sizeof(text), off ? "Obiettivo --" : "Obiettivo %s", value);
+        lv_label_set_text(bar->thermo_target, text);
+        bar_degrees(climate->current_temp, value, sizeof(value));
+        snprintf(text, sizeof(text), "Ambiente %s", value);
+        lv_label_set_text(bar->thermo_room, text);
+    }
+
+    /* 4 climate */
     float outside = NAN, outside_humidity = NAN;
     for (int i = 0; i < count && isnan(outside); i++)
     {
@@ -1298,138 +1407,235 @@ static void bar_overview_update(casa_ui_t *ui)
                     bar_number(&ui->list[k], &outside_humidity);
         }
     }
-    if (isnan(outside))
-    {
-        weather_t weather;
-        if (weather_get(&weather)) outside = weather.temp;
-    }
+    bool from_weather = false;
+    if (isnan(outside) && valid) { outside = weather.temp; from_weather = true; }
     casa_home_stats_t stats;
     casa_home_stats(ui->list, count, &stats);
     bar_degrees(outside, value, sizeof(value));
     lv_label_set_text(bar->outside_value, value);
     if (!isnan(outside_humidity)) snprintf(text, sizeof(text), "%.0f %%", (double)outside_humidity);
-    else snprintf(text, sizeof(text), isnan(outside) ? "" : "meteo");
+    else snprintf(text, sizeof(text), from_weather ? "meteo" : "");
     lv_label_set_text(bar->outside_meta, text);
     bar_degrees(stats.temperatures ? stats.temperature : NAN, value, sizeof(value));
     lv_label_set_text(bar->inside_value, value);
     if (stats.humidities) snprintf(text, sizeof(text), "%.0f %%", (double)stats.humidity);
     else text[0] = 0;
     lv_label_set_text(bar->inside_meta, text);
-    const casa_entity_t *climate = quick_entity(ui, CASA_CLIMATE);
-    if (climate && climate->known && climate->available)
-    {
-        /* hvac_action says what it does now; the state is only the mode. */
-        char target[24];
-        bar_degrees(climate->target_temp, target, sizeof(target));
-        bool off = !strcmp(climate->state, "off");
-        bool heating = !strcmp(climate->hvac_action, "heating") || !strcmp(climate->hvac_action, "preheating");
-        bool cooling = !strcmp(climate->hvac_action, "cooling");
-        const char *doing = off ? "Spento" : heating ? "Scalda" : cooling ? "Raffredda"
-                          : climate->hvac_action[0] ? "In pausa" : "Acceso";
-        /* No room temperature: a thermostat that cannot regulate, say so. */
-        bool blind = !off && isnan(climate->current_temp);
-        if (blind) snprintf(text, sizeof(text), LV_SYMBOL_WARNING " Manca sensore");
-        else snprintf(text, sizeof(text), "%s %s %s", heating ? LV_SYMBOL_CHARGE : LV_SYMBOL_POWER, doing,
-                      off || isnan(climate->target_temp) ? "" : target);
-        lv_obj_set_style_text_color(bar->boiler, ui_color(blind ? C_ALARM_WAIT : heating ? 0xFF8A5B : off ? C_MIST : C_INK), 0);
-    }
-    else snprintf(text, sizeof(text), climate ? "Caldaia offline" : "Dettagli " LV_SYMBOL_RIGHT);
-    lv_label_set_text(bar->boiler, text);
-
-    /* thermometers */
-    int low = 0;
     for (int index = 0; index < bar->sensor_count; index++)
     {
-        float temperature = NAN, humidity = NAN, battery = NAN;
-        bool known = false;
+        if (bar->sensor_row[index] == NULL) continue;
+        float temperature = NAN, battery = NAN;
         for (int i = 0; i < count; i++)
         {
             const casa_entity_t *e = &ui->list[i];
             const char *key = e->device_id[0] ? e->device_id : e->id;
-            if (strcmp(key, bar->sensor_device[index])) continue;
             float v;
-            if (!bar_number(e, &v)) continue;
-            known = true;
+            if (strcmp(key, bar->sensor_device[index]) || !bar_number(e, &v)) continue;
             if (!strcmp(e->device_class, "temperature")) temperature = v;
-            else if (!strcmp(e->device_class, "humidity")) humidity = v;
             else if (!strcmp(e->device_class, "battery")) battery = v;
         }
-        bar_degrees(temperature, value, sizeof(value));
-        lv_label_set_text(bar->sensor_temp[index], value);
-        lv_obj_set_style_text_color(bar->sensor_temp[index], ui_color(!known ? C_OFF : C_INK), 0);
         bool weak = !isnan(battery) && battery < BAR_LOW_BATTERY;
-        if (!known) snprintf(text, sizeof(text), "non disponibile");
-        else if (!isnan(humidity) && !isnan(battery))
-            snprintf(text, sizeof(text), "%.0f %%   %s %.0f%%", (double)humidity, weak ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_3, (double)battery);
-        else if (!isnan(humidity)) snprintf(text, sizeof(text), "%.0f %%", (double)humidity);
-        else if (!isnan(battery)) snprintf(text, sizeof(text), "%s %.0f%%", weak ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_3, (double)battery);
-        else text[0] = 0;
-        lv_label_set_text(bar->sensor_meta[index], text);
-        lv_obj_set_style_text_color(bar->sensor_meta[index], ui_color(weak ? C_ALARM_WAIT : C_MIST), 0);
-        lv_obj_set_style_border_color(bar->sensor_card[index], ui_color(weak ? C_ALARM_WAIT : C_COOL), 0);
-        lv_obj_set_style_border_opa(bar->sensor_card[index], weak ? LV_OPA_60 : LV_OPA_20, 0);
+        bar_degrees(temperature, value, sizeof(value));
+        lv_label_set_text_fmt(bar->sensor_temp[index], "%s%s", weak ? LV_SYMBOL_BATTERY_1 " " : "", value);
+        lv_obj_set_style_text_color(bar->sensor_temp[index], ui_color(weak ? C_ALARM_WAIT : isnan(temperature) ? C_OFF : C_INK), 0);
     }
 
-    /* security */
-    if (bar->security_card)
-    {
-        casa_entity_t e;
-        if (bar->motion_sensor[0] && casa_entity(bar->motion_sensor, &e))
-        {
-            char ago[24];
-            bar_ago(e.last_changed, ago, sizeof(ago));
-            if (!e.known || !e.available) snprintf(text, sizeof(text), "non disponibile");
-            else if (e.on) snprintf(text, sizeof(text), "rilevato ora");
-            else snprintf(text, sizeof(text), "%s", ago);
-            lv_obj_set_style_text_color(bar->security_motion, ui_color(e.on ? C_ALARM_ON : C_INK), 0);
-        }
-        else snprintf(text, sizeof(text), "nessun sensore");
-        lv_label_set_text(bar->security_motion, text);
-        if (bar->camera_event[0] && casa_entity(bar->camera_event, &e) && e.known && e.available)
-        {
-            char ago[24];
-            bar_ago(bar_parse_time(e.state), ago, sizeof(ago));
-            snprintf(text, sizeof(text), "%s", ago);
-        }
-        else snprintf(text, sizeof(text), bar->camera_event[0] ? "--" : "nessuna");
-        lv_label_set_text(bar->security_event, text);
-        if (bar->security_switch && casa_entity(bar->motion_switch, &e))
-        {
-            bool on = e.known && e.available && e.on;
-            lv_label_set_text(lv_obj_get_child(bar->security_switch, 0), on ? "Rilevamento ON" : "Rilevamento OFF");
-            lv_obj_set_style_bg_color(bar->security_switch, ui_color(on ? 0x3A2A10 : C_OFF), 0);
-            lv_obj_set_style_text_color(lv_obj_get_child(bar->security_switch, 0), ui_color(on ? C_ALARM_WAIT : C_MIST), 0);
-        }
-    }
-
-    /* attention: low batteries anywhere, devices with nothing available */
-    int offline = 0;
-    low = 0;
+    /* 7 devices: low batteries anywhere, devices with nothing available */
+    int offline = 0, low = 0, offline_thermo = 0;
     for (int i = 0; i < count; i++)
     {
         const casa_entity_t *e = &ui->list[i];
         float v;
         if (!strcmp(e->device_class, "battery") && bar_number(e, &v) && v < BAR_LOW_BATTERY) low++;
         if (!e->device_id[0]) continue;
-        bool first = true, any = false;
+        bool first = true, any = false, thermo = false;
         for (int k = 0; k < count; k++)
         {
             if (strcmp(ui->list[k].device_id, e->device_id)) continue;
             if (k < i) { first = false; break; }
             any |= ui->list[k].known && ui->list[k].available;
+            thermo |= !strcmp(ui->list[k].device_class, "temperature");
         }
-        if (first && !any) offline++;
+        if (first && !any) { offline++; offline_thermo += thermo; }
     }
-    bool fine = !low && !offline;
-    if (fine) snprintf(text, sizeof(text), "Tutto a posto");
-    else if (low && offline) snprintf(text, sizeof(text), "%d batteri%c bass%c\n%d offline", low, low == 1 ? 'a' : 'e', low == 1 ? 'a' : 'e', offline);
+    if (offline_thermo) snprintf(text, sizeof(text), "%d termometr%c offline", offline_thermo, offline_thermo == 1 ? 'o' : 'i');
+    else text[0] = 0;
+    lv_label_set_text(bar->offline_line, text);
+    if (!low && !offline) snprintf(text, sizeof(text), LV_SYMBOL_OK " tutto a posto");
+    else if (low && offline) snprintf(text, sizeof(text), "%d batteri%c bass%c, %d offline", low, low == 1 ? 'a' : 'e', low == 1 ? 'a' : 'e', offline);
     else if (low) snprintf(text, sizeof(text), "%d batteri%c bass%c", low, low == 1 ? 'a' : 'e', low == 1 ? 'a' : 'e');
-    else snprintf(text, sizeof(text), "%d dispositiv%c offline", offline, offline == 1 ? 'o' : 'i');
-    lv_label_set_text(bar->attention_text, text);
-    lv_label_set_text(bar->attention_icon, fine ? LV_SYMBOL_OK : LV_SYMBOL_WARNING);
-    lv_obj_set_style_text_color(bar->attention_icon, ui_color(fine ? C_OK : C_ALARM_WAIT), 0);
-    lv_obj_set_style_border_color(bar->attention_card, ui_color(fine ? C_OK : C_ALARM_WAIT), 0);
-    lv_obj_set_style_border_opa(bar->attention_card, fine ? LV_OPA_20 : LV_OPA_60, 0);
+    else snprintf(text, sizeof(text), "%d offline", offline);
+    lv_label_set_text(bar->devices_text, text);
+    lv_obj_set_style_text_color(bar->devices_text, ui_color(low || offline ? C_ALARM_WAIT : C_OK), 0);
+
+    /* 6 media */
+    casa_entity_t media;
+    if (bar->media_card && casa_entity(bar->media, &media))
+    {
+        lv_label_set_text(bar->media_title, media.media_title[0] ? media.media_title : media.name);
+        lv_label_set_text(bar->media_artist, media.media_artist[0] ? media.media_artist : media.state);
+        lv_label_set_text(lv_obj_get_child(bar->media_button, 0), !strcmp(media.state, "playing") ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+    }
+}
+
+
+/*
+ * Thermostat on bar panels.
+ *
+ *   portrait 172x640                  landscape 640x172
+ *   ┌──────────────┐                  ┌──┬──────┬───┬──────────────┬─────────┐
+ *   │ ‹ Termostato │                  │‹ │ ╭──╮ │ + │ Termostato   │Riscalda │
+ *   │ In pausa     │  hvac_action     │  │ 20,5°│   │ In pausa     │         │
+ *   │   ╭──────╮   │                  │  │ ╰──╯ │ - │ Ambiente 19° │ Spento  │
+ *   │   │ 20,5°│   │  setpoint dial   └──┴──────┴───┴──────────────┴─────────┘
+ *   │   ╰──────╯   │
+ *   │  [-]   [+]   │
+ *   │ Ambiente 19,8°│ room temperature (warns when there is none)
+ *   │ [Riscalda]   │  HVAC modes exposed by the entity
+ *   │ [Spento]     │
+ *   └──────────────┘
+ * The dial, buttons and labels are the ones detail_update() already drives.
+ */
+static void climate_bar(casa_ui_t *ui, const casa_entity_t *entity)
+{
+    int32_t w = ui_board_info()->width, h = ui_board_info()->height - navigation_height();
+    bool landscape = w > h;
+    lv_obj_t *page = plain(ui->content);
+    lv_obj_set_size(page, w, h);
+    lv_obj_set_style_bg_color(page, ui_color(C_BG), 0);
+    lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
+    int32_t min, max, value = dial_range(entity, &min, &max);
+
+    lv_obj_t *back = panel_button(page, LV_SYMBOL_LEFT, C_OFF, show_overview, NULL);
+    lv_obj_set_size(back, 44, landscape ? h - 12 : 44);
+    lv_obj_set_pos(back, 6, 6);
+
+    int32_t side = landscape ? h - 12 : w - 24;
+    int32_t dial_x = landscape ? 58 : 12, dial_y = landscape ? 6 : 104;
+    ui->dial = lv_arc_create(page);
+    lv_obj_set_size(ui->dial, side, side);
+    lv_obj_set_pos(ui->dial, dial_x, dial_y);
+    lv_obj_set_style_pad_all(ui->dial, 0, LV_PART_MAIN);
+    lv_arc_set_rotation(ui->dial, 135);
+    lv_arc_set_bg_angles(ui->dial, 0, 270);
+    lv_arc_set_range(ui->dial, min, max);
+    lv_arc_set_value(ui->dial, value);
+    lv_obj_set_style_arc_width(ui->dial, landscape ? 8 : 12, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(ui->dial, landscape ? 8 : 12, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(ui->dial, true, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ui->dial, ui_color(C_OFF), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(ui->dial, ui_color(0xFF8A5B), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(ui->dial, ui_color(C_INK), LV_PART_KNOB);
+    lv_obj_set_style_pad_all(ui->dial, landscape ? 3 : 5, LV_PART_KNOB);
+    lv_obj_set_style_shadow_color(ui->dial, ui_color(0xFF8A5B), LV_PART_INDICATOR);
+    add_event(ui->dial, dial_event, LV_EVENT_VALUE_CHANGED, NULL);
+    add_event(ui->dial, dial_event, LV_EVENT_RELEASED, NULL);
+    ui->dial_value = label(ui->dial, landscape ? UI_FONT_LARGE : ui_font_headline, C_INK, "");
+    lv_obj_align(ui->dial_value, LV_ALIGN_CENTER, 0, landscape ? -4 : -6);
+    lv_obj_t *caption = label(ui->dial, UI_FONT_SMALL, C_MIST, landscape ? "obiettivo" : "Obiettivo");
+    lv_obj_align(caption, LV_ALIGN_CENTER, 0, landscape ? 20 : 30);
+    ui->pending = INT32_MIN;
+
+    /* - / + */
+    lv_obj_t *minus, *plus;
+    minus = panel_button(page, LV_SYMBOL_MINUS, C_OFF, step_dial, (void *)-1);
+    plus = panel_button(page, LV_SYMBOL_PLUS, 0x3A2418, step_dial, (void *)1);
+    if (landscape)
+    {
+        int32_t x = dial_x + side + 8, bh = (h - 20) / 2;
+        lv_obj_set_size(plus, 64, bh);
+        lv_obj_set_pos(plus, x, 6);
+        lv_obj_set_size(minus, 64, bh);
+        lv_obj_set_pos(minus, x, 14 + bh);
+    }
+    else
+    {
+        int32_t y = dial_y + side + 8, bw = (w - 30) / 2;
+        lv_obj_set_size(minus, bw, 60);
+        lv_obj_set_pos(minus, 12, y);
+        lv_obj_set_size(plus, bw, 60);
+        lv_obj_set_pos(plus, 18 + bw, y);
+    }
+    lv_obj_set_style_text_font(lv_obj_get_child(minus, 0), UI_FONT_ICON, 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(plus, 0), UI_FONT_ICON, 0);
+
+    /* name, what it does, room temperature */
+    int32_t info_x = landscape ? dial_x + side + 82 : 58, info_w = landscape ? 190 : w - 64;
+    lv_obj_t *title = label(page, UI_FONT_SMALL, C_MIST, entity->name);
+    lv_obj_set_pos(title, info_x, landscape ? 10 : 10);
+    lv_obj_set_width(title, info_w);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_MODE_DOTS);
+    ui->d_action = label(page, UI_FONT_LARGE, C_INK, "");
+    lv_obj_set_pos(ui->d_action, landscape ? info_x : 12, landscape ? 32 : 58);
+    lv_obj_set_width(ui->d_action, landscape ? info_w : w - 24);
+    lv_label_set_long_mode(ui->d_action, LV_LABEL_LONG_MODE_DOTS);
+    ui->d_room = label(page, UI_FONT_SMALL, C_INK, "");
+    if (landscape) lv_obj_set_pos(ui->d_room, info_x, 68);
+    else lv_obj_set_pos(ui->d_room, 12, dial_y + side + 80);
+    lv_obj_set_width(ui->d_room, landscape ? info_w : w - 24);
+    lv_label_set_long_mode(ui->d_room, LV_LABEL_LONG_MODE_DOTS);
+    ui->d_state = label(page, UI_FONT_SMALL, C_MIST, "");   /* the raw mode text, kept small */
+    lv_obj_set_hidden(ui->d_state, true);
+
+    /* HVAC modes */
+    ui->controls = plain(page);
+    if (landscape)
+    {
+        lv_obj_set_pos(ui->controls, w - 150, 6);
+        lv_obj_set_size(ui->controls, 144, h - 12);
+    }
+    else
+    {
+        lv_obj_set_pos(ui->controls, 12, dial_y + side + 110);
+        lv_obj_set_size(ui->controls, w - 24, h - (dial_y + side + 110) - 30);
+    }
+    lv_obj_set_flex_flow(ui->controls, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(ui->controls, 6, 0);
+    static char modes[6][20];
+    int shown = entity->hvac_count > 4 ? 4 : entity->hvac_count;
+    for (int i = 0; i < shown; i++)
+    {
+        snprintf(modes[i], sizeof(modes[i]), "hvac:%s", entity->hvac_modes[i]);
+        const char *mode = entity->hvac_modes[i];
+        const char *name = !strcmp(mode, "off") ? LV_SYMBOL_POWER " Spento" : !strcmp(mode, "heat") ? LV_SYMBOL_CHARGE " Riscalda"
+                         : !strcmp(mode, "cool") ? "Raffresca" : (!strcmp(mode, "auto") || !strcmp(mode, "heat_cool")) ? "Auto"
+                         : !strcmp(mode, "dry") ? "Deumidifica" : "Ventola";
+        ui->hvac_buttons[i] = panel_button(ui->controls, name, C_OFF, detail_button, modes[i]);
+        lv_obj_set_width(ui->hvac_buttons[i], LV_PCT(100));
+        lv_obj_set_height(ui->hvac_buttons[i], landscape ? (h - 12 - 6 * (shown - 1)) / (shown ? shown : 1) : 52);
+    }
+
+    ui->d_extra = label(page, UI_FONT_CAPTION, C_MIST, "");
+    if (landscape) lv_obj_set_pos(ui->d_extra, info_x, h - 22);
+    else lv_obj_set_pos(ui->d_extra, 12, h - 22);
+    lv_obj_set_width(ui->d_extra, landscape ? info_w : w - 24);
+    lv_label_set_long_mode(ui->d_extra, LV_LABEL_LONG_MODE_DOTS);
+}
+
+/* Bar thermostat: the action and the room temperature (called by detail_update). */
+static void climate_bar_update(casa_ui_t *ui, const casa_entity_t *e)
+{
+    if (ui->d_action == NULL) return;
+    char text[64], value[16];
+    bool off = !strcmp(e->state, "off");
+    bool heating = !strcmp(e->hvac_action, "heating") || !strcmp(e->hvac_action, "preheating");
+    const char *doing = !e->known || !e->available ? "Non disponibile" : off ? "Spento" : heating ? "Scalda ora"
+                      : !strcmp(e->hvac_action, "cooling") ? "Raffredda" : e->hvac_action[0] ? "In pausa" : "Acceso";
+    lv_label_set_text(ui->d_action, doing);
+    lv_obj_set_style_text_color(ui->d_action, ui_color(heating ? 0xFF8A5B : off ? C_MIST : C_INK), 0);
+    if (isnan(e->current_temp))
+    {
+        lv_label_set_text(ui->d_room, LV_SYMBOL_WARNING " Nessuna temperatura ambiente");
+        lv_obj_set_style_text_color(ui->d_room, ui_color(C_ALARM_WAIT), 0);
+    }
+    else
+    {
+        snprintf(value, sizeof(value), "%.1f", (double)e->current_temp);
+        for (char *p = value; *p; p++) if (*p == '.') *p = ',';
+        snprintf(text, sizeof(text), "Ambiente %s\xC2\xB0", value);
+        lv_label_set_text(ui->d_room, text);
+        lv_obj_set_style_text_color(ui->d_room, ui_color(C_INK), 0);
+    }
 }
 
 static bool unit_available(casa_ui_t *ui, const char *id)
@@ -1736,6 +1942,38 @@ static void dial_text(const casa_entity_t *e, int32_t value, char *out, size_t s
         snprintf(out, size, "%ld%%", (long)value);
 }
 
+/* Thermostat changes can start the boiler: always ask first. */
+static struct
+{
+    char id[CASA_ID];
+    char service[24];
+    char data[64];
+} s_climate_change;
+
+static void climate_confirmed(bool confirmed, void *unused)
+{
+    (void)unused;
+    casa_entity_t e;
+    if (confirmed && casa_entity(s_climate_change.id, &e))
+    {
+        char domain[24];
+        snprintf(domain, sizeof(domain), "%.*s", (int)strcspn(e.id, "."), e.id);
+        if (!casa_call(domain, s_climate_change.service, e.id, s_climate_change.data))
+            ui_toast("Comando non inviato");
+    }
+    /* Cancelled (or sent): the dial goes back to the value HA reports. */
+    if (s_app_ui != NULL) s_app_ui->revision--;
+}
+
+static void climate_ask(const casa_entity_t *e, const char *service, const char *data, const char *title,
+                        const char *text)
+{
+    snprintf(s_climate_change.id, sizeof(s_climate_change.id), "%s", e->id);
+    snprintf(s_climate_change.service, sizeof(s_climate_change.service), "%s", service);
+    snprintf(s_climate_change.data, sizeof(s_climate_change.data), "%s", data);
+    ui_confirm(title, text, "Conferma", 0xC2593A, climate_confirmed, NULL);
+}
+
 /* Send the dial value (debounced: while the finger moves only the label follows). */
 static void send_dial(casa_ui_t *ui)
 {
@@ -1765,9 +2003,15 @@ static void send_dial(casa_ui_t *ui)
         casa_call(domain, "volume_set", e.id, data);
         break;
     case CASA_CLIMATE:
+    {
         snprintf(data, sizeof(data), "{\"temperature\":%.1f}", v / 10.0);
-        casa_call(domain, "set_temperature", e.id, data);
+        char title[48];
+        snprintf(title, sizeof(title), "Obiettivo %ld,%ld\xC2\xB0?", (long)(v / 10), (long)(v % 10));
+        bool may_heat = !strcmp(e.state, "heat") && (isnan(e.current_temp) || v / 10.0f > e.current_temp);
+        climate_ask(&e, "set_temperature", data, title,
+                    may_heat ? "Con questo obiettivo la caldaia puo' accendersi." : "Il termostato usera' il nuovo obiettivo.");
         break;
+    }
     default:
         break;
     }
@@ -1837,9 +2081,13 @@ static void detail_button(lv_event_t *e)
     }
     else if (strncmp(what, "hvac:", 5) == 0)
     {
+        if (entity.kind == CASA_CLIMATE && !strcmp(entity.state, what + 5)) return;   /* already in this mode */
         char data[48];
         snprintf(data, sizeof(data), "{\"hvac_mode\":\"%s\"}", what + 5);
-        casa_call(domain, "set_hvac_mode", entity.id, data);
+        bool off = !strcmp(what + 5, "off");
+        climate_ask(&entity, "set_hvac_mode", data, off ? "Spegnere il termostato?" : "Accendere il termostato?",
+                    off ? "Il riscaldamento resta spento finche' non lo riaccendi."
+                        : "La caldaia si accendera' se la stanza e' sotto l'obiettivo.");
     }
     else if (strcmp(what, "tap") == 0)
         casa_tap(&entity);
@@ -2053,6 +2301,11 @@ static void climate_detail(casa_ui_t *ui, const casa_entity_t *entity)
 static void detail(casa_ui_t *ui)
 {
     casa_entity_t e;
+    if (casa_entity(ui->selected, &e) && e.kind == CASA_CLIMATE && bar_panel())
+    {
+        climate_bar(ui, &e);
+        return;
+    }
     if (casa_entity(ui->selected, &e) && e.kind == CASA_CLIMATE && !ui_board_info()->round && ui_board_info()->width >= 400)
     {
         climate_detail(ui, &e);
@@ -2202,8 +2455,9 @@ static void detail_update(casa_ui_t *ui)
     if (ui->controls) control_availability(ui->controls, enabled);
     if (ui->power_button) lv_label_set_text(lv_obj_get_child(ui->power_button, 0), e.on ? "Spegni" : "Accendi");
     if (e.kind == CASA_CLIMATE)
-        for (int i = 0; i < e.hvac_count; i++)
+        for (int i = 0; i < e.hvac_count && i < 6; i++)
             if (ui->hvac_buttons[i]) lv_obj_set_style_bg_color(ui->hvac_buttons[i], ui_color(!strcmp(e.state, e.hvac_modes[i]) ? 0xC2593A : C_OFF), 0);
+    if (e.kind == CASA_CLIMATE) climate_bar_update(ui, &e);
     /* Home Assistant's own time of the last change when the clock is set, else ours. */
     uint32_t ago = clock_is_valid() && e.last_changed > 0 ? (uint32_t)((time(NULL) - e.last_changed) / 60)
                                                           : (now_ms() - e.changed_ms) / 60000;
@@ -2277,6 +2531,7 @@ static void render(casa_ui_t *ui)
     if (ui->navigation) lv_obj_delete(ui->navigation);
     ui->navigation = NULL;
     ui->summary = ui->status = ui->dial = ui->dial_value = ui->d_state = ui->d_extra = NULL;
+    ui->d_action = ui->d_room = NULL;
     ui->clock_label = ui->date_label = ui->controls = ui->power_button = NULL;
     memset(ui->hvac_buttons, 0, sizeof(ui->hvac_buttons));
     memset(ui->category_count, 0, sizeof(ui->category_count));
