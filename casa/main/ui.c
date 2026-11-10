@@ -454,6 +454,11 @@ static lv_obj_t *panel_button(lv_obj_t *parent, const char *text, uint32_t color
     lv_obj_set_width(button, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(button, 14, 0);
     lv_obj_t *text_label = lv_obj_get_child(button, 0);
+    if (ui_board_info()->height <= 200 || ui_board_info()->width < 260)
+    {
+        lv_obj_set_style_min_height(button, 44, 0);
+        lv_obj_set_width(text_label, LV_SIZE_CONTENT);
+    }
     lv_obj_set_style_text_font(text_label, UI_FONT_SMALL, 0);
     lv_obj_set_style_text_color(text_label, ui_color(color == C_WARM ? C_BG : C_INK), 0);
     return button;
@@ -522,22 +527,23 @@ static void navigation_event(lv_event_t *event)
     else app_back();
 }
 
-static int navigation_height(void) { return board_info()->round ? 48 : 40; }
+static int navigation_height(void) { return ui_board_info()->round ? 48 : 40; }
 
 static void navigation(casa_ui_t *ui)
 {
-    int w = board_info()->width, h = navigation_height();
+    int w = ui_board_info()->width, h = navigation_height();
     ui->navigation = plain(ui->screen);
-    lv_obj_set_size(ui->navigation, board_info()->round ? w * 52 / 100 : w - 24, h - 4);
-    lv_obj_align(ui->navigation, LV_ALIGN_BOTTOM_MID, 0, board_info()->round ? -18 : -2);
+    lv_obj_set_size(ui->navigation, ui_board_info()->round ? w * 52 / 100 : w - 24, h - 4);
+    lv_obj_align(ui->navigation, LV_ALIGN_BOTTOM_MID, 0, ui_board_info()->round ? -18 : -2);
     lv_obj_set_flex_flow(ui->navigation, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(ui->navigation, 4, 0);
     const char *titles[] = {"Indietro", "Home", "Tutte", "App"};
     const char *icons[] = {LV_SYMBOL_LEFT, LV_SYMBOL_HOME, LV_SYMBOL_LIST, LV_SYMBOL_BARS};
     for (int i = 0; i < 4; i++)
     {
-        lv_obj_t *button = panel_button(ui->navigation, board_info()->round ? icons[i] : titles[i], C_OFF, navigation_event, (void *)(intptr_t)i);
+        lv_obj_t *button = panel_button(ui->navigation, ui_board_info()->round ? icons[i] : titles[i], C_OFF, navigation_event, (void *)(intptr_t)i);
         lv_obj_set_height(button, h - 4);
+        lv_obj_set_style_min_height(button, h - 4, 0);
         lv_obj_set_flex_grow(button, 1);
         lv_obj_set_width(button, 1);
         lv_obj_set_style_pad_all(button, 2, 0);
@@ -581,7 +587,8 @@ static void overview_update(casa_ui_t *ui)
     if (!ui->weather_art || code != ui->weather_code || night != ui->weather_night)
     {
         if (ui->weather_art) lv_obj_delete(ui->weather_art);
-        int side = board_info()->width * 45 / 100;
+        bool bar = ui_board_info()->height <= 200 && ui_board_info()->width >= 2 * ui_board_info()->height;
+        int side = bar ? 48 : ui_board_info()->width * 45 / 100;
         ui->weather_art = ui_weather_icon(ui->weather_hero, code, night, side);
         lv_obj_align(ui->weather_art, LV_ALIGN_RIGHT_MID, side / 5, -6);
         lv_obj_move_to_index(ui->weather_art, 0);
@@ -618,11 +625,18 @@ static void open_alarm_clock(lv_event_t *event)
 
 static void overview(casa_ui_t *ui)
 {
-    int w = board_info()->width, h = board_info()->height - navigation_height();
-    bool round = board_info()->round;
+    int w = ui_board_info()->width, h = ui_board_info()->height - navigation_height();
+    bool round = ui_board_info()->round;
     int margin = round ? w * 15 / 100 : 14, width = w - margin * 2;
     int hero_top = round ? h * 12 / 100 : 12;
     int hero_height = h * (round ? 32 : 42) / 100;
+    bool bar = h <= 200 && w >= 2 * h;
+    if (bar)
+    {
+        width = w * 42 / 100;
+        hero_top = 4;
+        hero_height = h - 8;
+    }
     lv_obj_t *hero = plain(ui->content);
     ui->weather_hero = hero;
     lv_obj_set_pos(hero, margin, hero_top);
@@ -646,8 +660,23 @@ static void overview(casa_ui_t *ui)
     lv_obj_set_height(alarm, round ? 22 : 28);
     lv_obj_set_style_pad_ver(alarm, 0, 0);
     ui->alarm_label = lv_obj_get_child(alarm, 0);
+    if (bar)
+    {
+        lv_obj_set_style_text_font(ui->clock_label, UI_FONT_LARGE, 0);
+        lv_obj_set_pos(ui->clock_label, 12, 4);
+        lv_obj_set_pos(ui->date_label, 12, 36);
+        lv_obj_set_pos(ui->weather_label, 12, 60);
+        lv_obj_set_pos(alarm, 12, hero_height - 30);
+    }
     int top = hero_top + hero_height + (round ? 8 : 12), bottom = h - (round ? h * 12 / 100 : 24);
     int card_height = (bottom - top - 10) / 2;
+    if (bar)
+    {
+        top = 4;
+        margin += width + 10;
+        width = w - margin - 14;
+        card_height = (h - 18) / 2;
+    }
     static const char *names[] = {"Alarmo", "Temperatura", "Termostato", "Consumi"};
     static const char *icons[] = {LV_SYMBOL_WARNING, LV_SYMBOL_TINT, LV_SYMBOL_SETTINGS, LV_SYMBOL_CHARGE};
     static const uint32_t colors[] = {0xB5A0EF, 0x79D4D4, 0xF3AD7B, 0x83BCEE};
@@ -664,13 +693,14 @@ static void overview(casa_ui_t *ui)
         lv_port_set_focusable(card);
         lv_obj_t *icon = label(card, UI_FONT_ICON, colors[i], icons[i]);
         lv_obj_set_pos(icon, 14, 12);
-        lv_obj_set_hidden(icon, round);
+        lv_obj_set_hidden(icon, round || bar);
         lv_obj_t *name = label(card, round || w < 400 ? UI_FONT_SMALL : UI_FONT_BODY, C_INK, names[i]);
-        lv_obj_set_pos(name, 14, round ? 12 : card_height * 36 / 100);
+        lv_obj_set_pos(name, 14, bar ? 4 : round ? 12 : card_height * 36 / 100);
+        if (bar) lv_obj_set_style_text_font(name, UI_FONT_SMALL, 0);
         lv_obj_set_width(name, (width - 10) / 2 - 24);
         lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_DOTS);
         ui->quick_values[i] = label(card, UI_FONT_SMALL, C_MIST, "");
-        lv_obj_set_pos(ui->quick_values[i], 14, card_height - 32);
+        lv_obj_set_pos(ui->quick_values[i], 14, card_height - (bar ? 22 : 32));
         lv_obj_set_width(ui->quick_values[i], (width - 10) / 2 - 24);
         lv_label_set_long_mode(ui->quick_values[i], LV_LABEL_LONG_MODE_DOTS);
         if (i == 0)
@@ -771,7 +801,7 @@ static void all_devices(casa_ui_t *ui, lv_obj_t *page)
                 if (!strcmp(ui->list[ui->unit_heads[j]].device_id, ui->list[i].device_id)) { duplicate = true; break; }
         if (!duplicate) ui->unit_heads[heads++] = i;
     }
-    int width = board_info()->round ? board_info()->width * 78 / 100 : board_info()->width - 28;
+    int width = ui_board_info()->round ? ui_board_info()->width * 78 / 100 : ui_board_info()->width - 28;
     lv_obj_t *grid = plain(page);
     lv_obj_set_size(grid, width, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
@@ -817,7 +847,7 @@ static void device_page(casa_ui_t *ui)
     if (!first) { ui_text(page, "Dispositivo non trovato", true); return; }
     ui_title(page, first->device_name[0] ? first->device_name : first->name);
     ui_text(page, first->area, true);
-    int width = board_info()->round ? board_info()->width * 78 / 100 : board_info()->width - 28;
+    int width = ui_board_info()->round ? ui_board_info()->width * 78 / 100 : ui_board_info()->width - 28;
     lv_obj_t *grid = plain(page);
     lv_obj_set_size(grid, width, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
@@ -842,7 +872,7 @@ static void device_page(casa_ui_t *ui)
 
 static void home(casa_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int w = b->width;
     lv_obj_t *page = ui_page(ui->content, NULL);
     panel_button(page, LV_SYMBOL_HOME "  Casa", C_OFF, show_overview, NULL);
@@ -1229,7 +1259,7 @@ static void alarm_menu(lv_event_t *event)
 
 static void climate_detail(casa_ui_t *ui, const casa_entity_t *entity)
 {
-    int width = board_info()->width, height = board_info()->height - navigation_height();
+    int width = ui_board_info()->width, height = ui_board_info()->height - navigation_height();
     lv_obj_t *page = plain(ui->content);
     lv_obj_set_size(page, width, height);
     lv_obj_set_style_bg_color(page, ui_color(0x1B232D), 0);
@@ -1305,7 +1335,7 @@ static void climate_detail(casa_ui_t *ui, const casa_entity_t *entity)
 static void detail(casa_ui_t *ui)
 {
     casa_entity_t e;
-    if (casa_entity(ui->selected, &e) && e.kind == CASA_CLIMATE && !board_info()->round && board_info()->width >= 400)
+    if (casa_entity(ui->selected, &e) && e.kind == CASA_CLIMATE && !ui_board_info()->round && ui_board_info()->width >= 400)
     {
         climate_detail(ui, &e);
         return;
@@ -1329,7 +1359,7 @@ static void detail(casa_ui_t *ui)
     {
         int32_t min, max, value = dial_range(&e, &min, &max);
         ui_text(page, e.kind == CASA_CLIMATE ? "Temperatura desiderata" : e.kind == CASA_LIGHT ? "Luminosita'" : "Regolazione", true);
-        int side = board_info()->width < 400 ? 190 : 256;
+        int side = ui_board_info()->width < 400 ? 190 : 256;
         ui->dial = lv_arc_create(page);
         lv_obj_set_size(ui->dial, side, side);
         lv_arc_set_rotation(ui->dial, 135);
@@ -1537,7 +1567,7 @@ static void render(casa_ui_t *ui)
     memset(ui->quick_values, 0, sizeof(ui->quick_values));
     ui->tile_count = 0;
     ui->content = plain(ui->screen);
-    lv_obj_set_size(ui->content, board_info()->width, board_info()->height - navigation_height());
+    lv_obj_set_size(ui->content, ui_board_info()->width, ui_board_info()->height - navigation_height());
     lv_obj_set_style_bg_color(ui->content, ui_color(C_BG), 0);
     lv_obj_set_style_bg_opa(ui->content, LV_OPA_COVER, 0);
     lv_obj_move_to_index(ui->content, 0);

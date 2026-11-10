@@ -465,7 +465,18 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(s_button, record_event, LV_EVENT_GESTURE, NULL);
     lv_obj_add_event_cb(screen, knob_event, lv_port_knob_event(), NULL);
     depth(s_button, 0);
-    microphone_icon(s_button);
+    bool bar = ui_board_info()->height <= 200 && ui_board_info()->width >= 2 * ui_board_info()->height;
+    lv_obj_t *icon_parent = s_button;
+    if (bar)
+    {
+        icon_parent = lv_obj_create(s_button);
+        lv_obj_remove_style_all(icon_parent);
+        lv_obj_set_size(icon_parent, 150, LV_PCT(100));
+        lv_obj_align(icon_parent, LV_ALIGN_LEFT_MID, 8, 0);
+        lv_obj_set_clickable(icon_parent, false);
+        lv_obj_set_scrollable(icon_parent, false);
+    }
+    microphone_icon(icon_parent);
     s_meter = level_meter(s_button, s_levels);
     lv_obj_align(s_meter, LV_ALIGN_CENTER, 0, 90);
     s_lock = lv_label_create(s_button);
@@ -488,6 +499,16 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_set_size(menu, 104, 42);
     lv_obj_align(menu, LV_ALIGN_BOTTOM_MID, 0, -20);
     lv_obj_set_hidden(menu, ui_board_info()->has_buttons || ui_board_info()->has_knob);
+    if (bar)
+    {
+        lv_obj_align(s_lock, LV_ALIGN_TOP_MID, 75, 8);
+        lv_obj_align(s_meter, LV_ALIGN_CENTER, 75, -14);
+        lv_obj_align(s_time, LV_ALIGN_CENTER, 75, 20);
+        lv_obj_align(s_hint, LV_ALIGN_BOTTOM_MID, 75, -8);
+        lv_obj_set_width(s_hint, ui_board_info()->width - 190);
+        lv_label_set_long_mode(s_hint, LV_LABEL_LONG_MODE_WRAP);
+        lv_obj_set_style_text_align(s_hint, LV_TEXT_ALIGN_CENTER, 0);
+    }
     s_border = settings_get()->border_progress ? ui_border_progress_create(screen, 0xFFEADB) : NULL;
     voice_memo_scan();
     s_tick = lv_timer_create(tick, 100, NULL);

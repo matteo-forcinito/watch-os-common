@@ -1,6 +1,7 @@
 /* HID control surfaces. Commands operate the focused host application;
  * a HID link cannot read its microphone, playback or slide state. */
 #include "remote.h"
+#include "remote_bar_layout.h"
 #include "core/lv_port.h"
 #include "hardware/board.h"
 #include "ui/ui.h"
@@ -104,6 +105,14 @@ static ui_key_rect_t grid_rect(int index)
     ui_key_rect_t header = remote_header_band();
     int32_t top = header.y + header.h + 4;
     int32_t bottom = panel_bottom() - lv_font_get_line_height(UI_FONT_SMALL) - 4;
+    if (remote_bar_size(remote_screen_w(), h))
+    {
+        int32_t w = remote_screen_w() - 16;
+        int row = index / 4, col = index % 4;
+        int32_t y0 = top + (bottom - top) * row / 2;
+        int32_t y1 = top + (bottom - top) * (row + 1) / 2;
+        return (ui_key_rect_t){8 + w * col / 4, y0, w * (col + 1) / 4 - w * col / 4, y1 - y0};
+    }
     int row = index / 2;
     int32_t y0 = top + (bottom - top) * row / 4, y1 = top + (bottom - top) * (row + 1) / 4;
     ui_key_rect_t band = ui_keyboard_band(remote_screen_w(), h, board_info()->round, y0, y1 - y0, 8);
@@ -825,7 +834,15 @@ static void gamepad_create(lv_obj_t *screen, void *arg)
     for (int i = 0; i < 12; i++)
     {
         ui_key_rect_t rect;
-        if (i < 4)
+        if (remote_bar_size(w, h))
+        {
+            static const uint8_t cells[] = {1, 7, 0, 2, 6, 8, 4, 3, 5, 9, 10, 11};
+            int cell = cells[i], col = cell % 6, row = cell / 6;
+            int top = head.y + head.h + 4, height = h - top - 4;
+            rect = (ui_key_rect_t){8 + (w - 16) * col / 6, top + height * row / 2,
+                                   (w - 16) / 6, height / 2};
+        }
+        else if (i < 4)
         {
             static const int8_t dx[] = {0, 0, -1, 1};
             static const int8_t dy[] = {-1, 1, 0, 0};

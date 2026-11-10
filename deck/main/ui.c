@@ -227,8 +227,9 @@ static void knob_event(lv_event_t *e)
 
 static void keys(deck_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int w = b->width, h = b->height;
+    bool bar = h <= 200 && w >= 2 * h;
     const deck_profile_t *profile = deck_profile(current_profile());
     lv_obj_t *c = ui->content;
 
@@ -245,16 +246,17 @@ static void keys(deck_ui_t *ui)
     lv_port_set_focusable(header);
     char title[48];
     snprintf(title, sizeof(title), "%s  " LV_SYMBOL_DOWN, profile->name);
-    label(header, ui_font_title, C_INK, title);
+    label(header, bar ? UI_FONT_BODY : ui_font_title, C_INK, title);
     ui->status = label(header, UI_FONT_SMALL, C_MIST, "");
 
     /* Keycaps: 3 columns; 4 rows on tall screens, a scrolling grid on round ones. */
-    int columns = 3, gap = 10;
+    bool narrow = !b->round && w <= 200;
+    int columns = narrow ? 1 : bar ? 5 : 3, gap = bar ? 6 : 10;
     int grid_w = b->round ? w * 74 / 100 : w - 24;
     int cap_w = (grid_w - gap * (columns - 1)) / columns;
-    int top = b->round ? h * 22 / 100 : 72;
-    int bottom = b->round ? h * 20 / 100 : 58;
-    int rows_visible = b->round ? 3 : 4;
+    int top = bar ? 58 : b->round ? h * 22 / 100 : 72;
+    int bottom = bar ? 42 : b->round ? h * 20 / 100 : 58;
+    int rows_visible = narrow ? 6 : bar ? 1 : b->round ? 3 : 4;
     int cap_h = (h - top - bottom - gap * (rows_visible - 1)) / rows_visible;
     if (cap_h > cap_w)
         cap_h = cap_w;
@@ -279,7 +281,7 @@ static void keys(deck_ui_t *ui)
 
     /* Dial. */
     lv_obj_t *strip = plain(c);
-    lv_obj_set_size(strip, b->round ? w * 52 / 100 : w - 24, 40);
+    lv_obj_set_size(strip, b->round ? w * 52 / 100 : w - 24, bar ? 32 : 40);
     lv_obj_align(strip, LV_ALIGN_BOTTOM_MID, 0, b->round ? -h * 8 / 100 : -8);
     lv_obj_set_style_radius(strip, 20, 0);
     lv_obj_set_style_bg_color(strip, ui_color(0x12151D), 0);

@@ -66,4 +66,18 @@ void radio_player_set_volume(int percent);
 /* Milliseconds since the last audio reached the speaker (0 before playing). */
 uint32_t radio_player_silence_ms(void);
 
+/* Playback diagnostics: cumulative counters for the current station. */
+typedef struct
+{
+    uint32_t frames;
+    uint32_t decode_errors;
+    uint32_t write_errors;
+    uint32_t rebuffers;
+    uint32_t reconnects;
+    uint32_t buffered_bytes;
+    uint32_t sample_rate;
+    uint32_t max_decode_us;
+} radio_player_stats_t;
+void radio_player_stats(radio_player_stats_t *out);
+
 #endif

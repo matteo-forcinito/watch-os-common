@@ -31,6 +31,8 @@ static void rebuild(lv_observer_t *observer, lv_subject_t *subject)
     (void)subject;
 
     lv_obj_clean(s_list);
+    bool bar = ui_board_info()->height <= 200 && ui_board_info()->width >= 2 * ui_board_info()->height;
+    bool narrow = ui_board_info()->width < 260;
 
     ui_title(s_list, "Sveglie");
 
@@ -49,10 +51,10 @@ static void rebuild(lv_observer_t *observer, lv_subject_t *subject)
         lv_obj_t *card = lv_obj_create(s_list);
         ui_make_card(card);
         lv_obj_set_clickable(card, true);
-        lv_obj_set_size(card, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+        lv_obj_set_size(card, LV_PCT(bar ? 49 : 100), LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(card, narrow ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_ver(card, 14, 0);
+        lv_obj_set_style_pad_ver(card, bar ? 6 : 14, 0);
         lv_port_set_focusable(card);
         lv_obj_add_event_cb(card, on_edit, LV_EVENT_CLICKED, (void *)(uintptr_t)a->id);
 
@@ -60,17 +62,24 @@ static void rebuild(lv_observer_t *observer, lv_subject_t *subject)
         lv_obj_remove_style_all(texts);
         lv_obj_set_flex_grow(texts, 1);
         lv_obj_set_height(texts, LV_SIZE_CONTENT);
+        if (narrow)
+        {
+            lv_obj_set_width(texts, LV_PCT(100));
+            lv_obj_set_flex_grow(texts, 0);
+        }
         lv_obj_set_flex_flow(texts, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_clickable(texts, false);
 
         lv_obj_t *time_label = lv_label_create(texts);
         lv_label_set_text(time_label, time_text);
-        lv_obj_set_style_text_font(time_label, ui_font_big, 0);
+        lv_obj_set_style_text_font(time_label, bar ? UI_FONT_BODY : narrow ? &lv_font_montserrat_32 : ui_font_big, 0);
         lv_obj_set_style_text_color(time_label, lv_color_hex(a->enabled ? UI_COLOR_TEXT : UI_COLOR_GRAY), 0);
 
         lv_obj_t *info = lv_label_create(texts);
         lv_label_set_text_fmt(info, "%s · %s", a->label[0] != '\0' ? a->label : "Sveglia", days);
         lv_obj_set_style_text_font(info, UI_FONT_SMALL, 0);
+        lv_obj_set_width(info, LV_PCT(100));
+        lv_label_set_long_mode(info, LV_LABEL_LONG_MODE_WRAP);
         lv_obj_set_style_text_color(info, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
 
         lv_obj_t *sw = lv_switch_create(card);
@@ -250,12 +259,21 @@ static void edit_create(lv_obj_t *screen, void *arg)
     lv_label_set_text(colon, ":");
     lv_obj_set_style_text_font(colon, &lv_font_montserrat_40, 0);
     s_ed->minute = roller(wheels, minutes, s_ed->alarm.minute);
+    if (ui_board_info()->height <= 200 || ui_board_info()->width < 260)
+    {
+        lv_obj_set_width(s_ed->hour, 64);
+        lv_obj_set_width(s_ed->minute, 64);
+        lv_obj_set_style_text_font(s_ed->hour, UI_FONT_BODY, LV_PART_SELECTED);
+        lv_obj_set_style_text_font(s_ed->minute, UI_FONT_BODY, LV_PART_SELECTED);
+        lv_roller_set_visible_row_count(s_ed->hour, 3);
+        lv_roller_set_visible_row_count(s_ed->minute, 3);
+    }
 
     /* days */
     lv_obj_t *days = lv_obj_create(page);
     lv_obj_remove_style_all(days);
     lv_obj_set_size(days, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(days, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(days, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(days, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     static const char *const letters[] = {"L", "M", "M", "G", "V", "S", "D"};
 

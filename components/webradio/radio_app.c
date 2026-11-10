@@ -46,6 +46,7 @@ typedef struct
     lv_obj_t *status;
     lv_obj_t *play_label;
     lv_obj_t *volume;
+    lv_obj_t *volume_text;
     lv_obj_t *chips;
     lv_obj_t *list;                    /* container of the station rows */
     lv_obj_t *rows[MAX_ROWS];
@@ -53,6 +54,7 @@ typedef struct
     int row_count;
     int filter;                        /* FILTER_xxx or a genre index */
     int genre_count;
+    uint32_t list_revision;
     char genres[MAX_GENRES][16];
 } radio_ui_t;
 
@@ -107,6 +109,7 @@ static void refresh(lv_observer_t *observer, lv_subject_t *subject)
     {
         lv_slider_set_value(s_ui->volume, settings_get()->volume, LV_ANIM_OFF);
     }
+    lv_label_set_text_fmt(s_ui->volume_text, "Volume %d%%", settings_get()->volume);
 
     /* Highlight the station playing now. */
     for (int i = 0; i < s_ui->row_count; i++)
@@ -139,6 +142,7 @@ static void on_next(lv_event_t *e)
 static void on_volume(lv_event_t *e)
 {
     radio_set_volume(lv_slider_get_value(lv_event_get_target_obj(e)));
+    lv_label_set_text_fmt(s_ui->volume_text, "Volume %d%%", settings_get()->volume);
 }
 
 /* Boards with a knob: it is the volume knob here. */
@@ -149,6 +153,7 @@ static void on_knob(lv_event_t *e)
 
     radio_set_volume(volume < 0 ? 0 : (volume > 100 ? 100 : volume));
     lv_slider_set_value(s_ui->volume, settings_get()->volume, LV_ANIM_ON);
+    lv_label_set_text_fmt(s_ui->volume_text, "Volume %d%%", settings_get()->volume);
     knob->handled = true;
 }
 
@@ -213,6 +218,7 @@ static void add_station_row(int station)
 
 static void fill_list(void)
 {
+    s_ui->list_revision = radio_list_revision();
     lv_obj_clean(s_ui->list);
     s_ui->row_count = 0;
 
@@ -322,7 +328,20 @@ static void on_list_changed(lv_observer_t *observer, lv_subject_t *subject)
 
     if (s_ui != NULL && s_ui->filter < s_ui->genre_count)
     {
-        fill_list();
+        /* Song metadata and PCM format use the same notification. Recreating
+         * every LVGL station row on each new song can starve audio decoding. */
+        if (s_ui->list_revision != radio_list_revision())
+        {
+            collect_genres();
+            if (s_ui->filter >= s_ui->genre_count) s_ui->filter = FILTER_ALL;
+            lv_obj_clean(s_ui->chips);
+            add_chip(LV_SYMBOL_AUDIO " Preferite", FILTER_FAVORITES);
+            add_chip("Tutte", FILTER_ALL);
+            for (int g = 0; g < s_ui->genre_count; g++) add_chip(s_ui->genres[g], g);
+            style_chips();
+            fill_list();
+        }
+        else refresh(NULL, NULL);
     }
 }
 
@@ -339,23 +358,33 @@ static void create(lv_obj_t *screen, void *arg)
         return;
     }
 
-    lv_obj_t *page = ui_page(screen, "Radio");
+    const board_info_t *view = ui_board_info();
+    bool narrow = !view->round && view->width <= 200;
+    bool bar = !view->round && view->height <= 200 && view->width >= 400;
+    lv_obj_t *page = ui_page(screen, bar ? "Radio" : NULL);
     s_ui->page = page;
+    if (narrow || bar)
+    {
+        lv_obj_set_scrollable(page, false);
+        lv_obj_set_style_pad_all(page, 6, 0);
+        lv_obj_set_flex_flow(page, bar ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_gap(page, 6, 0);
+    }
 
     /* now playing card */
     lv_obj_t *card = lv_obj_create(page);
     ui_make_card(card);
     lv_obj_remove_style(card, NULL, LV_STATE_PRESSED);
-    lv_obj_set_size(card, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_size(card, bar ? 228 : LV_PCT(100), bar ? LV_PCT(100) : LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_all(card, 18, 0);
-    lv_obj_set_style_pad_row(card, 6, 0);
+    lv_obj_set_style_pad_all(card, narrow || bar ? 6 : 18, 0);
+    lv_obj_set_style_pad_row(card, bar ? 2 : 6, 0);
     lv_obj_set_style_bg_grad_color(card, lv_color_hex(0x3A1238), 0);
     lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_VER, 0);
 
     s_ui->station = lv_label_create(card);
-    lv_obj_set_style_text_font(s_ui->station, ui_font_headline, 0);
+    lv_obj_set_style_text_font(s_ui->station, narrow || bar ? UI_FONT_LARGE : ui_font_headline, 0);
     lv_label_set_long_mode(s_ui->station, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_width(s_ui->station, LV_PCT(100));
     lv_obj_set_style_text_align(s_ui->station, LV_TEXT_ALIGN_CENTER, 0);
@@ -364,22 +393,33 @@ static void create(lv_obj_t *screen, void *arg)
     lv_label_set_long_mode(s_ui->song, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
     lv_obj_set_width(s_ui->song, LV_PCT(100));
     lv_obj_set_style_text_align(s_ui->song, LV_TEXT_ALIGN_CENTER, 0);
+    if (bar) lv_obj_set_style_text_font(s_ui->song, UI_FONT_SMALL, 0);
 
     s_ui->status = lv_label_create(card);
     lv_obj_set_style_text_font(s_ui->status, UI_FONT_SMALL, 0);
+    lv_obj_set_width(s_ui->status, LV_PCT(100));
+    lv_obj_set_style_text_align(s_ui->status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(s_ui->status, bar ? LV_LABEL_LONG_MODE_SCROLL_CIRCULAR : LV_LABEL_LONG_MODE_WRAP);
 
     lv_obj_t *controls = lv_obj_create(card);
     lv_obj_remove_style_all(controls);
     lv_obj_set_size(controls, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(controls, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(controls, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_ver(controls, 8, 0);
+    lv_obj_set_style_pad_ver(controls, narrow || bar ? 0 : 8, 0);
 
-    round_button(controls, LV_SYMBOL_PREV, 64, UI_COLOR_CARD_HI, on_prev);
-    s_ui->play_label = round_button(controls, LV_SYMBOL_PLAY, 92, UI_COLOR_PINK, on_play);
-    round_button(controls, LV_SYMBOL_NEXT, 64, UI_COLOR_CARD_HI, on_next);
+    round_button(controls, LV_SYMBOL_PREV, narrow || bar ? 44 : 64, UI_COLOR_CARD_HI, on_prev);
+    s_ui->play_label = round_button(controls, LV_SYMBOL_PLAY, narrow ? 52 : bar ? 44 : 92, UI_COLOR_PINK, on_play);
+    round_button(controls, LV_SYMBOL_NEXT, narrow || bar ? 44 : 64, UI_COLOR_CARD_HI, on_next);
 
-    s_ui->volume = lv_slider_create(card);
+    lv_obj_t *volume_area = lv_obj_create(card);
+    lv_obj_remove_style_all(volume_area);
+    lv_obj_set_size(volume_area, LV_PCT(100), bar ? 36 : 54);
+    s_ui->volume_text = lv_label_create(volume_area);
+    lv_obj_set_style_text_font(s_ui->volume_text, UI_FONT_SMALL, 0);
+    lv_obj_align(s_ui->volume_text, LV_ALIGN_TOP_MID, 0, 0);
+    s_ui->volume = lv_slider_create(volume_area);
+    lv_obj_align(s_ui->volume, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_set_width(s_ui->volume, LV_PCT(90));
     lv_obj_set_height(s_ui->volume, 10);
     lv_slider_set_range(s_ui->volume, 0, 100);
@@ -389,8 +429,18 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_set_ext_click_area(s_ui->volume, 16);
     lv_obj_add_event_cb(s_ui->volume, on_volume, LV_EVENT_VALUE_CHANGED, NULL);
 
+    lv_obj_t *library = page;
+    if (bar)
+    {
+        library = lv_obj_create(page);
+        lv_obj_remove_style_all(library);
+        lv_obj_set_height(library, LV_PCT(100));
+        lv_obj_set_flex_grow(library, 1);
+        lv_obj_set_flex_flow(library, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_scrollable(library, false);
+    }
     /* genre filter: a row of chips that scrolls sideways */
-    s_ui->chips = lv_obj_create(page);
+    s_ui->chips = lv_obj_create(library);
     lv_obj_remove_style_all(s_ui->chips);
     lv_obj_set_size(s_ui->chips, LV_PCT(100), 52);
     lv_obj_set_flex_flow(s_ui->chips, LV_FLEX_FLOW_ROW);
@@ -409,11 +459,18 @@ static void create(lv_obj_t *screen, void *arg)
     }
 
     /* the rows of the chosen group */
-    s_ui->list = lv_obj_create(page);
+    s_ui->list = lv_obj_create(library);
     lv_obj_remove_style_all(s_ui->list);
     lv_obj_set_size(s_ui->list, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(s_ui->list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_ui->list, lv_obj_get_style_pad_row(page, LV_PART_MAIN), 0);
+    if (narrow || bar)
+    {
+        lv_obj_set_height(s_ui->list, 0);
+        lv_obj_set_flex_grow(s_ui->list, 1);
+        lv_obj_set_scroll_dir(s_ui->list, LV_DIR_VER);
+        lv_obj_set_scrollbar_mode(s_ui->list, LV_SCROLLBAR_MODE_AUTO);
+    }
 
     int favorites[RADIO_FAVORITES_MAX];
     s_ui->filter = radio_favorites(favorites, RADIO_FAVORITES_MAX) > 0 ? FILTER_FAVORITES : FILTER_ALL;

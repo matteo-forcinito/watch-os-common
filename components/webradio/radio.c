@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <stdatomic.h>
 #include <sys/stat.h>
 
 static const char *TAG = "radio_svc";
@@ -51,6 +52,7 @@ static char s_favorites[RADIO_FAVORITES_MAX][FAV_NAME_MAX];
 static int s_favorite_count = 0;
 static volatile int s_current = -1;
 static volatile int s_last = -1;
+static atomic_uint s_list_revision = 1;
 
 /* ------------------------------------------------------------ storage */
 
@@ -225,6 +227,11 @@ int radio_count(void)
     return s_list.count;
 }
 
+uint32_t radio_list_revision(void)
+{
+    return atomic_load(&s_list_revision);
+}
+
 bool radio_get(int index, radio_info_t *out)
 {
     bool ok = false;
@@ -319,6 +326,7 @@ void radio_set_favorite(int index, bool favorite)
     favorites_save();
     xSemaphoreGive(s_mutex);
 
+    atomic_fetch_add(&s_list_revision, 1);
     state_bump(STATE_RADIO_VERSION);
 }
 
@@ -389,6 +397,7 @@ bool radio_is_on(void)
 
 void radio_set_volume(int percent)
 {
+    percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
     radio_player_set_volume(percent);
 
     settings_t s = *settings_get();
@@ -401,6 +410,7 @@ void radio_reload(void)
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     list_load();
     xSemaphoreGive(s_mutex);
+    atomic_fetch_add(&s_list_revision, 1);
     state_bump(STATE_RADIO_VERSION);
 }
 
@@ -410,6 +420,7 @@ esp_err_t radio_add(const char *name, const char *genre, const char *url)
     bool ok = radio_list_add(&s_list, name, genre, url);
     esp_err_t err = ok ? list_save() : ESP_ERR_INVALID_ARG;
     xSemaphoreGive(s_mutex);
+    atomic_fetch_add(&s_list_revision, 1);
     state_bump(STATE_RADIO_VERSION);
 
     return err;
@@ -421,6 +432,7 @@ esp_err_t radio_remove(int index)
     bool ok = radio_list_remove(&s_list, index);
     esp_err_t err = ok ? list_save() : ESP_ERR_NOT_FOUND;
     xSemaphoreGive(s_mutex);
+    atomic_fetch_add(&s_list_revision, 1);
     state_bump(STATE_RADIO_VERSION);
 
     return err;

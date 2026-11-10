@@ -26,6 +26,7 @@
 #include "ui/ui.h"
 #include "ui/keyboard_layout.h"
 #include "esp_timer.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -55,7 +56,7 @@ typedef enum
 #define AIR_HOLD_MS 600 /* finger and wrist still this long: right click */
 #define AIR_TAP_MS 400
 #define AIR_SETTLE_MS 150   /* wrist motion ignored after a press or release: the finger jolts the watch */
-#define AIR_EDGE_WAIT_MS 300 /* on an edge the finger gets this long to start a gesture */
+
 
 typedef struct
 {
@@ -128,7 +129,7 @@ static bool grip_axis(float axis[3])
     int turns;
     if (grip == 0)
     {
-        turns = settings_get()->screen_rotation & 3;
+        turns = settings_get()->screen_rotation & 3;        if (board_info()->width == 172 && board_info()->height == 640 && (turns & 1) == 0)            turns = 2; /* Same USB-at-top mounting as Remote's display. */
         if (turns == 0)
             return false;
     }
@@ -151,6 +152,7 @@ static void air_worker(void *arg)
     float bias[3] = {0}, gravity[3] = {0, 0, 1}, fx = 0, fy = 0;
     int samples = 0;
     int64_t last = 0;
+    bool first_sample = true;
 
     for (;;)
     {
@@ -174,6 +176,7 @@ static void air_worker(void *arg)
                 continue;
             }
             started = true;
+            first_sample = true;
             fx = fy = 0;
             last = esp_timer_get_time();
             samples = bias_load(bias) ? CALIBRATION_SAMPLES : 0;
@@ -192,6 +195,12 @@ static void air_worker(void *arg)
             continue;
         }
         int64_t now = esp_timer_get_time();
+        if (first_sample)
+        {
+            ESP_LOGI("air_mouse", "IMU sample: gyro %.2f %.2f %.2f dps", (double)sample.angular_dps[0],
+                     (double)sample.angular_dps[1], (double)sample.angular_dps[2]);
+            first_sample = false;
+        }
         float dt = (now - last) / 1e6f;
         last = now;
         if (dt > 0.05f)
@@ -211,7 +220,10 @@ static void air_worker(void *arg)
             for (int i = 0; i < 3; i++)
                 bias[i] += (sample.angular_dps[i] - bias[i]) * k;
             if (++samples == CALIBRATION_SAMPLES)
+            {
                 bias_save(bias); /* first calibration, or one asked from the options */
+                ESP_LOGI("air_mouse", "Calibration ready");
+            }
         }
         if (samples < CALIBRATION_SAMPLES)
         {
@@ -354,7 +366,7 @@ static void air_tick(lv_timer_t *timer)
         air->dx += mx;
         air->dy += my;
         mx = my = 0;
-        if (air->travel >= AIR_STILL && (air->edge == REMOTE_EDGE_NONE || elapsed >= AIR_EDGE_WAIT_MS))
+        if (air->travel >= AIR_STILL && air->edge == REMOTE_EDGE_NONE)
         {
             /* The hand moved: pointer (clutch) or drag (always on). */
             air->state = AIR_POINTER;
@@ -566,6 +578,12 @@ static void air_create(lv_obj_t *screen, void *arg)
     air->ring = lv_obj_create(air->pad);
     lv_obj_remove_style_all(air->ring);
     lv_obj_set_size(air->ring, size, size);
+    bool bar = h <= 200 && w >= 2 * h;
+    bool narrow = w <= 200 && h >= 2 * w;
+    if (bar)
+        lv_obj_set_size(air->ring, w / 2, h / 2);
+    else if (narrow)
+        lv_obj_set_size(air->ring, w - 24, 180);
     lv_obj_set_style_radius(air->ring, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_border_width(air->ring, 3, 0);
     lv_obj_set_style_border_color(air->ring, ui_color(UI_COLOR_TEAL), 0);
@@ -574,6 +592,10 @@ static void air_create(lv_obj_t *screen, void *arg)
     air->hint = lv_label_create(air->ring);
     lv_label_set_text(air->hint, "Tieni fermo\nl'orologio...");
     lv_obj_set_width(air->hint, size * 84 / 100);
+    if (bar)
+        lv_obj_set_width(air->hint, w / 2 - 20);
+    else if (narrow)
+        lv_obj_set_width(air->hint, w - 48);
     lv_obj_set_style_text_font(air->hint, UI_FONT_SMALL, 0);
     lv_obj_set_style_text_align(air->hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(air->hint);

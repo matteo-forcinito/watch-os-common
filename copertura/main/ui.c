@@ -104,7 +104,7 @@ static void open_view(lv_event_t *e)
 
 static int width_of(void)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     return b->round ? b->width * 72 / 100 : b->width - 24;
 }
 
@@ -173,8 +173,9 @@ static void live_update(cp_ui_t *ui)
 
 static void live(cp_ui_t *ui)
 {
-    const board_info_t *b = board_info();
-    int size = b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
+    const board_info_t *b = ui_board_info();
+    bool bar = b->height <= 200 && b->width >= 2 * b->height;
+    int size = bar ? b->height - 12 : b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
     ui->arc = lv_arc_create(ui->content);
     lv_obj_remove_style_all(ui->arc);
     lv_obj_set_size(ui->arc, size, size);
@@ -249,6 +250,18 @@ static void live(cp_ui_t *ui)
     {
         lv_obj_align(buttons, LV_ALIGN_BOTTOM_MID, 0, -10);
     }
+    if (bar)
+    {
+        lv_obj_align(ui->arc, LV_ALIGN_LEFT_MID, 6, 0);
+        lv_obj_set_width(col, b->width - size - 36);
+        lv_obj_align(col, LV_ALIGN_TOP_RIGHT, -12, 6);
+        lv_obj_set_style_text_font(ui->dbm, UI_FONT_BODY, 0);
+        lv_obj_set_width(ui->word, LV_PCT(100));
+        lv_obj_set_style_text_font(ui->word, UI_FONT_SMALL, 0);
+        lv_obj_set_size(ui->chart, size - 40, 36);
+        lv_obj_align_to(ui->chart, ui->arc, LV_ALIGN_BOTTOM_MID, 0, -20);
+        lv_obj_align(buttons, LV_ALIGN_BOTTOM_RIGHT, -16, -6);
+    }
     live_update(ui);
 }
 
@@ -316,7 +329,7 @@ static void rooms(cp_ui_t *ui)
 
 static void result_card(cp_ui_t *ui, const cp_point_t *p)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     lv_obj_t *page = ui_page(ui->content, p->room);
     cp_grade_t g = cp_grade(p->rssi, p->ping, p->loss);
     uint32_t color = grade_color(g);
@@ -405,7 +418,7 @@ static void measure(cp_ui_t *ui)
         }
         return;
     }
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int size = (b->width < b->height ? b->width : b->height) - 60;
     ui->progress = lv_arc_create(ui->content);
     lv_obj_remove_style_all(ui->progress);
@@ -496,7 +509,7 @@ static void finder_update(cp_ui_t *ui)
 
 static void finder(cp_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     lv_obj_set_style_bg_grad_dir(ui->content, LV_GRAD_DIR_VER, 0);
     int size = (b->width < b->height ? b->width : b->height) - 30;
     ui->heat_ring = lv_arc_create(ui->content);

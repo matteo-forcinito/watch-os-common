@@ -202,7 +202,7 @@ static int depth_x(int width, uint32_t cm)
 
 static void field(ombra_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int w = b->width, h = b->height;
     lv_obj_t *c = ui->content;
     lv_obj_set_style_bg_color(c, ui_color(C_BG), 0);
@@ -240,7 +240,8 @@ static void field(ombra_ui_t *ui)
     lv_obj_align(ui->count_caption, LV_ALIGN_TOP_MID, 0, count_y + lv_font_get_line_height(count_font));
 
     /* Depth ruler. */
-    ui->strip_w = w * (b->round ? 70 : 84) / 100;
+    bool bar = h <= 200 && w >= 2 * h;
+    ui->strip_w = bar ? w - 280 : w * (b->round ? 70 : 84) / 100;
     ui->strip_h = large ? 64 : 44;
     ui->strip = plain(c);
     lv_obj_set_size(ui->strip, ui->strip_w, ui->strip_h + 22);
@@ -293,6 +294,18 @@ static void field(ombra_ui_t *ui)
 
     lv_obj_t *hint = label(c, UI_FONT_SMALL, 0x5C5A6C, "tocca per esplorare");
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -h * (b->round ? 9 : 4) / 100);
+    if (bar)
+    {
+        lv_obj_align(brand, LV_ALIGN_TOP_LEFT, 16, 8);
+        lv_obj_set_style_text_font(ui->count, UI_FONT_LARGE, 0);
+        lv_obj_align(ui->count, LV_ALIGN_TOP_LEFT, 16, 42);
+        lv_obj_align(ui->count_caption, LV_ALIGN_TOP_LEFT, 16, 78);
+        lv_obj_align(ui->pill, LV_ALIGN_TOP_RIGHT, -16, 6);
+        lv_obj_align(ui->strip, LV_ALIGN_TOP_RIGHT, -16, 44);
+        lv_obj_set_width(row, w - 280);
+        lv_obj_align(row, LV_ALIGN_BOTTOM_RIGHT, -16, -22);
+        lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 16, -8);
+    }
 
     lv_obj_set_clickable(c, true);
     lv_obj_set_gesture_bubble(c, false);
@@ -681,7 +694,7 @@ static void toggle_sound(lv_event_t *e)
 
 static void find(ombra_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int w = b->width, h = b->height, side = w < h ? w : h;
     lv_obj_t *c = ui->content;
     lv_obj_set_style_bg_color(c, ui_color(C_COLD), 0);

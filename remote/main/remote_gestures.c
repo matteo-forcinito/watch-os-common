@@ -20,6 +20,8 @@ remote_edge_t remote_edge_at(lv_point_t p)
 {
     int32_t w = remote_screen_w(), h = remote_screen_h();
     int32_t band = LV_MIN(w, h) * 14 / 100;
+    if (!board_info()->round && LV_MIN(w, h) <= 200)
+        band = 32; /* A finger-sized target on the 172-pixel bar, in either orientation. */
     if (board_info()->round)
     {
         int32_t dx = p.x - w / 2, dy = p.y - h / 2, inner = LV_MIN(w, h) / 2 - band;
@@ -61,10 +63,11 @@ void remote_edge_move(remote_edge_t edge, int32_t delta, float *carry)
     if (edge == REMOTE_EDGE_NONE)
         return;
     *carry += delta;
-    while (fabsf(*carry) >= step_px[edge])
+    float step = LV_MIN(remote_screen_w(), remote_screen_h()) <= 200 && edge == REMOTE_EDGE_TOP ? 12 : step_px[edge];
+    while (fabsf(*carry) >= step)
     {
         int sign = *carry > 0 ? 1 : -1;
-        *carry -= sign * step_px[edge];
+        *carry -= sign * step;
         switch (edge)
         {
         case REMOTE_EDGE_RIGHT: /* content follows the finger, as on a phone */

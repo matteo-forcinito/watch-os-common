@@ -245,7 +245,7 @@ static void spectrum(lv_obj_t *parent, int width, float lo, float mid, float hi,
 
 static void home(pieno_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     pn_settings_t s;
     pn_settings(&s);
     pn_status_t st;
@@ -257,6 +257,14 @@ static void home(pieno_ui_t *ui)
     lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(col, 6, 0);
     lv_obj_center(col);
+    if (b->height <= 200 && b->width >= 2 * b->height)
+    {
+        lv_obj_set_height(col, b->height - 12);
+        lv_obj_align(col, LV_ALIGN_TOP_MID, 0, 6);
+        lv_obj_set_scrollable(col, true);
+        lv_obj_set_scroll_dir(col, LV_DIR_VER);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    }
     int width = b->round ? b->width * 66 / 100 : b->width - 40;
 
     /* Fuel line: tap to change fuel. */
@@ -415,7 +423,7 @@ static void list(pieno_ui_t *ui)
     }
     pn_unlock();
 
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int width = b->round ? b->width * 74 / 100 : b->width - 24;
     for (int i = 0; i < n; i++)
     {
@@ -538,7 +546,7 @@ static void station(pieno_ui_t *ui)
     lv_obj_t *t = ui_text(page, text, true);
     lv_obj_set_style_text_align(t, LV_TEXT_ALIGN_CENTER, 0);
 
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int width = b->round ? b->width * 72 / 100 : b->width - 24;
     for (int f = 0; f < PN_FUELS; f++)
     {
@@ -641,7 +649,7 @@ static void trend(pieno_ui_t *ui)
         return;
     }
 
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     int width = b->round ? b->width * 72 / 100 : b->width - 30;
     lv_obj_t *chart = lv_chart_create(page);
     lv_obj_set_size(chart, width, b->height * 34 / 100);
@@ -733,7 +741,7 @@ static void menu_action(lv_event_t *e)
 
 static lv_obj_t *menu_row(lv_obj_t *page, const char *title, const char *value, int action)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     lv_obj_t *row = lv_button_create(page);
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, b->round ? b->width * 72 / 100 : b->width - 24, LV_SIZE_CONTENT);

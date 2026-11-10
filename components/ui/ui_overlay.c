@@ -159,26 +159,82 @@ void ui_confirm(const char *title, const char *text, const char *ok_text, uint32
     lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_center(card);
 
-    lv_obj_t *title_label = lv_label_create(card);
+    const board_info_t *board = ui_board_info();
+    bool bar = !board->round && board->height <= 200 && board->width >= 2 * board->height;
+    bool narrow = !board->round && board->width <= 200 && board->height >= 2 * board->width;
+    lv_obj_t *message = card;
+    lv_obj_t *actions = card;
+    if (bar)
+    {
+        /* Keep both answers visible while long questions scroll independently. */
+        lv_obj_set_height(card, board->height - 12);
+        lv_obj_set_scrollable(card, false);
+        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_column(card, 12, 0);
+        message = lv_obj_create(card);
+        lv_obj_remove_style_all(message);
+        lv_obj_set_size(message, 0, LV_PCT(100));
+        lv_obj_set_flex_grow(message, 1);
+        lv_obj_set_flex_flow(message, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(message, 8, 0);
+        lv_obj_set_scroll_dir(message, LV_DIR_VER);
+        actions = lv_obj_create(card);
+        lv_obj_remove_style_all(actions);
+        lv_obj_set_size(actions, 172, LV_PCT(100));
+        lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(actions, 8, 0);
+        lv_obj_set_scrollable(actions, false);
+    }
+    else if (narrow)
+    {
+        lv_obj_set_width(card, board->width - 12);
+        lv_obj_set_height(card, board->height > 584 ? 560 : board->height - 24);
+        lv_obj_set_scrollable(card, false);
+        message = lv_obj_create(card);
+        lv_obj_remove_style_all(message);
+        lv_obj_set_size(message, LV_PCT(100), 0);
+        lv_obj_set_flex_grow(message, 1);
+        lv_obj_set_flex_flow(message, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(message, 8, 0);
+        lv_obj_set_scroll_dir(message, LV_DIR_VER);
+        actions = lv_obj_create(card);
+        lv_obj_remove_style_all(actions);
+        lv_obj_set_size(actions, LV_PCT(100), 128);
+        lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(actions, 8, 0);
+        lv_obj_set_scrollable(actions, false);
+    }
+
+    lv_obj_t *title_label = lv_label_create(message);
     lv_label_set_text(title_label, title);
     lv_obj_set_width(title_label, LV_PCT(100));
     lv_label_set_long_mode(title_label, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_set_style_text_font(title_label, UI_FONT_LARGE, 0);
+    lv_obj_set_style_text_font(title_label, bar || narrow ? UI_FONT_BODY : UI_FONT_LARGE, 0);
     lv_obj_set_style_text_color(title_label, lv_color_hex(TK_TEXT), 0);
 
     if (text != NULL)
     {
-        lv_obj_t *text_label = lv_label_create(card);
+        lv_obj_t *text_label = lv_label_create(message);
         lv_label_set_text(text_label, text);
         lv_label_set_long_mode(text_label, LV_LABEL_LONG_MODE_WRAP);
         lv_obj_set_width(text_label, LV_PCT(100));
         lv_obj_set_style_text_align(text_label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(text_label, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
+        if (bar || narrow)
+            lv_obj_set_style_text_font(text_label, UI_FONT_SMALL, 0);
     }
 
-    ui_button(card, ok_text, ok_color, confirm_yes, c);
-    lv_obj_t *cancel = ui_button(card, "Annulla", UI_COLOR_CARD_HI, confirm_no, c);
+    lv_obj_t *accept = ui_button(actions, ok_text, ok_color, confirm_yes, c);
+    if (bar || narrow)
+    {
+        lv_obj_set_style_min_height(accept, 56, 0);
+        lv_obj_set_height(accept, 56);
+    }
+    lv_obj_t *cancel = ui_button(actions, "Annulla", UI_COLOR_CARD_HI, confirm_no, c);
     lv_obj_set_height(cancel, 56);
+    if (bar || narrow)
+        lv_obj_set_style_min_height(cancel, 56, 0);
 
     lv_obj_fade_in(overlay, 150, 0);
 }

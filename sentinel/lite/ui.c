@@ -76,7 +76,7 @@ static lv_obj_t *label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, 
 
 static int card_width(void)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     return b->round ? b->width * 74 / 100 : b->width - 24;
 }
 
@@ -276,8 +276,9 @@ static void home_update(sl_ui_t *ui)
 
 static void home(sl_ui_t *ui)
 {
-    const board_info_t *b = board_info();
-    int size = b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
+    const board_info_t *b = ui_board_info();
+    bool bar = b->height <= 200 && b->width >= 2 * b->height;
+    int size = bar ? b->height - 12 : b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
     ui->home_arc = gauge(ui->content, size, size / 16, C_ACCENT, 0);
     lv_obj_align(ui->home_arc, b->round ? LV_ALIGN_CENTER : LV_ALIGN_TOP_MID, 0, b->round ? 0 : 6);
 
@@ -307,6 +308,21 @@ static void home(sl_ui_t *ui)
     round_button(buttons, LV_SYMBOL_REFRESH, 0x2EE39A, do_scan, NULL);
     round_button(buttons, LV_SYMBOL_SETTINGS, C_DIM, open_view, (void *)(intptr_t)MENU);
     lv_obj_align(buttons, LV_ALIGN_BOTTOM_MID, 0, b->round ? -8 : -10);
+    if (bar)
+    {
+        lv_obj_align(ui->home_arc, LV_ALIGN_LEFT_MID, 6, 0);
+        lv_obj_set_width(col, b->width - size - 36);
+        lv_obj_align(col, LV_ALIGN_TOP_RIGHT, -12, 6);
+        lv_obj_set_style_text_font(ui->home_big, UI_FONT_LARGE, 0);
+        lv_obj_set_style_text_font(ui->home_sub, UI_FONT_SMALL, 0);
+        lv_obj_t *labels[] = {ui->home_net, ui->home_sub, ui->home_info};
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            lv_obj_set_style_max_width(labels[i], b->width - size - 36, 0);
+            lv_obj_set_width(labels[i], LV_PCT(100));
+        }
+        lv_obj_align(buttons, LV_ALIGN_BOTTOM_RIGHT, -16, -6);
+    }
     home_update(ui);
 }
 

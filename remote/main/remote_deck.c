@@ -17,6 +17,7 @@
  *                 {"t":"act","a":"lock"|"mic"|"display_off"|"taskmgr"}
  */
 #include "remote.h"
+#include "remote_bar_layout.h"
 #include "core/lv_port.h"
 #include "hardware/board.h"
 #include "services/sound.h"
@@ -1003,6 +1004,9 @@ static void tick(lv_timer_t *timer)
                            ? (remote_settings()->transport == HID_LINK_USB ? VIEW_CABLE : VIEW_PAIR)
                        : !agent ? VIEW_AGENT
                                 : VIEW_LIVE;
+    bool bar = remote_bar_size(screen_w(), screen_h()) || remote_narrow_size(screen_w(), screen_h());
+    if (bar)
+        view = VIEW_LIVE; /* Generic HID shortcuts remain usable without the PC agent. */
     if (view != page->view)
     {
         page->view = view;
@@ -1104,11 +1108,18 @@ static void tick(lv_timer_t *timer)
 
     if (st.message[0])
         ui_toast(st.message);
+    if (bar && !agent)
+    {
+        snprintf(page->window_title, sizeof(page->window_title), "%s", hid_link_state() == HID_LINK_CONNECTED
+                     ? "Scorciatoie HID · Watch Deck abilita il contesto PC" : remote_status_text());
+        lv_label_set_text(page->title, page->window_title);
+    }
     if (st.version == page->seen)
         return;
     page->seen = st.version;
 
-    snprintf(page->window_title, sizeof(page->window_title), "%s", st.title);
+    if (!bar || agent)
+        snprintf(page->window_title, sizeof(page->window_title), "%s", st.title);
     set_profile(page, deck_profile_for(st.app, st.title), st.app);
 
     if (st.track[0])
@@ -1154,6 +1165,18 @@ static void guide_clicked(lv_event_t *e)
 static void build_guide(deck_page_t *page, lv_obj_t *screen, int32_t h)
 {
     page->guide = layer(screen);
+    if (remote_bar_size(screen_w(), h))
+    {
+        int32_t w = screen_w();
+        page->guide_icon = ui_icon_bubble(page->guide, LV_SYMBOL_BLUETOOTH, UI_COLOR_BLUE, 56);
+        lv_obj_set_pos(page->guide_icon, 12, 70);
+        page->guide_title = line(page->guide, 82, 26, w - 100, UI_FONT_BODY, UI_COLOR_TEXT, LV_TEXT_ALIGN_LEFT);
+        page->guide_text = line(page->guide, 82, 68, w - 290, UI_FONT_SMALL, UI_COLOR_TEXT_DIM, LV_TEXT_ALIGN_LEFT);
+        lv_obj_set_height(page->guide_text, 84);
+        lv_label_set_long_mode(page->guide_text, LV_LABEL_LONG_MODE_WRAP);
+        page->guide_button = tile(page->guide, (ui_key_rect_t){w - 198, 80, 190, 64}, "", guide_clicked, NULL);
+        return;
+    }
     page->guide_icon = ui_icon_bubble(page->guide, LV_SYMBOL_BLUETOOTH, UI_COLOR_BLUE, 56);
     lv_obj_set_pos(page->guide_icon, screen_w() / 2 - 28, h * 16 / 100);
     ui_key_rect_t r = strip(h * 16 / 100 + 66, 34);
@@ -1169,6 +1192,41 @@ static void build_guide(deck_page_t *page, lv_obj_t *screen, int32_t h)
     r = strip(h * 80 / 100, h * 12 / 100);
     page->guide_button = tile(page->guide, r, "", guide_clicked, NULL);
     lv_obj_set_style_border_color(page->guide_button, ui_accent(), 0);
+}
+
+static void build_bar(deck_page_t *page, lv_obj_t *screen, int32_t w, int32_t h)
+{
+    bool narrow = remote_narrow_size(w, h);
+    page->per_page = 5;
+    build_guide(page, screen, h);
+    page->live = layer(screen);
+    track_drags(page->live);
+    page->icon = ui_icon_bubble(page->live, LV_SYMBOL_HOME, UI_COLOR_GRAY, 26);
+    lv_obj_set_pos(page->icon, 62, 25);
+    page->app = line(page->live, narrow ? 12 : 96, narrow ? 60 : 27, narrow ? w - 24 : w * 3 / 4 - 160, UI_FONT_BODY, UI_COLOR_TEXT, LV_TEXT_ALIGN_LEFT);
+    lv_obj_t *header = lv_obj_create(page->live);
+    lv_obj_remove_style_all(header);
+    lv_obj_set_pos(header, narrow ? 8 : 58, narrow ? 56 : 22);
+    lv_obj_set_size(header, narrow ? w - 16 : w * 3 / 4 - 120, 32);
+    lv_obj_add_event_cb(header, header_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_move_background(header);
+    lv_obj_t *pager = tile(page->live, (ui_key_rect_t){narrow ? w - 68 : w * 3 / 4 - 60, 22, 60, 32}, "", pager_clicked, NULL);
+    page->pager = lv_obj_get_child(pager, 0);
+    page->title = line(page->live, 12, narrow ? 84 : 55, narrow ? w - 24 : w * 3 / 4 - 20, UI_FONT_SMALL, UI_COLOR_TEXT_DIM, LV_TEXT_ALIGN_LEFT);
+    page->media = line(page->live, narrow ? 12 : w * 3 / 4 + 8, narrow ? h - 134 : 26, narrow ? w - 24 : w / 4 - 20, UI_FONT_SMALL, UI_COLOR_PINK, LV_TEXT_ALIGN_CENTER);
+    lv_obj_set_height(page->media, narrow ? 22 : 42);
+    lv_label_set_long_mode(page->media, LV_LABEL_LONG_MODE_WRAP);
+    for (int i = 0; i < 5; ++i)
+    {
+        page->keys[i] = tile(page->live, remote_bar_key(w, h, i), "", key_clicked, (void *)(intptr_t)i);
+        track_drags(page->keys[i]);
+    }
+    const uint16_t usages[] = {HIDL_MEDIA_PREVIOUS, HIDL_MEDIA_PLAY_PAUSE, HIDL_MEDIA_NEXT};
+    const char *symbols[] = {LV_SYMBOL_PREV, LV_SYMBOL_PLAY, LV_SYMBOL_NEXT};
+    for (int i = 0; i < 3; ++i)
+        tile(page->live, remote_bar_media(w, h, i), symbols[i], media_clicked, (void *)(intptr_t)usages[i]);
+    page->mic = tile(page->live, remote_bar_media(w, h, 3), "Mic", action_clicked, "mic");
+    remote_switcher_button(screen);
 }
 
 static void deck_create(lv_obj_t *screen, void *arg)
@@ -1198,6 +1256,14 @@ static void deck_create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(screen, page_knob, lv_port_knob_event(), NULL);
 
     int32_t w = screen_w(), h = screen_h();
+    if (remote_bar_size(w, h) || remote_narrow_size(w, h))
+    {
+        build_bar(page, screen, w, h);
+        page->timer = lv_timer_create(tick, 150, page);
+        lv_obj_add_event_cb(screen, deleted, LV_EVENT_DELETE, page);
+        tick(page->timer);
+        return;
+    }
     bool round = board_info()->round;
     bool landscape = w > h + 40;
     int cols = landscape ? 3 : 2;

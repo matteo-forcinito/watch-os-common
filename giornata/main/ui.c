@@ -108,7 +108,7 @@ static void open_view(lv_event_t *e)
 
 static int content_width(void)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     return b->round ? b->width * 74 / 100 : b->width - 24;
 }
 
@@ -260,7 +260,7 @@ static void open_agenda(lv_event_t *e)
 
 static void day(giornata_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     ics_time_t now = gd_now();
     lv_obj_t *page = ui->content;
 
@@ -411,6 +411,21 @@ static void day(giornata_ui_t *ui)
             lv_obj_set_style_border_color(l, ui_color(items[i].color ? items[i].color : C_ACCENT), 0);
             lv_obj_set_style_pad_left(l, 8, 0);
             shown++;
+        }
+    }
+    if (b->height <= 200 && b->width >= 2 * b->height)
+    {
+        lv_obj_align(ring_host, LV_ALIGN_LEFT_MID, 8, 0);
+        lv_obj_set_parent(centre, page);
+        lv_obj_set_width(centre, b->width - size - 40);
+        lv_obj_align(centre, LV_ALIGN_TOP_RIGHT, -12, 8);
+        lv_obj_align(row, LV_ALIGN_BOTTOM_RIGHT, -20, -8);
+        for (uint32_t i = 0; i < lv_obj_get_child_count(centre); ++i)
+        {
+            lv_obj_t *child = lv_obj_get_child(centre, i);
+            lv_obj_set_width(child, LV_PCT(100));
+            lv_obj_set_style_max_width(child, b->width - size - 40, 0);
+            lv_obj_set_style_text_font(child, UI_FONT_SMALL, 0);
         }
     }
     free(items);
@@ -767,7 +782,7 @@ static void focus_update(giornata_ui_t *ui)
 
 static void focus_view(giornata_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     gd_focus_t f;
     gd_focus(&f);
     gd_settings_t s = gd_settings();
@@ -906,7 +921,7 @@ static void show_alert(giornata_ui_t *ui, const gd_alert_t *a)
     {
         lv_obj_delete(ui->alert);
     }
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     lv_obj_t *o = box(ui->screen);
     ui->alert = o;
     lv_obj_set_size(o, LV_PCT(100), LV_PCT(100));

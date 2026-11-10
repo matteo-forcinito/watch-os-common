@@ -32,6 +32,7 @@ typedef struct
 void radio_service_init(void);
 
 int radio_count(void);
+uint32_t radio_list_revision(void);
 bool radio_get(int index, radio_info_t *out);
 
 /* Favorites, in the order the user starred them. Returns how many. */

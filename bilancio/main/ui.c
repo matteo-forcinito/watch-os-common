@@ -151,7 +151,7 @@ static lv_obj_t *gauge(lv_obj_t *parent, int size, int width, uint32_t color, in
 
 static void home(bl_ui_t *ui)
 {
-    const board_info_t *b = board_info();
+    const board_info_t *b = ui_board_info();
     bl_day_t today = bl_today();
     if (today == BL_NONE)
     {
@@ -164,7 +164,8 @@ static void home(bl_ui_t *ui)
     bool any_rule = bl_book()->rule_count > 0;
     bl_unlock();
 
-    int size = b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
+    bool bar = b->height <= 200 && b->width >= 2 * b->height;
+    int size = bar ? b->height - 12 : b->round ? (b->width < b->height ? b->width : b->height) - 20 : b->width - 70;
     /* Outer arc: what is left of the money of this period (balance / balance + spent since payday). */
     bl_cents_t start_money = s.balance + s.period_spent;
     int left_pct = s.balance > 0 && start_money > 0 ? (int)(s.balance * 100 / start_money) : 0;
@@ -224,6 +225,24 @@ static void home(bl_ui_t *ui)
     round_button(buttons, LV_SYMBOL_LIST, C_ACCENT, open_view, (void *)(intptr_t)MONTH);
     round_button(buttons, LV_SYMBOL_SETTINGS, C_DIM, open_view, (void *)(intptr_t)MENU);
     lv_obj_align(buttons, LV_ALIGN_BOTTOM_MID, 0, b->round ? -10 : -10);
+    if (bar)
+    {
+        lv_obj_align(arc, LV_ALIGN_LEFT_MID, 6, 0);
+        lv_obj_align_to(small, arc, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_set_width(col, b->width - size - 36);
+        lv_obj_align(col, LV_ALIGN_TOP_RIGHT, -12, 6);
+        lv_obj_set_style_max_height(col, b->height - 76, 0);
+        lv_obj_set_scrollable(col, true);
+        lv_obj_set_scroll_dir(col, LV_DIR_VER);
+        for (uint32_t i = 0; i < lv_obj_get_child_count(col); ++i)
+        {
+            lv_obj_t *child = lv_obj_get_child(col, i);
+            lv_obj_set_width(child, LV_PCT(100));
+            lv_obj_set_style_text_font(child, UI_FONT_SMALL, 0);
+            lv_label_set_long_mode(child, LV_LABEL_LONG_MODE_WRAP);
+        }
+        lv_obj_align(buttons, LV_ALIGN_BOTTOM_RIGHT, -20, -6);
+    }
 }
 
 /* ----------------------------------------------------------------- MONTH */

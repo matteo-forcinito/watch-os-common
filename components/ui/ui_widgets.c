@@ -1,5 +1,6 @@
 #include "ui/ui.h"
 
+#include "core/app.h"
 #include "core/lv_port.h"
 #include "hardware/board.h"
 
@@ -136,9 +137,117 @@ static void add_scroll_arc(lv_obj_t *page)
     lv_obj_add_event_cb(page, scroll_arc_update, LV_EVENT_LAYOUT_CHANGED, arc);
 }
 
+/*
+ * Bar panels (wide and short, e.g. the 640x172 LCD349 bar). A column of
+ * rows would show two at a time, so a full-screen page becomes:
+ *
+ *   ┌──────┬───────────────┬───────────────┐
+ *   │  ‹   │ row           │ row           │   rail: back + title, fixed
+ *   │Title │ row           │ row           │   rows: two columns, scrolling
+ *   └──────┴───────────────┴───────────────┘
+ *
+ * Only for pages that fill a screen; an embedded page keeps the column.
+ * The page itself is the right-hand area (apps may empty it): the rail is a
+ * sibling and survives lv_obj_clean(page). A bar page is recognised by its
+ * ROW_WRAP flow (ui_page uses COLUMN everywhere else).
+ */
+#define BAR_RAIL_W   96
+#define BAR_ROW_H    56
+
+static bool bar_panel(lv_obj_t *parent)
+{
+    const board_info_t *board = ui_board_info();
+    return !board->round && board->height <= 200 && board->width >= 2 * board->height &&
+           lv_obj_get_screen(parent) == parent;
+}
+
+static bool on_bar_page(lv_obj_t *page)
+{
+    return lv_obj_get_style_flex_flow(page, LV_PART_MAIN) == LV_FLEX_FLOW_ROW_WRAP;
+}
+
+/* Rows on a bar page: half the width, a little shorter. */
+static void bar_cell(lv_obj_t *obj, lv_obj_t *page)
+{
+    if (!on_bar_page(page))
+    {
+        return;
+    }
+    lv_obj_set_width(obj, LV_PCT(49));
+    lv_obj_set_style_min_height(obj, BAR_ROW_H, 0);
+}
+
+static void bar_back(lv_event_t *e)
+{
+    (void)e;
+    app_back_user();
+}
+
+static lv_obj_t *bar_page(lv_obj_t *screen, const char *title)
+{
+    const board_info_t *board = ui_board_info();
+    int32_t h = board->height;
+
+    lv_obj_t *rail = lv_obj_create(screen);
+    ui_make_card(rail);
+    lv_obj_remove_style(rail, NULL, LV_STATE_PRESSED);
+    lv_obj_set_clickable(rail, false);
+    lv_obj_set_pos(rail, 6, 6);
+    lv_obj_set_size(rail, BAR_RAIL_W, h - 12);
+    lv_obj_set_style_pad_all(rail, 6, 0);
+
+    lv_obj_t *back = lv_obj_create(rail);
+    ui_make_card(back);
+    lv_obj_set_clickable(back, true);
+    lv_port_set_focusable(back);
+    lv_obj_set_size(back, LV_PCT(100), 52);
+    lv_obj_set_style_bg_color(back, lv_color_hex(TK_SURFACE_2), 0);
+    lv_obj_set_ext_click_area(back, 6);
+    lv_obj_add_event_cb(back, bar_back, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *arrow = lv_label_create(back);
+    lv_label_set_text(arrow, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_font(arrow, UI_FONT_BODY, 0);
+    lv_obj_center(arrow);
+
+    if (title != NULL)
+    {
+        lv_obj_t *label = lv_label_create(rail);
+        lv_label_set_text(label, title);
+        lv_obj_set_width(label, LV_PCT(100));
+        lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+        lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(TK_TEXT), 0);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 62);
+    }
+
+    lv_obj_t *page = lv_obj_create(screen);
+    lv_obj_remove_style_all(page);
+    lv_obj_set_pos(page, BAR_RAIL_W + 12, 0);
+    lv_obj_set_size(page, board->width - BAR_RAIL_W - 12, h);
+    lv_obj_set_flex_flow(page, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(page, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_top(page, 6, 0);
+    lv_obj_set_style_pad_bottom(page, 10, 0);
+    lv_obj_set_style_pad_right(page, 6, 0);
+    lv_obj_set_style_pad_row(page, 6, 0);
+    lv_obj_set_style_pad_column(page, 6, 0);
+    lv_obj_set_scroll_dir(page, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_ACTIVE);
+    lv_obj_set_scroll_momentum(page, true);
+    lv_obj_set_scroll_elastic(page, true);
+    lv_obj_set_style_text_font(page, UI_FONT_BODY, 0);
+    return page;
+}
+
 lv_obj_t *ui_page(lv_obj_t *screen, const char *title)
 {
     const board_info_t *board = ui_board_info();
+
+    if (bar_panel(screen))
+    {
+        return bar_page(screen, title);
+    }
 
     lv_obj_t *page = lv_obj_create(screen);
     lv_obj_remove_style_all(page);
@@ -386,18 +495,21 @@ static lv_obj_t *row_base(lv_obj_t *page, const char *icon, uint32_t color, cons
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(row, ROW_HEIGHT, 0);
+    bar_cell(row, page);
     lv_obj_set_flex_flow(row, narrow ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, TK_SP_3, 0);
 
     if (icon != NULL && !narrow)
     {
-        ui_icon_bubble(row, icon, color, BUBBLE_SIZE);
+        ui_icon_bubble(row, icon, color, on_bar_page(page) ? 34 : BUBBLE_SIZE);
     }
 
     lv_obj_t *label = lv_label_create(row);
     lv_label_set_text(label, text);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
+    if (on_bar_page(page))
+        lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
     lv_obj_set_flex_grow(label, narrow ? 0 : 1);
     if (narrow) lv_obj_set_width(label, LV_PCT(100));
 
@@ -500,10 +612,13 @@ lv_obj_t *ui_slider_row(lv_obj_t *page, const char *icon, const char *text,
     lv_obj_set_height(card, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(card, TK_SP_3, 0);
-    lv_obj_set_style_pad_ver(card, TK_SP_4, 0);
+    lv_obj_set_style_pad_ver(card, on_bar_page(page) ? TK_SP_2 : TK_SP_4, 0);
+    bar_cell(card, page);
 
     lv_obj_t *label = lv_label_create(card);
     lv_label_set_text_fmt(label, "%s  %s", icon != NULL ? icon : "", text);
+    if (on_bar_page(page))
+        lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
     lv_obj_set_width(label, LV_PCT(100));
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_WRAP);
 
@@ -554,11 +669,18 @@ lv_obj_t *ui_button(lv_obj_t *parent, const char *text, uint32_t color, lv_event
     lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_width(button, LV_PCT(100));
     lv_obj_set_height(button, TK_ROW_H);
+    bool bar = on_bar_page(parent);
 
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_font(label, UI_FONT_LARGE, 0);
-    if (ui_board_info()->width < 260 || ui_board_info()->height < 240)
+    if (bar)
+    {
+        lv_obj_set_width(button, LV_PCT(49));
+        lv_obj_set_height(button, BAR_ROW_H);
+        lv_obj_set_style_text_font(label, UI_FONT_BODY, 0);
+    }
+    else if (ui_board_info()->width < 260 || ui_board_info()->height < 240)
     {
         lv_obj_set_flex_flow(button, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_flex_align(button, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

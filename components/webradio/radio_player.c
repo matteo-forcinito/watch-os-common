@@ -42,6 +42,7 @@ static const char *TAG = "radio";
 #define STOP_DEC_TIMEOUT_MS  2000
 #define STOP_NET_TIMEOUT_MS  9000
 #define MAX_DECODE_ERRORS    100
+#define MAX_SEGMENT_BYTES    (512 * 1024)
 
 typedef struct
 {
@@ -57,6 +58,7 @@ typedef struct
     volatile int64_t last_audio_us;
     volatile uint32_t sample_rate;
     volatile uint8_t channels;
+    radio_player_stats_t stats;
 
     bool wifi_held;
     StreamBufferHandle_t buffer;
@@ -289,60 +291,46 @@ static size_t pump_direct(http_stream_t *stream, const uint8_t *prefix, int pref
  */
 static bool fetch_segment(http_stream_t *stream, uint8_t *chunk, const char *url)
 {
-    if (http_stream_reopen(stream, url) != ESP_OK)
-    {
-        return false;
-    }
-
-    stream_format_t format = stream_format_from_type(stream->content_type, stream->url);
-    size_t skip = 0;
-    bool first = true;
+    /* Commit only complete segments. Previously a dropped HTTP connection fed
+     * half a TS/AAC segment to the decoder, then silently skipped the rest. */
+    size_t capacity = 32 * 1024;
+    uint8_t *segment = heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (segment == NULL) return false;
     bool ok = false;
-    int got = 0;
-
-    while (!s_player.stop && (got = http_stream_read(stream, chunk, NET_CHUNK)) > 0)
+    for (int attempt = 0; attempt < 3 && !s_player.stop; attempt++)
     {
-        const uint8_t *data = chunk;
-        size_t length = (size_t)got;
-
-        if (first)
+        if (http_stream_reopen(stream, url) != ESP_OK) continue;
+        size_t length = 0;
+        int got = -1;
+        while (!s_player.stop && (got = http_stream_read(stream, chunk, NET_CHUNK)) > 0)
         {
-            first = false;
-
+            size_t needed = length + (size_t)got;
+            if (needed > MAX_SEGMENT_BYTES) break;
+            if (needed > capacity)
+            {
+                size_t larger = capacity * 2;
+                uint8_t *grown = heap_caps_realloc(segment, larger, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                if (grown == NULL) break;
+                segment = grown;
+                capacity = larger;
+            }
+            memcpy(segment + length, chunk, (size_t)got);
+            length = needed;
+        }
+        if (got == 0 && length > 0 && !s_player.stop)
+        {
+            stream_format_t format = stream_format_from_type(stream->content_type, stream->url);
             if (format != STREAM_FORMAT_TS && format != STREAM_FORMAT_AAC)
-            {
-                format = stream_format_sniff(chunk, length);
-            }
-
-            if (!set_format(format))
-            {
-                break;
-            }
-
-            skip = id3_tag_size(chunk, length);
-        }
-
-        if (skip > 0)
-        {
-            size_t drop = skip < length ? skip : length;
-            skip -= drop;
-            data += drop;
-            length -= drop;
-        }
-
-        if (!send_bytes(data, length))
-        {
+                format = stream_format_sniff(segment, length);
+            size_t skip = format == STREAM_FORMAT_TS ? 0 : id3_tag_size(segment, length);
+            if (skip < length && set_format(format)) ok = send_bytes(segment + skip, length - skip);
             break;
         }
-
-        ok = true;
+        ESP_LOGW(TAG, "Incomplete HLS segment, retry %d", attempt + 1);
+        http_stream_close(stream);
+        sleep_while_running(250);
     }
-
-    if (got < 0)
-    {
-        http_stream_close(stream);   /* broken connection: next segment reconnects */
-    }
-
+    free(segment);
     return ok;
 }
 
@@ -355,7 +343,7 @@ static bool fetch_text(http_stream_t *stream, const char *url, char *out, size_t
     }
 
     size_t length = 0;
-    int got = 0;
+    int got = -1;
 
     while (length + 1 < size && (got = http_stream_read(stream, (uint8_t *)out + length, (int)(size - 1 - length))) > 0)
     {
@@ -369,7 +357,7 @@ static bool fetch_text(http_stream_t *stream, const char *url, char *out, size_t
         snprintf(final_url, URL_MAX, "%s", stream->url);
     }
 
-    return length > 0;
+    return got == 0 && length > 0;
 }
 
 static size_t play_hls(char *playlist_url, char *text)
@@ -597,6 +585,7 @@ static void net_task(void *arg)
         }
 
         ESP_LOGW(TAG, "Stream ended, reconnecting (%d)", failures);
+        s_player.stats.reconnects++;
         sleep_while_running(1000u * (uint32_t)(failures + 1));
     }
 
@@ -699,6 +688,7 @@ static void dec_task(void *arg)
     bool boosted = false;
     int applied_volume = -1;
     int errors = 0;
+    int drained_frames = 0;
 
     if (input == NULL || output == NULL || !wait_until_ready())
     {
@@ -720,6 +710,7 @@ static void dec_task(void *arg)
     while (!s_player.stop && s_player.state != RADIO_STATE_FAILED)
     {
         size_t got = xStreamBufferReceive(s_player.buffer, input, DEC_CHUNK, pdMS_TO_TICKS(100));
+        s_player.stats.buffered_bytes = xStreamBufferBytesAvailable(s_player.buffer);
 
         if (got == 0)
         {
@@ -728,7 +719,12 @@ static void dec_task(void *arg)
                 break;   /* nothing more will come */
             }
 
-            continue;    /* underrun: the alarm notices via radio_player_silence_ms() */
+            /* Recover a useful reserve, rather than playing each arriving packet
+             * into an empty DMA queue (repeated crackles on a jittery network). */
+            s_player.stats.rebuffers++;
+            set_state(RADIO_STATE_BUFFERING);
+            if (!wait_until_ready()) break;
+            continue;
         }
 
         esp_audio_simple_dec_raw_t raw = {.buffer = input, .len = (uint32_t)got};
@@ -736,10 +732,19 @@ static void dec_task(void *arg)
         while (raw.len > 0 && !s_player.stop)
         {
             esp_audio_simple_dec_out_t frame = {.buffer = output, .len = output_size};
+            raw.consumed = 0;
+            int64_t decode_start = esp_timer_get_time();
             esp_audio_err_t ret = esp_audio_simple_dec_process(decoder, &raw, &frame);
+            uint32_t decode_us = (uint32_t)(esp_timer_get_time() - decode_start);
+            if (decode_us > s_player.stats.max_decode_us) s_player.stats.max_decode_us = decode_us;
 
             if (ret == ESP_AUDIO_ERR_BUFF_NOT_ENOUGH)
             {
+                if (frame.needed_size <= output_size || frame.needed_size > 64 * 1024)
+                {
+                    fail("Dimensione audio non valida");
+                    break;
+                }
                 uint8_t *bigger = realloc(output, frame.needed_size);
 
                 if (bigger == NULL)
@@ -755,6 +760,7 @@ static void dec_task(void *arg)
 
             if (ret != ESP_AUDIO_ERR_OK)
             {
+                s_player.stats.decode_errors++;
                 /* Corrupted data (e.g. after a reconnect): drop this piece and resync. */
                 if (++errors > MAX_DECODE_ERRORS)
                 {
@@ -764,6 +770,17 @@ static void dec_task(void *arg)
                 esp_audio_simple_dec_reset(decoder);
                 break;
             }
+
+            /* A decoder may drain cached PCM without consuming new input, but
+             * must not spin forever or replay the same frame indefinitely. */
+            if (raw.consumed > raw.len || frame.decoded_size > output_size ||
+                (raw.consumed == 0 && (frame.decoded_size == 0 || ++drained_frames > 64)))
+            {
+                s_player.stats.decode_errors++;
+                fail("Decoder senza avanzamento");
+                break;
+            }
+            if (raw.consumed != 0) drained_frames = 0;
 
             raw.len -= raw.consumed;
             raw.buffer += raw.consumed;
@@ -776,8 +793,15 @@ static void dec_task(void *arg)
             errors = 0;
 
             esp_audio_simple_dec_info_t info = {0};
-            esp_audio_simple_dec_get_info(decoder, &info);
-            uint8_t channels = info.channel >= 2 ? 2 : 1;
+            if (esp_audio_simple_dec_get_info(decoder, &info) != ESP_AUDIO_ERR_OK ||
+                info.bits_per_sample != 16 || (info.channel != 1 && info.channel != 2) ||
+                info.sample_rate < 8000 || info.sample_rate > 96000 ||
+                frame.decoded_size % (sizeof(int16_t) * info.channel) != 0)
+            {
+                fail("Formato PCM non valido");
+                break;
+            }
+            uint8_t channels = info.channel;
 
             if (!audio_on || info.sample_rate != s_player.sample_rate || channels != s_player.channels)
             {
@@ -801,7 +825,14 @@ static void dec_task(void *arg)
                 audio_set_volume(applied_volume);
             }
 
-            audio_write((const int16_t *)output, frame.decoded_size / sizeof(int16_t));
+            if (audio_write((const int16_t *)output, frame.decoded_size / sizeof(int16_t)) != ESP_OK)
+            {
+                s_player.stats.write_errors++;
+                fail("Uscita audio interrotta");
+                break;
+            }
+
+            s_player.stats.frames++;
 
             s_player.last_audio_us = esp_timer_get_time();
             set_state(RADIO_STATE_PLAYING);
@@ -991,4 +1022,12 @@ uint32_t radio_player_silence_ms(void)
     }
 
     return (uint32_t)((esp_timer_get_time() - s_player.last_audio_us) / 1000);
+}
+
+void radio_player_stats(radio_player_stats_t *out)
+{
+    *out = s_player.stats;
+    /* Called by the UI/QA console. Start/stop are owned by the worker: do not
+     * dereference its stream-buffer handle here while a station is changing. */
+    out->sample_rate = s_player.sample_rate;
 }

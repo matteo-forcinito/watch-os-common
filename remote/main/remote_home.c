@@ -10,6 +10,7 @@
  */
 
 #include "remote.h"
+#include "remote_bar_layout.h"
 #include "hardware/imu.h"
 #include "core/lv_port.h"
 #include "ui/keyboard_layout.h"
@@ -157,6 +158,8 @@ void remote_home_create(lv_obj_t *screen)
     lv_obj_t *page = ui_page(screen, "Remote");
 
     s_status = ui_text(page, remote_status_text(), false);
+    if (remote_bar_size(remote_screen_w(), remote_screen_h()))
+        lv_obj_set_style_margin_top(s_status, 18, 0);
     lv_obj_set_style_text_font(s_status, UI_FONT_SMALL, 0);
 
     ui_section(page, "MODALITÀ");
@@ -244,6 +247,8 @@ static void switcher_tile(lv_obj_t *screen, ui_key_rect_t r, const char *icon, c
     lv_obj_t *glyph = lv_label_create(button);
     lv_label_set_text(glyph, icon);
     lv_obj_set_style_text_font(glyph, UI_FONT_LARGE, 0);
+    if (remote_bar_size(remote_screen_w(), remote_screen_h()))
+        lv_obj_set_style_text_font(glyph, UI_FONT_BODY, 0);
     lv_obj_set_style_text_color(glyph, ui_color(color), 0);
     lv_obj_align(glyph, LV_ALIGN_CENTER, 0, -(r.h - 6) / 7);
 
@@ -269,8 +274,20 @@ static void switcher_create(lv_obj_t *screen, void *arg)
     int32_t w = remote_screen_w(), h = remote_screen_h();
     bool round = board_info()->round;
     int cols = remote_landscape() ? 4 : 3, rows = 12 / cols;
+    if (remote_narrow_size(w, h))
+    {
+        cols = 2;
+        rows = 6;
+    }
+    bool bar = remote_bar_size(w, h);
+    if (bar)
+    {
+        cols = 6;
+        rows = 2;
+    }
 
     ui_key_rect_t head = ui_keyboard_band(w, h, round, round ? h * 9 / 100 : REMOTE_TOP, 36, 8);
+    if (bar) head.h = 28;
     lv_obj_t *title = lv_label_create(screen);
     lv_label_set_text(title, "Modalità");
     lv_obj_set_style_text_font(title, UI_FONT_BODY, 0);
@@ -345,7 +362,8 @@ ui_key_rect_t remote_header_band(void)
     int32_t h = remote_screen_h();
     bool round = board_info()->round;
     /* Square panels keep a strip on top for the battery pill. */
-    return ui_keyboard_band(remote_screen_w(), h, round, round ? h * 9 / 100 : REMOTE_TOP, 44, 8);
+    return ui_keyboard_band(remote_screen_w(), h, round, round ? h * 9 / 100 : REMOTE_TOP,
+                             remote_bar_size(remote_screen_w(), h) ? 32 : 44, 8);
 }
 
 lv_obj_t *remote_switcher_button(lv_obj_t *screen)
@@ -357,6 +375,13 @@ lv_obj_t *remote_switcher_button(lv_obj_t *screen)
 lv_obj_t *remote_page(lv_obj_t *screen, const char *title)
 {
     lv_obj_t *page = ui_page(screen, title);
+    if (remote_bar_size(remote_screen_w(), remote_screen_h()))
+    {
+        /* ui_page has a fixed rail on the bar; its content starts empty. */
+        lv_obj_t *switcher = switcher_button_at(screen, (ui_key_rect_t){9, 9, 90, 58});
+        lv_obj_set_width(switcher, 84);
+        return page;
+    }
     lv_obj_t *label = lv_obj_get_child(page, 0);
     lv_obj_set_style_pad_left(label, 56, 0);
     lv_obj_set_style_pad_right(label, 56, 0);

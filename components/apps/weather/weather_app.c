@@ -35,10 +35,13 @@ static void rebuild(lv_observer_t *observer, lv_subject_t *subject)
 
     weather_t w;
     bool valid = weather_get(&w);
+    bool bar = ui_board_info()->height <= 200 && ui_board_info()->width >= 2 * ui_board_info()->height;
 
     lv_obj_t *city = lv_label_create(s_page);
     lv_label_set_text(city, valid && w.city[0] != '\0' ? w.city : settings_get()->weather_city);
-    lv_obj_set_style_text_font(city, ui_font_title, 0);
+    lv_obj_set_style_text_font(city, bar ? UI_FONT_BODY : ui_font_title, 0);
+    lv_obj_set_width(city, LV_PCT(100));
+    lv_label_set_long_mode(city, LV_LABEL_LONG_MODE_WRAP);
 
     if (!valid)
     {
@@ -56,15 +59,17 @@ static void rebuild(lv_observer_t *observer, lv_subject_t *subject)
     lv_obj_set_flex_align(hero, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(hero, 16, 0);
 
-    ui_weather_icon(hero, w.code, !w.is_day, 110);
+    ui_weather_icon(hero, w.code, !w.is_day, bar ? 64 : 110);
 
     lv_obj_t *temp = lv_label_create(hero);
     lv_label_set_text_fmt(temp, "%d°", round_temp(w.temp));
-    lv_obj_set_style_text_font(temp, ui_font_big, 0);
+    lv_obj_set_style_text_font(temp, bar ? UI_FONT_LARGE : ui_font_big, 0);
 
     lv_obj_t *desc = lv_label_create(s_page);
     lv_label_set_text_fmt(desc, "%s  ·  %d° / %d°", ui_weather_text(w.code), round_temp(w.temp_min), round_temp(w.temp_max));
     lv_obj_set_style_text_color(desc, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
+    lv_obj_set_width(desc, LV_PCT(100));
+    lv_label_set_long_mode(desc, LV_LABEL_LONG_MODE_WRAP);
 
     char value[24];
     snprintf(value, sizeof(value), "%d%%", w.humidity);

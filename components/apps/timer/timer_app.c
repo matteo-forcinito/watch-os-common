@@ -152,34 +152,83 @@ static void create(lv_obj_t *screen, void *arg)
     }
 
     lv_obj_t *page = ui_page(screen, "Timer");
+    bool bar = ui_board_info()->height <= 200 && ui_board_info()->width >= 2 * ui_board_info()->height;
+    bool narrow = ui_board_info()->width < 260;
+    lv_obj_t *watch_page = page;
+    lv_obj_t *count_page = page;
+    if (bar)
+    {
+        /* Two independent panels keep the time and its controls together. */
+        watch_page = lv_obj_create(page);
+        count_page = lv_obj_create(page);
+        lv_obj_t *panels[] = {watch_page, count_page};
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            lv_obj_remove_style_all(panels[i]);
+            lv_obj_set_size(panels[i], LV_PCT(49), LV_SIZE_CONTENT);
+            lv_obj_set_flex_flow(panels[i], LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_style_pad_row(panels[i], 4, 0);
+        }
+    }
 
-    ui_section(page, "CRONOMETRO");
-    s_watch_label = lv_label_create(page);
-    lv_obj_set_style_text_font(s_watch_label, ui_font_big, 0);
+    ui_section(watch_page, "CRONOMETRO");
+    s_watch_label = lv_label_create(watch_page);
+    lv_obj_set_style_text_font(s_watch_label, bar || narrow ? UI_FONT_LARGE : ui_font_big, 0);
 
-    lv_obj_t *row = lv_obj_create(page);
+    lv_obj_t *row = lv_obj_create(watch_page);
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(row, narrow ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+    if (narrow) lv_obj_set_style_pad_row(row, 8, 0);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     s_watch_button = ui_button(row, s_watch.running ? "Pausa" : "Avvia", UI_COLOR_GREEN, on_watch_toggle, NULL);
-    lv_obj_set_size(s_watch_button, 150, 60);
-    small_button(row, "Reset", on_watch_reset, NULL);
+    lv_obj_set_size(s_watch_button, bar ? 116 : 150, 56);
+    if (bar)
+        lv_obj_set_style_min_height(s_watch_button, 56, 0);
+    lv_obj_t *reset = small_button(row, "Reset", on_watch_reset, NULL);
+    if (narrow)
+    {
+        lv_obj_set_width(s_watch_button, LV_PCT(100));
+        lv_obj_set_width(reset, LV_PCT(100));
+    }
 
-    ui_section(page, "CONTO ALLA ROVESCIA");
-    s_count_label = lv_label_create(page);
-    lv_obj_set_style_text_font(s_count_label, ui_font_big, 0);
+    ui_section(count_page, "CONTO ALLA ROVESCIA");
+    s_count_label = lv_label_create(count_page);
+    lv_obj_set_style_text_font(s_count_label, bar || narrow ? UI_FONT_LARGE : ui_font_big, 0);
 
-    lv_obj_t *row2 = lv_obj_create(page);
+    lv_obj_t *row2 = lv_obj_create(count_page);
     lv_obj_remove_style_all(row2);
     lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row2, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    small_button(row2, "-1", on_minutes, (void *)(intptr_t)-1);
-    small_button(row2, "+1", on_minutes, (void *)(intptr_t)1);
-    small_button(row2, "+5", on_minutes, (void *)(intptr_t)5);
+    lv_obj_t *minus = small_button(row2, "-1", on_minutes, (void *)(intptr_t)-1);
+    lv_obj_t *plus = small_button(row2, "+1", on_minutes, (void *)(intptr_t)1);
+    lv_obj_t *plus5 = small_button(row2, "+5", on_minutes, (void *)(intptr_t)5);
+    if (narrow)
+    {
+        lv_obj_set_width(minus, LV_PCT(30));
+        lv_obj_set_width(plus, LV_PCT(30));
+        lv_obj_set_width(plus5, LV_PCT(30));
+        lv_obj_set_style_pad_hor(minus, 0, 0);
+        lv_obj_set_style_pad_hor(plus, 0, 0);
+        lv_obj_set_style_pad_hor(plus5, 0, 0);
+    }
+    if (bar)
+    {
+        lv_obj_set_size(minus, 72, 40);
+        lv_obj_set_size(plus, 72, 40);
+        lv_obj_set_size(plus5, 72, 40);
+        lv_obj_set_style_min_height(minus, 40, 0);
+        lv_obj_set_style_min_height(plus, 40, 0);
+        lv_obj_set_style_min_height(plus5, 40, 0);
+    }
 
-    ui_button(page, "Avvia / Stop", UI_COLOR_ORANGE, on_countdown, NULL);
+    lv_obj_t *count_button = ui_button(count_page, "Avvia / Stop", UI_COLOR_ORANGE, on_countdown, NULL);
+    if (bar)
+    {
+        lv_obj_set_height(count_button, 40);
+        lv_obj_set_style_min_height(count_button, 40, 0);
+    }
 
     if (settings_get()->border_progress)
     {
