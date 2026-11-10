@@ -77,7 +77,9 @@ static void refresh(lv_timer_t *timer)
         lv_qrcode_update(p->qr, target, (uint32_t)strlen(target));
         lv_label_set_text(p->url, url);
         const char *code = appkit_web_code();
-        lv_label_set_text_fmt(p->code, "Codice  %.3s %.3s", code, code + 3);
+        /* Narrow panels: the word above, the six digits below. */
+        lv_label_set_text_fmt(p->code, board_info()->width < 260 ? "Codice\n%.3s %.3s" : "Codice  %.3s %.3s", code,
+                              code + 3);
         /* Everything needed to reach it without the QR: network, address, name. */
         char ssid[33] = "", ip[20] = "", host[64];
         wifi_current_ssid(ssid, sizeof(ssid));
@@ -147,13 +149,27 @@ void appkit_dashboard_page(lv_obj_t *parent, lv_color_t accent)
 
     p->url = lv_label_create(parent);
     lv_label_set_text(p->url, "");
-    lv_obj_set_style_text_font(p->url, UI_FONT_LARGE, 0);
+    /* Narrow panels (172 px): the address wraps in a smaller font instead of
+     * running off the screen. */
+    bool narrow = board->width < 260;
+    lv_obj_set_style_text_font(p->url, narrow ? UI_FONT_SMALL : UI_FONT_LARGE, 0);
     lv_obj_set_style_text_color(p->url, accent, 0);
+    if (narrow)
+    {
+        lv_obj_set_width(p->url, LV_PCT(100));
+        lv_label_set_long_mode(p->url, LV_LABEL_LONG_MODE_WRAP);
+        lv_obj_set_style_text_align(p->url, LV_TEXT_ALIGN_CENTER, 0);
+    }
 
     p->code = lv_label_create(parent);
     lv_label_set_text(p->code, "");
     lv_obj_set_style_text_font(p->code, ui_font_title, 0);
     lv_obj_set_style_text_color(p->code, lv_color_hex(0xF4F6FA), 0);
+    if (narrow)
+    {
+        lv_obj_set_width(p->code, LV_PCT(100));
+        lv_obj_set_style_text_align(p->code, LV_TEXT_ALIGN_CENTER, 0);
+    }
 
     p->info = ui_text(parent, "", false);
     lv_obj_set_style_text_align(p->info, LV_TEXT_ALIGN_CENTER, 0);
