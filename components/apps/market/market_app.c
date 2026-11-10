@@ -21,6 +21,10 @@
 #include "core/sys.h"
 #include "hardware/audio.h"
 #include "services/sound.h"
+#if CONFIG_APPKIT_HOSTED
+#include "casa.h"
+#include "esp_heap_caps.h"
+#endif
 #include <math.h>
 #endif
 #include <stdio.h>
@@ -908,6 +912,26 @@ bool devcon_app_command(char *line)
     {
         return true;
     }
+#if CONFIG_APPKIT_HOSTED
+    if (strcmp(line, "casa list") == 0)
+    {
+        /* QA: the selected entities as the panel sees them (no URL or token). */
+        static const char *const kinds[] = {"light", "switch", "fan", "cover", "climate", "media", "scene",
+                                            "lock", "sensor", "person", "other", "alarm"};
+        casa_entity_t *list = heap_caps_malloc(sizeof(casa_entity_t) * CASA_ENTITIES, MALLOC_CAP_SPIRAM);
+        int count = list != NULL ? casa_entities(list, CASA_ENTITIES) : 0;
+        for (int i = 0; i < count; i++)
+        {
+            const casa_entity_t *e = &list[i];
+            printf("@CASA %s|%s|%s|%s|%s|%s%s|%s|%s\n", e->id, e->name, kinds[e->kind < 12 ? e->kind : 10], e->area,
+                   e->device_class, e->state, e->unit, e->device_name, e->available ? "ok" : "off");
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        heap_caps_free(list);
+        printf("@OK casa %d\n", count);
+        return true;
+    }
+#endif
     if (strncmp(line, "pet", 3) == 0 && (line[3] == 0 || line[3] == ' '))
     {
         pet_record_t p;

@@ -36,10 +36,12 @@
 #include "sdkconfig.h"
 #include "ui/ui.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 enum { HOME, DETAIL, SETTINGS, OVERVIEW, DEVICE, ENVIRONMENT, ENERGY };
@@ -93,6 +95,7 @@ typedef struct
     uint32_t pending_at;
     casa_entity_t *list;
     casa_status_t status_now;
+    void *bar; /* bar_view_t of the touch bar overview, freed with ui->content */
 } casa_ui_t;
 
 /* UI-thread-only context, scoped by render/timer/event dispatch. Each mounted
@@ -154,6 +157,7 @@ static lv_obj_t *casa_row(lv_obj_t *parent, const char *icon, uint32_t color, co
 }
 
 static void render(casa_ui_t *ui);
+static bool bar_panel(void);
 static void all_devices(casa_ui_t *ui, lv_obj_t *page);
 static void make_unit(casa_ui_t *ui, lv_obj_t *parent, tile_t *tile, int width, const casa_entity_t *entity);
 static void home_update(casa_ui_t *ui);
@@ -503,7 +507,12 @@ static void quick_event(lv_event_t *event)
 static void navigation_event(lv_event_t *event)
 {
     int action = (int)(intptr_t)event_data(event);
-    if (action == 1) app_home();
+    if (action == 1 && bar_panel() && !s_ui->embedded)
+    {
+        s_ui->view = OVERVIEW; /* bar panels: "Home" is Casa's own overview */
+        render(s_ui);
+    }
+    else if (action == 1) app_home();
 #if CONFIG_APPKIT_HOSTED
     else if (action == 2 && settings_get()->homepage == 1) apps_show_home_tile(1, 2);
     else if (action == 3) apps_show_home_tile(2, 1);
@@ -541,7 +550,8 @@ static void navigation(casa_ui_t *ui)
     const char *icons[] = {LV_SYMBOL_LEFT, LV_SYMBOL_HOME, LV_SYMBOL_LIST, LV_SYMBOL_BARS};
     for (int i = 0; i < 4; i++)
     {
-        lv_obj_t *button = panel_button(ui->navigation, ui_board_info()->round ? icons[i] : titles[i], C_OFF, navigation_event, (void *)(intptr_t)i);
+        bool icons_only = ui_board_info()->round || ui_board_info()->width < 260;
+        lv_obj_t *button = panel_button(ui->navigation, icons_only ? icons[i] : titles[i], C_OFF, navigation_event, (void *)(intptr_t)i);
         lv_obj_set_height(button, h - 4);
         lv_obj_set_style_min_height(button, h - 4, 0);
         lv_obj_set_flex_grow(button, 1);
@@ -712,6 +722,586 @@ static void overview(casa_ui_t *ui)
         }
     }
     overview_update(ui);
+}
+
+/* ------------------------------------------------------- touch bar overview */
+
+/*
+ * Bar panels (172 px on the short side, LCD 3.49): the overview is a strip of
+ * cards built from the selected entities, a column in portrait and a row in
+ * landscape, scrolled with the finger.
+ *
+ *   portrait 172x640                 landscape 640x172
+ *   ┌──────────────┐                 ┌──────┬────────┬──────────┬──────┬──────┬───
+ *   │ 20:31     ⚙  │  clock          │20:31 │ ALARMO │ Fuori    │Cucina│Ester.│ ...
+ *   │ ALARMO       │  alarm          │mar 10│Inserito│ 17,8°    │27,3° │17,8° │
+ *   │ Inserito     │                 │   ⚙  │        │ Dentro   │51 %  │63 %  │
+ *   │ Fuori  Dentro│  climate        └──────┴────────┴──────────┴──────┴──────┴───
+ *   │ 17,8°  27,3° │
+ *   │ Cucina 27,3° │  one row per thermometer (battery under 20 % in orange)
+ *   │ Esterno 17,8°│
+ *   │ Sicurezza    │  camera last event, motion detection switch, motion sensor
+ *   │ Attenzione   │  low batteries and offline devices
+ *   │ Tutti        │
+ *   └──────────────┘
+ *
+ * Widgets are built once per layout (casa layout signature) and updated in
+ * place on every state change.
+ */
+
+#define BAR_SENSORS 8
+#define BAR_LOW_BATTERY 20
+#define C_ALARM_ON 0xFF5A6E
+#define C_ALARM_WAIT 0xFFB347
+#define C_COOL 0x79D4D4
+
+typedef struct
+{
+    bool landscape;
+    lv_obj_t *clock, *date;
+    lv_obj_t *alarm_card, *alarm_title, *alarm_state, *alarm_hint;
+    lv_obj_t *climate_card, *outside_value, *outside_meta, *inside_value, *inside_meta, *boiler;
+    int sensor_count;
+    char sensor_device[BAR_SENSORS][64];
+    lv_obj_t *sensor_card[BAR_SENSORS], *sensor_temp[BAR_SENSORS], *sensor_meta[BAR_SENSORS], *sensor_name[BAR_SENSORS];
+    lv_obj_t *security_card, *security_event, *security_motion, *security_switch;
+    char camera_event[CASA_ID], motion_switch[CASA_ID], motion_sensor[CASA_ID];
+    lv_obj_t *attention_card, *attention_text, *attention_icon;
+} bar_view_t;
+
+static bool bar_panel(void)
+{
+    const board_info_t *b = ui_board_info();
+    return !b->round && ((b->width <= 200 && b->height >= 2 * b->width) || (b->height <= 200 && b->width >= 2 * b->height));
+}
+
+static void bar_view_deleted(lv_event_t *event)
+{
+    heap_caps_free(lv_event_get_user_data(event));
+}
+
+/* "17.8" -> "17,8°" (Italian decimal comma); "--" when not a number. */
+static void bar_degrees(float value, char *out, size_t size)
+{
+    if (isnan(value)) { snprintf(out, size, "--"); return; }
+    snprintf(out, size, "%.1f°", (double)value);
+    for (char *p = out; *p; p++) if (*p == '.') *p = ',';
+}
+
+static bool bar_number(const casa_entity_t *e, float *out)
+{
+    if (!e->known || !e->available) return false;
+    char *end;
+    *out = strtof(e->state, &end);
+    return end != e->state && isfinite(*out);
+}
+
+static bool bar_outside(const casa_entity_t *e)
+{
+    char text[3 * CASA_NAME + 4];
+    snprintf(text, sizeof(text), "%s %s %s", e->name, e->device_name, e->area);
+    for (char *p = text; *p; p++) *p = (char)tolower((unsigned char)*p);
+    static const char *const words[] = {"estern", "outdoor", "outside", "external", "balcon", "terraz", "giardin", "fuori"};
+    for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++)
+        if (strstr(text, words[i])) return true;
+    return false;
+}
+
+static bool bar_contains(const char *text, const char *word)
+{
+    char lower[CASA_ID];
+    snprintf(lower, sizeof(lower), "%s", text);
+    for (char *p = lower; *p; p++) *p = (char)tolower((unsigned char)*p);
+    return strstr(lower, word) != NULL;
+}
+
+/* "2026-11-10T10:07:28+00:00" -> unix time, 0 if not a timestamp. */
+static int64_t bar_parse_time(const char *text)
+{
+    int y, mo, d, h, mi, s = 0;
+    if (sscanf(text, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) < 5) return 0;
+    y -= mo <= 2;
+    int era = (y >= 0 ? y : y - 399) / 400;
+    int yoe = y - era * 400;
+    int doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    int64_t days = (int64_t)era * 146097 + doe - 719468;
+    int64_t t = days * 86400 + h * 3600 + mi * 60 + s;
+    const char *zone = strpbrk(text + 19, "+-Z");
+    int zh = 0, zm = 0;
+    if (zone && *zone != 'Z' && sscanf(zone + 1, "%d:%d", &zh, &zm) >= 1) t -= (*zone == '-' ? -1 : 1) * (zh * 3600 + zm * 60);
+    return t;
+}
+
+/* "adesso", "12 min fa", "3 h fa", "ieri 18:40", "8/11 18:40" */
+static void bar_ago(int64_t when, char *out, size_t size)
+{
+    time_t now = time(NULL);
+    if (when <= 0 || !clock_is_valid()) { snprintf(out, size, "--"); return; }
+    int64_t diff = (int64_t)now - when;
+    if (diff < 60) snprintf(out, size, "adesso");
+    else if (diff < 3600) snprintf(out, size, "%d min fa", (int)(diff / 60));
+    else if (diff < 6 * 3600) snprintf(out, size, "%d h fa", (int)(diff / 3600));
+    else
+    {
+        time_t t = (time_t)when;
+        struct tm local, today;
+        localtime_r(&t, &local);
+        localtime_r(&now, &today);
+        if (local.tm_yday == today.tm_yday && local.tm_year == today.tm_year)
+            snprintf(out, size, "oggi %02d:%02d", local.tm_hour, local.tm_min);
+        else snprintf(out, size, "%d/%d %02d:%02d", local.tm_mday, local.tm_mon + 1, local.tm_hour, local.tm_min);
+    }
+}
+
+static lv_obj_t *bar_card(lv_obj_t *parent, int32_t w, int32_t h, uint32_t tint)
+{
+    lv_obj_t *card = plain(parent);
+    lv_obj_set_size(card, w, h);
+    lv_obj_set_style_radius(card, 22, 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(card, ui_color(C_TILE), 0);
+    lv_obj_set_style_bg_grad_color(card, lv_color_mix(ui_color(tint), ui_color(C_TILE), 40), 0);
+    lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_border_color(card, ui_color(tint), 0);
+    lv_obj_set_style_border_opa(card, LV_OPA_20, 0);
+    lv_obj_set_style_bg_color(card, ui_color(C_TILE_PRESSED), LV_STATE_PRESSED);
+    lv_obj_set_scrollable(card, false);
+    lv_obj_add_flag(card, LV_OBJ_FLAG_EVENT_BUBBLE);   /* scrolling starts on a card too */
+    return card;
+}
+
+static lv_obj_t *bar_text(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int32_t x, int32_t y, int32_t w)
+{
+    lv_obj_t *l = label(parent, font, color, "");
+    lv_obj_set_pos(l, x, y);
+    if (w > 0)
+    {
+        lv_obj_set_width(l, w);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+        lv_obj_set_height(l, lv_font_get_line_height(font));
+    }
+    return l;
+}
+
+static void bar_open_device(lv_event_t *event)
+{
+    int index = (int)(intptr_t)event_data(event);
+    bar_view_t *bar = s_ui->bar;
+    if (bar == NULL || index < 0 || index >= bar->sensor_count) return;
+    if (open_embedded(s_ui, DEVICE, bar->sensor_device[index])) return;
+    snprintf(s_ui->selected_device, sizeof(s_ui->selected_device), "%.63s", bar->sensor_device[index]);
+    s_ui->device_parent = OVERVIEW;
+    s_ui->view = DEVICE;
+    s_ui->page = 0;
+    render(s_ui);
+}
+
+static void bar_show_all(lv_event_t *event)
+{
+    bool offline_first = (intptr_t)event_data(event) == 1;
+    s_ui->view = HOME;
+    s_ui->group_mode = 3;
+    s_ui->page = 0;
+    s_ui->show_unavailable = true;
+    s_ui->group[0] = 0;
+    (void)offline_first;
+    render(s_ui);
+}
+
+static void bar_toggle(lv_event_t *event)
+{
+    (void)event;
+    bar_view_t *bar = s_ui->bar;
+    casa_entity_t e;
+    if (bar == NULL || !bar->motion_switch[0] || !casa_entity(bar->motion_switch, &e) || !casa_tap(&e))
+        ui_toast("Comando non disponibile");
+}
+
+static void bar_climate(lv_event_t *event)
+{
+    (void)event;
+    const casa_entity_t *climate = quick_entity(s_ui, CASA_CLIMATE);
+    if (climate) open_detail(s_ui, climate->id);
+    else
+    {
+        if (open_embedded(s_ui, ENVIRONMENT, NULL)) return;
+        s_ui->view = ENVIRONMENT;
+        s_ui->page = 0;
+        s_ui->show_unavailable = true;
+        render(s_ui);
+    }
+}
+
+static void bar_overview_update(casa_ui_t *ui);
+
+static void bar_overview(casa_ui_t *ui)
+{
+    bar_view_t *bar = heap_caps_calloc(1, sizeof(bar_view_t), MALLOC_CAP_SPIRAM);
+    if (bar == NULL) { overview(ui); return; }
+    ui->bar = bar;
+    lv_obj_add_event_cb(ui->content, bar_view_deleted, LV_EVENT_DELETE, bar);
+    casa_entities(ui->list, CASA_ENTITIES);
+    int count = ui->status_now.count;
+
+    int32_t w = ui_board_info()->width, h = ui_board_info()->height;
+    bool landscape = w > h;
+    bar->landscape = landscape;
+    const int32_t gap = 8, pad = 6;
+
+    lv_obj_t *strip = ui->content;
+    lv_obj_set_size(strip, w, h);
+    lv_obj_set_style_pad_all(strip, pad, 0);
+    lv_obj_set_style_pad_gap(strip, gap, 0);
+    lv_obj_set_flex_flow(strip, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scrollable(strip, true);
+    lv_obj_set_scroll_dir(strip, landscape ? LV_DIR_HOR : LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_snap_x(strip, landscape ? LV_SCROLL_SNAP_START : LV_SCROLL_SNAP_NONE);
+    int32_t full = landscape ? h - 2 * pad : w - 2 * pad;   /* card thickness across the strip */
+
+    /* ---- clock */
+    {
+        int32_t cw = landscape ? 150 : full, ch = landscape ? full : 74;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_COOL);
+        bar->clock = bar_text(card, landscape ? ui_font_headline : ui_font_title, C_INK, 14, landscape ? 14 : 8, 0);
+        bar->date = bar_text(card, UI_FONT_SMALL, C_MIST, 15, landscape ? 62 : 46, cw - 30);
+        lv_obj_t *gear = panel_button(card, LV_SYMBOL_SETTINGS, C_OFF, open_settings, NULL);
+        lv_obj_set_size(gear, 44, 44);
+        if (landscape) lv_obj_align(gear, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+        else lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -10, 0);
+    }
+
+    /* ---- alarm */
+    if (quick_entity(ui, CASA_ALARM))
+    {
+        int32_t cw = landscape ? 176 : full, ch = landscape ? full : 92;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_ALARM_ON);
+        bar->alarm_card = card;
+        lv_obj_set_clickable(card, true);
+        add_event(card, quick_event, LV_EVENT_SHORT_CLICKED, (void *)0);
+        add_event(card, quick_event, LV_EVENT_LONG_PRESSED, (void *)4);
+        lv_port_set_focusable(card);
+        bar->alarm_title = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 10, cw - 28);
+        bar->alarm_state = bar_text(card, landscape ? ui_font_title : UI_FONT_LARGE, C_INK, 14, landscape ? 38 : 32, cw - 28);
+        bar->alarm_hint = bar_text(card, UI_FONT_SMALL, C_MIST, 14, ch - 28, cw - 28);
+    }
+
+    /* ---- climate */
+    {
+        int32_t cw = landscape ? 230 : full, ch = landscape ? full : 132;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_WARM);
+        bar->climate_card = card;
+        lv_obj_set_clickable(card, true);
+        add_event(card, bar_climate, LV_EVENT_CLICKED, NULL);
+        int32_t half = (cw - 28) / 2;
+        lv_obj_t *t1 = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 10, half);
+        lv_label_set_text(t1, "Fuori");
+        lv_obj_t *t2 = bar_text(card, UI_FONT_SMALL, C_MIST, 14 + half, 10, half);
+        lv_label_set_text(t2, "Dentro");
+        const lv_font_t *big = landscape ? ui_font_headline : UI_FONT_LARGE;
+        bar->outside_value = bar_text(card, big, C_COOL, 14, 32, half);
+        bar->inside_value = bar_text(card, big, C_WARM, 14 + half, 32, half);
+        int32_t meta_y = 32 + lv_font_get_line_height(big) + 2;
+        bar->outside_meta = bar_text(card, UI_FONT_SMALL, C_MIST, 14, meta_y, half);
+        bar->inside_meta = bar_text(card, UI_FONT_SMALL, C_MIST, 14 + half, meta_y, half);
+        bar->boiler = bar_text(card, UI_FONT_SMALL, C_INK, 14, ch - 28, cw - 28);
+    }
+
+    /* ---- one card per thermometer: available first */
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < count && bar->sensor_count < BAR_SENSORS; i++)
+        {
+            const casa_entity_t *e = &ui->list[i];
+            if (strcmp(e->device_class, "temperature") || strncmp(e->id, "sensor.", 7)) continue;
+            if ((e->known && e->available) != (pass == 0)) continue;
+            const char *key = e->device_id[0] ? e->device_id : e->id;
+            bool seen = false;
+            for (int k = 0; k < bar->sensor_count && !seen; k++) seen = !strcmp(bar->sensor_device[k], key);
+            if (seen) continue;
+            int index = bar->sensor_count++;
+            snprintf(bar->sensor_device[index], sizeof(bar->sensor_device[index]), "%.63s", key);
+            int32_t cw = landscape ? 150 : full, ch = landscape ? full : 62;
+            lv_obj_t *card = bar_card(strip, cw, ch, C_COOL);
+            bar->sensor_card[index] = card;
+            lv_obj_set_clickable(card, true);
+            add_event(card, bar_open_device, LV_EVENT_CLICKED, (void *)(intptr_t)index);
+            const char *name = e->device_name[0] ? e->device_name : e->name;
+            /* "Termometro cucina" -> "Cucina": the card already says what it is */
+            const char *short_name = !strncasecmp(name, "Termometro ", 11) ? name + 11 : name;
+            if (landscape)
+            {
+                bar->sensor_name[index] = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 10, cw - 28);
+                bar->sensor_temp[index] = bar_text(card, ui_font_headline, C_INK, 14, 40, cw - 28);
+                bar->sensor_meta[index] = bar_text(card, UI_FONT_SMALL, C_MIST, 14, ch - 30, cw - 28);
+            }
+            else
+            {
+                bar->sensor_name[index] = bar_text(card, UI_FONT_SMALL, C_INK, 14, 9, cw - 96);
+                bar->sensor_meta[index] = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 35, cw - 28);
+                bar->sensor_temp[index] = bar_text(card, UI_FONT_LARGE, C_INK, cw - 84, 5, 72);
+                lv_obj_set_style_text_align(bar->sensor_temp[index], LV_TEXT_ALIGN_RIGHT, 0);
+            }
+            lv_label_set_text(bar->sensor_name[index], short_name);
+            char first[2] = {(char)toupper((unsigned char)short_name[0]), 0};
+            if (short_name[0] && first[0] != short_name[0])
+                lv_label_set_text_fmt(bar->sensor_name[index], "%s%s", first, short_name + 1);
+        }
+
+    /* ---- security: camera last event, motion detection switch, motion sensor */
+    for (int i = 0; i < count; i++)
+    {
+        const casa_entity_t *e = &ui->list[i];
+        bool camera = bar_contains(e->id, "camera") || bar_contains(e->device_name, "camera") || bar_contains(e->name, "telecamera");
+        if (!bar->camera_event[0] && camera && !strcmp(e->device_class, "timestamp"))
+            snprintf(bar->camera_event, sizeof(bar->camera_event), "%s", e->id);
+        if (!bar->motion_switch[0] && e->kind == CASA_SWITCH && camera && bar_contains(e->id, "movimento") && bar_contains(e->id, "allarme"))
+            snprintf(bar->motion_switch, sizeof(bar->motion_switch), "%s", e->id);
+        if (!bar->motion_sensor[0] && !strncmp(e->id, "binary_sensor.", 14) &&
+            (!strcmp(e->device_class, "motion") || !strcmp(e->device_class, "occupancy") || !strcmp(e->device_class, "presence")))
+            snprintf(bar->motion_sensor, sizeof(bar->motion_sensor), "%s", e->id);
+    }
+    if (bar->camera_event[0] || bar->motion_switch[0] || bar->motion_sensor[0])
+    {
+        int32_t cw = landscape ? 220 : full, ch = landscape ? full : 168;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_ALARM_WAIT);
+        bar->security_card = card;
+        lv_obj_t *title = bar_text(card, UI_FONT_SMALL, C_ALARM_WAIT, 14, 8, cw - 28);
+        lv_label_set_text(title, LV_SYMBOL_EYE_OPEN "  Sicurezza");
+        lv_obj_t *c1 = bar_text(card, UI_FONT_CAPTION, C_MIST, 14, landscape ? 32 : 36, cw - 28);
+        lv_label_set_text(c1, "MOVIMENTO");
+        bar->security_motion = bar_text(card, UI_FONT_SMALL, C_INK, 14, landscape ? 46 : 52, cw - 28);
+        lv_obj_t *c2 = bar_text(card, UI_FONT_CAPTION, C_MIST, 14, landscape ? 70 : 80, cw - 28);
+        lv_label_set_text(c2, "TELECAMERA");
+        bar->security_event = bar_text(card, UI_FONT_SMALL, C_INK, 14, landscape ? 84 : 96, cw - 28);
+        if (bar->motion_switch[0])
+        {
+            bar->security_switch = panel_button(card, "", C_OFF, bar_toggle, NULL);
+            lv_obj_set_size(bar->security_switch, cw - 20, landscape ? 32 : 36);
+            lv_obj_set_style_min_height(bar->security_switch, landscape ? 32 : 36, 0);
+            lv_obj_align(bar->security_switch, LV_ALIGN_BOTTOM_MID, 0, -6);
+        }
+    }
+
+    /* ---- attention: low batteries and offline devices */
+    {
+        int32_t cw = landscape ? 170 : full, ch = landscape ? full : 64;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_OK);
+        bar->attention_card = card;
+        lv_obj_set_clickable(card, true);
+        add_event(card, bar_show_all, LV_EVENT_CLICKED, (void *)1);
+        bar->attention_icon = bar_text(card, UI_FONT_ICON, C_OK, 14, landscape ? 14 : (ch - 24) / 2, 0);
+        bar->attention_text = label(card, UI_FONT_SMALL, C_INK, "");
+        lv_obj_set_width(bar->attention_text, landscape ? cw - 28 : cw - 60);
+        lv_label_set_long_mode(bar->attention_text, LV_LABEL_LONG_MODE_WRAP);
+        if (landscape) lv_obj_set_pos(bar->attention_text, 14, 50);
+        else lv_obj_align(bar->attention_text, LV_ALIGN_LEFT_MID, 48, 0);
+    }
+
+    /* ---- every device */
+    {
+        int32_t cw = landscape ? 112 : full, ch = landscape ? full : 52;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_MIST);
+        lv_obj_set_clickable(card, true);
+        add_event(card, bar_show_all, LV_EVENT_CLICKED, (void *)0);
+        lv_obj_t *l = label(card, UI_FONT_SMALL, C_INK, landscape ? LV_SYMBOL_LIST "\nTutti i\ndispositivi" : LV_SYMBOL_LIST "  Tutti i dispositivi");
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_center(l);
+    }
+
+    ui->clock_minute = -1;
+    bar_overview_update(ui);
+}
+
+static void bar_overview_update(casa_ui_t *ui)
+{
+    bar_view_t *bar = ui->bar;
+    if (bar == NULL) return;
+    casa_entities(ui->list, CASA_ENTITIES);
+    int count = ui->status_now.count;
+    char text[96], value[24];
+
+    /* clock */
+    time_t now = time(NULL);
+    struct tm local;
+    localtime_r(&now, &local);
+    if (ui->clock_minute != local.tm_min)
+    {
+        ui->clock_minute = local.tm_min;
+        strftime(text, sizeof(text), clock_is_valid() ? "%H:%M" : "--:--", &local);
+        lv_label_set_text(bar->clock, text);
+        static const char *days[] = {"dom", "lun", "mar", "mer", "gio", "ven", "sab"};
+        static const char *months[] = {"gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"};
+        snprintf(text, sizeof(text), "%s %d %s", days[local.tm_wday], local.tm_mday, months[local.tm_mon]);
+        lv_label_set_text(bar->date, clock_is_valid() ? text : "");
+    }
+
+    /* alarm */
+    const casa_entity_t *alarm = quick_entity(ui, CASA_ALARM);
+    if (bar->alarm_card && alarm)
+    {
+        const char *s = alarm->state;
+        uint32_t tint = C_OK;
+        const char *state = "Disinserito", *hint = "Tocca: inserisci";
+        if (!alarm->known || !alarm->available) { state = "Non disponibile"; hint = ""; tint = C_MIST; }
+        else if (!strcmp(s, "triggered")) { state = "ALLARME"; hint = "Tieni premuto"; tint = C_ALARM_ON; }
+        else if (!strcmp(s, "pending") || !strcmp(s, "arming")) { state = !strcmp(s, "arming") ? "Inserimento..." : "In attesa"; hint = ""; tint = C_ALARM_WAIT; }
+        else if (!strncmp(s, "armed_", 6))
+        {
+            tint = C_ALARM_ON;
+            state = "Inserito";
+            hint = !strcmp(s, "armed_away") ? "Fuori casa"
+                 : !strcmp(s, "armed_home") ? "In casa"
+                 : !strcmp(s, "armed_night") ? "Notte"
+                 : !strcmp(s, "armed_vacation") ? "Vacanza" : "Personalizzato";
+        }
+        lv_label_set_text(bar->alarm_title, alarm->name[0] ? alarm->name : "Allarme");
+        lv_label_set_text(bar->alarm_state, state);
+        lv_obj_set_style_text_color(bar->alarm_state, ui_color(tint), 0);
+        lv_label_set_text(bar->alarm_hint, hint);
+        lv_obj_set_style_border_color(bar->alarm_card, ui_color(tint), 0);
+        lv_obj_set_style_border_opa(bar->alarm_card, LV_OPA_60, 0);
+        lv_obj_set_style_bg_grad_color(bar->alarm_card, lv_color_mix(ui_color(tint), ui_color(C_TILE), 70), 0);
+    }
+
+    /* climate: outside thermometer, indoor average, boiler */
+    float outside = NAN, outside_humidity = NAN;
+    for (int i = 0; i < count && isnan(outside); i++)
+    {
+        const casa_entity_t *e = &ui->list[i];
+        float v;
+        if (!strcmp(e->device_class, "temperature") && bar_outside(e) && bar_number(e, &v))
+        {
+            outside = v;
+            for (int k = 0; k < count; k++)
+                if (e->device_id[0] && !strcmp(ui->list[k].device_id, e->device_id) && !strcmp(ui->list[k].device_class, "humidity"))
+                    bar_number(&ui->list[k], &outside_humidity);
+        }
+    }
+    if (isnan(outside))
+    {
+        weather_t weather;
+        if (weather_get(&weather)) outside = weather.temp;
+    }
+    casa_home_stats_t stats;
+    casa_home_stats(ui->list, count, &stats);
+    bar_degrees(outside, value, sizeof(value));
+    lv_label_set_text(bar->outside_value, value);
+    if (!isnan(outside_humidity)) snprintf(text, sizeof(text), "%.0f %%", (double)outside_humidity);
+    else snprintf(text, sizeof(text), isnan(outside) ? "" : "meteo");
+    lv_label_set_text(bar->outside_meta, text);
+    bar_degrees(stats.temperatures ? stats.temperature : NAN, value, sizeof(value));
+    lv_label_set_text(bar->inside_value, value);
+    if (stats.humidities) snprintf(text, sizeof(text), "%.0f %%", (double)stats.humidity);
+    else text[0] = 0;
+    lv_label_set_text(bar->inside_meta, text);
+    const casa_entity_t *climate = quick_entity(ui, CASA_CLIMATE);
+    if (climate && climate->known && climate->available)
+    {
+        char target[24];
+        bar_degrees(climate->target_temp, target, sizeof(target));
+        snprintf(text, sizeof(text), "%s Caldaia %s  %s", climate->on ? LV_SYMBOL_CHARGE : LV_SYMBOL_POWER,
+                 climate->on ? "accesa" : "spenta", isnan(climate->target_temp) ? "" : target);
+        lv_obj_set_style_text_color(bar->boiler, ui_color(climate->on ? C_WARM : C_MIST), 0);
+    }
+    else snprintf(text, sizeof(text), climate ? "Caldaia offline" : "Dettagli " LV_SYMBOL_RIGHT);
+    lv_label_set_text(bar->boiler, text);
+
+    /* thermometers */
+    int low = 0;
+    for (int index = 0; index < bar->sensor_count; index++)
+    {
+        float temperature = NAN, humidity = NAN, battery = NAN;
+        bool known = false;
+        for (int i = 0; i < count; i++)
+        {
+            const casa_entity_t *e = &ui->list[i];
+            const char *key = e->device_id[0] ? e->device_id : e->id;
+            if (strcmp(key, bar->sensor_device[index])) continue;
+            float v;
+            if (!bar_number(e, &v)) continue;
+            known = true;
+            if (!strcmp(e->device_class, "temperature")) temperature = v;
+            else if (!strcmp(e->device_class, "humidity")) humidity = v;
+            else if (!strcmp(e->device_class, "battery")) battery = v;
+        }
+        bar_degrees(temperature, value, sizeof(value));
+        lv_label_set_text(bar->sensor_temp[index], value);
+        lv_obj_set_style_text_color(bar->sensor_temp[index], ui_color(!known ? C_OFF : C_INK), 0);
+        bool weak = !isnan(battery) && battery < BAR_LOW_BATTERY;
+        if (!known) snprintf(text, sizeof(text), "non disponibile");
+        else if (!isnan(humidity) && !isnan(battery))
+            snprintf(text, sizeof(text), "%.0f %%   %s %.0f%%", (double)humidity, weak ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_3, (double)battery);
+        else if (!isnan(humidity)) snprintf(text, sizeof(text), "%.0f %%", (double)humidity);
+        else if (!isnan(battery)) snprintf(text, sizeof(text), "%s %.0f%%", weak ? LV_SYMBOL_BATTERY_1 : LV_SYMBOL_BATTERY_3, (double)battery);
+        else text[0] = 0;
+        lv_label_set_text(bar->sensor_meta[index], text);
+        lv_obj_set_style_text_color(bar->sensor_meta[index], ui_color(weak ? C_ALARM_WAIT : C_MIST), 0);
+        lv_obj_set_style_border_color(bar->sensor_card[index], ui_color(weak ? C_ALARM_WAIT : C_COOL), 0);
+        lv_obj_set_style_border_opa(bar->sensor_card[index], weak ? LV_OPA_60 : LV_OPA_20, 0);
+    }
+
+    /* security */
+    if (bar->security_card)
+    {
+        casa_entity_t e;
+        if (bar->motion_sensor[0] && casa_entity(bar->motion_sensor, &e))
+        {
+            char ago[24];
+            bar_ago(e.last_changed, ago, sizeof(ago));
+            if (!e.known || !e.available) snprintf(text, sizeof(text), "non disponibile");
+            else if (e.on) snprintf(text, sizeof(text), "rilevato ora");
+            else snprintf(text, sizeof(text), "%s", ago);
+            lv_obj_set_style_text_color(bar->security_motion, ui_color(e.on ? C_ALARM_ON : C_INK), 0);
+        }
+        else snprintf(text, sizeof(text), "nessun sensore");
+        lv_label_set_text(bar->security_motion, text);
+        if (bar->camera_event[0] && casa_entity(bar->camera_event, &e) && e.known && e.available)
+        {
+            char ago[24];
+            bar_ago(bar_parse_time(e.state), ago, sizeof(ago));
+            snprintf(text, sizeof(text), "%s", ago);
+        }
+        else snprintf(text, sizeof(text), bar->camera_event[0] ? "--" : "nessuna");
+        lv_label_set_text(bar->security_event, text);
+        if (bar->security_switch && casa_entity(bar->motion_switch, &e))
+        {
+            bool on = e.known && e.available && e.on;
+            lv_label_set_text(lv_obj_get_child(bar->security_switch, 0), on ? "Rilevamento ON" : "Rilevamento OFF");
+            lv_obj_set_style_bg_color(bar->security_switch, ui_color(on ? 0x3A2A10 : C_OFF), 0);
+            lv_obj_set_style_text_color(lv_obj_get_child(bar->security_switch, 0), ui_color(on ? C_ALARM_WAIT : C_MIST), 0);
+        }
+    }
+
+    /* attention: low batteries anywhere, devices with nothing available */
+    int offline = 0;
+    low = 0;
+    for (int i = 0; i < count; i++)
+    {
+        const casa_entity_t *e = &ui->list[i];
+        float v;
+        if (!strcmp(e->device_class, "battery") && bar_number(e, &v) && v < BAR_LOW_BATTERY) low++;
+        if (!e->device_id[0]) continue;
+        bool first = true, any = false;
+        for (int k = 0; k < count; k++)
+        {
+            if (strcmp(ui->list[k].device_id, e->device_id)) continue;
+            if (k < i) { first = false; break; }
+            any |= ui->list[k].known && ui->list[k].available;
+        }
+        if (first && !any) offline++;
+    }
+    bool fine = !low && !offline;
+    if (fine) snprintf(text, sizeof(text), "Tutto a posto");
+    else if (low && offline) snprintf(text, sizeof(text), "%d batteri%c bass%c\n%d offline", low, low == 1 ? 'a' : 'e', low == 1 ? 'a' : 'e', offline);
+    else if (low) snprintf(text, sizeof(text), "%d batteri%c bass%c", low, low == 1 ? 'a' : 'e', low == 1 ? 'a' : 'e');
+    else snprintf(text, sizeof(text), "%d dispositiv%c offline", offline, offline == 1 ? 'o' : 'i');
+    lv_label_set_text(bar->attention_text, text);
+    lv_label_set_text(bar->attention_icon, fine ? LV_SYMBOL_OK : LV_SYMBOL_WARNING);
+    lv_obj_set_style_text_color(bar->attention_icon, ui_color(fine ? C_OK : C_ALARM_WAIT), 0);
+    lv_obj_set_style_border_color(bar->attention_card, ui_color(fine ? C_OK : C_ALARM_WAIT), 0);
+    lv_obj_set_style_border_opa(bar->attention_card, fine ? LV_OPA_20 : LV_OPA_60, 0);
 }
 
 static bool unit_available(casa_ui_t *ui, const char *id)
@@ -1566,13 +2156,17 @@ static void render(casa_ui_t *ui)
     ui->weather_hero = ui->weather_art = ui->weather_label = NULL;
     memset(ui->quick_values, 0, sizeof(ui->quick_values));
     ui->tile_count = 0;
+    ui->bar = NULL; /* freed by the delete event of the old content */
     ui->content = plain(ui->screen);
     lv_obj_set_size(ui->content, ui_board_info()->width, ui_board_info()->height - navigation_height());
     lv_obj_set_style_bg_color(ui->content, ui_color(C_BG), 0);
     lv_obj_set_style_bg_opa(ui->content, LV_OPA_COVER, 0);
     lv_obj_move_to_index(ui->content, 0);
     casa_status(&ui->status_now);
-    if (ui->view == OVERVIEW)
+    bool bar_home = ui->view == OVERVIEW && bar_panel();
+    if (bar_home)
+        bar_overview(ui);
+    else if (ui->view == OVERVIEW)
         overview(ui);
     else if (ui->view == HOME)
     {
@@ -1596,7 +2190,7 @@ static void render(casa_ui_t *ui)
     }
     else
         settings(ui);
-    navigation(ui);
+    if (!bar_home) navigation(ui);
     s_ui = previous;
 }
 
@@ -1642,6 +2236,8 @@ static void update(casa_ui_t *ui)
             snprintf(ui->layout, sizeof(ui->layout), "%s", layout);
             render(ui);
         }
+        else if (ui->view == OVERVIEW && ui->bar)
+            bar_overview_update(ui);
         else if (ui->view == OVERVIEW)
             overview_update(ui);
         else
