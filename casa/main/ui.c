@@ -1211,7 +1211,7 @@ static void bar_overview_update(casa_ui_t *ui)
                           : climate->hvac_action[0] ? "In pausa" : "Acceso";
         /* No room temperature: a thermostat that cannot regulate, say so. */
         bool blind = !off && isnan(climate->current_temp);
-        if (blind) snprintf(text, sizeof(text), LV_SYMBOL_WARNING " Senza sensore");
+        if (blind) snprintf(text, sizeof(text), LV_SYMBOL_WARNING " Manca sensore");
         else snprintf(text, sizeof(text), "%s %s %s", heating ? LV_SYMBOL_CHARGE : LV_SYMBOL_POWER, doing,
                       off || isnan(climate->target_temp) ? "" : target);
         lv_obj_set_style_text_color(bar->boiler, ui_color(blind ? C_ALARM_WAIT : heating ? 0xFF8A5B : off ? C_MIST : C_INK), 0);
