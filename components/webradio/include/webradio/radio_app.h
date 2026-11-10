@@ -15,4 +15,8 @@
 
 extern const app_t radio_app;
 
+/* "Back" inside the app: closes the station library of bar panels. False:
+ * nothing to close, the caller leaves the app. */
+bool radio_app_back(void);
+
 #endif

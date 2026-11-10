@@ -58,6 +58,7 @@ typedef struct
     volatile bool dec_done;
     volatile int volume;
     volatile int64_t last_audio_us;
+    volatile uint8_t level;            /* loudness of the last frame, for the UI meter */
     volatile uint32_t sample_rate;
     volatile uint8_t channels;
     radio_player_stats_t stats;
@@ -865,6 +866,20 @@ static void dec_task(void *arg)
                 audio_set_volume(applied_volume);
             }
 
+            /* Loudness for the UI meter: mean magnitude of every 16th sample
+             * (before the volume, so the meter moves the same at any volume). */
+            {
+                const int16_t *pcm = (const int16_t *)output;
+                size_t samples = frame.decoded_size / sizeof(int16_t);
+                uint32_t sum = 0, count = 0;
+                for (size_t i = 0; i < samples; i += 16, count++)
+                {
+                    sum += (uint32_t)(pcm[i] < 0 ? -pcm[i] : pcm[i]);
+                }
+                uint32_t mean = count ? sum / count : 0;
+                s_player.level = (uint8_t)(mean >= 8160 ? 255 : mean >> 5);
+            }
+
             if (audio_write((const int16_t *)output, frame.decoded_size / sizeof(int16_t)) != ESP_OK)
             {
                 s_player.stats.write_errors++;
@@ -1067,6 +1082,11 @@ void radio_player_format_text(char *out, size_t size)
 
     snprintf(out, size, "%s %lu kHz %s", s_player.format == STREAM_FORMAT_MP3 ? "MP3" : "AAC",
              (unsigned long)(s_player.sample_rate / 1000), s_player.channels == 2 ? "stereo" : "mono");
+}
+
+uint8_t radio_player_level(void)
+{
+    return s_player.state == RADIO_STATE_PLAYING && radio_player_silence_ms() < 300 ? s_player.level : 0;
 }
 
 void radio_player_set_volume(int percent)
