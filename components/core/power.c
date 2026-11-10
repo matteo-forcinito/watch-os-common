@@ -33,6 +33,7 @@ static const char *TAG = "power";
 #define DIM_BEFORE_OFF_MS   4000
 #define AOD_BRIGHTNESS      24
 #define KEY_POLL_ON_MS      150
+#define USB_OFF_CONFIRM_MS  3000
 #define KEY_POLL_OFF_MS     300
 #define BATTERY_POLL_ON_MS  20000
 #define BATTERY_POLL_OFF_MS 120000
@@ -168,8 +169,10 @@ static void go_dim(void)
         return;
     }
 
+    /* Dimmed, not dark: the panel's readable floor (an LCD looks off below it). */
     uint8_t level = active_brightness() / 4;
-    set_brightness(level < 10 ? 10 : level, true);
+    uint8_t floor = board_info()->min_aod_brightness > 10 ? board_info()->min_aod_brightness : 10;
+    set_brightness(level < floor ? floor : level, true);
     set_screen(POWER_SCREEN_DIM);
 }
 
@@ -308,15 +311,12 @@ static void handle_button(button_id_t button, button_event_t event)
         return;
     }
 
-    if (!screen_was_on)
+    /* A dimmed screen looks off on an LCD: the first press only restores it,
+     * as from off. Otherwise BOOT also went back and left an external app. */
+    if (!screen_was_on || s_screen == POWER_SCREEN_DIM)
     {
         go_on();   /* any button wakes the screen, nothing more */
         return;
-    }
-
-    if (s_screen == POWER_SCREEN_DIM)
-    {
-        go_on();
     }
 
     if (s_button_handler != NULL)
@@ -361,6 +361,18 @@ static void check_usb_power(void)
     }
 
     bool usb = pmu_usb_present();
+
+    /* Leaving USB must hold for a while. Boards that infer USB from the battery
+     * rail read a dip under a loud speaker as "unplugged"; the way back then
+     * re-announced the port and the PC lost its serial connection. */
+    static int64_t off_since = 0;
+    if (!usb && s_usb_power)
+    {
+        int64_t now = now_us();
+        if (off_since == 0) off_since = now;
+        if (now - off_since < USB_OFF_CONFIRM_MS * 1000LL) return;
+    }
+    off_since = 0;
 
     if (usb == s_usb_power)
     {

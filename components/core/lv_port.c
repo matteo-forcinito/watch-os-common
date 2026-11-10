@@ -1178,6 +1178,13 @@ static void handle_touch_irq(void)
         power_touch_wake();
         s_swallow_until_release = true;
     }
+    else if (screen == POWER_SCREEN_DIM)
+    {
+        /* Dimmed (about to turn off): the first touch only restores the screen,
+         * it does not press what the user can barely see. */
+        power_user_activity();
+        s_swallow_until_release = true;
+    }
 
     lv_timer_t *read_timer = lv_indev_get_read_timer(s_indev);
     lv_timer_resume(read_timer);

@@ -36,12 +36,14 @@ static const char *TAG = "radio";
 #define WIFI_TIMEOUT_MS      20000
 #define MAX_RECONNECTS       5
 #define NET_CHUNK            2048
-#define DEC_CHUNK            4096
+#define DEC_CHUNK            (188 * 22)    /* whole TS packets per read (4136 B) */
 #define PLAYLIST_TEXT_MAX    (16 * 1024)
 #define HLS_START_FROM_END   3             /* start this many segments before the live edge */
 #define STOP_DEC_TIMEOUT_MS  2000
 #define STOP_NET_TIMEOUT_MS  9000
 #define MAX_DECODE_ERRORS    100
+#define RESET_AFTER_ERRORS   8             /* consecutive errors before a decoder reset */
+#define STALL_BYTES          (64 * 1024)   /* input without any PCM before a reset */
 #define MAX_SEGMENT_BYTES    (512 * 1024)
 
 typedef struct
@@ -70,6 +72,12 @@ typedef struct
 static player_t s_player = {.state = RADIO_STATE_IDLE, .net_done = true, .dec_done = true};
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_codecs_registered = false;
+static bool s_codec_logs = false;   /* QA: keep the codec libraries' error lines */
+
+void radio_player_codec_logs(bool on)
+{
+    s_codec_logs = on;
+}
 
 /* ------------------------------------------------------------ helpers */
 
@@ -680,7 +688,11 @@ static void dec_task(void *arg)
 {
     (void)arg;
 
-    uint8_t *input = malloc(DEC_CHUNK);
+    /* Input keeps the bytes the decoder has not consumed yet (a partial frame or
+     * TS packet) in front of the next read: nothing is dropped between reads. */
+    uint8_t *input = malloc(2 * DEC_CHUNK);
+    size_t pending = 0;
+    size_t stalled_bytes = 0;
     uint32_t output_size = 8192;
     uint8_t *output = malloc(output_size);
     esp_audio_simple_dec_handle_t decoder = NULL;
@@ -689,6 +701,7 @@ static void dec_task(void *arg)
     int applied_volume = -1;
     int errors = 0;
     int drained_frames = 0;
+    int consecutive_errors = 0;
 
     if (input == NULL || output == NULL || !wait_until_ready())
     {
@@ -709,7 +722,7 @@ static void dec_task(void *arg)
 
     while (!s_player.stop && s_player.state != RADIO_STATE_FAILED)
     {
-        size_t got = xStreamBufferReceive(s_player.buffer, input, DEC_CHUNK, pdMS_TO_TICKS(100));
+        size_t got = xStreamBufferReceive(s_player.buffer, input + pending, DEC_CHUNK, pdMS_TO_TICKS(100));
         s_player.stats.buffered_bytes = xStreamBufferBytesAvailable(s_player.buffer);
 
         if (got == 0)
@@ -727,7 +740,8 @@ static void dec_task(void *arg)
             continue;
         }
 
-        esp_audio_simple_dec_raw_t raw = {.buffer = input, .len = (uint32_t)got};
+        esp_audio_simple_dec_raw_t raw = {.buffer = input, .len = (uint32_t)(pending + got)};
+        bool produced = false;
 
         while (raw.len > 0 && !s_player.stop)
         {
@@ -758,32 +772,57 @@ static void dec_task(void *arg)
                 continue;
             }
 
-            if (ret != ESP_AUDIO_ERR_OK)
+            if (raw.consumed > raw.len || frame.decoded_size > output_size)
             {
-                s_player.stats.decode_errors++;
-                /* Corrupted data (e.g. after a reconnect): drop this piece and resync. */
-                if (++errors > MAX_DECODE_ERRORS)
-                {
-                    fail("Audio non valido");
-                }
-
-                esp_audio_simple_dec_reset(decoder);
+                fail("Decoder non valido");
                 break;
             }
 
+            if (ret != ESP_AUDIO_ERR_OK)
+            {
+                /* A damaged frame: skip what the decoder read (or one byte) and
+                 * let it resync on the next header. A reset would also forget
+                 * the TS program tables until the next segment: only after a run
+                 * of errors. */
+                s_player.stats.decode_errors++;
+                if (++errors > MAX_DECODE_ERRORS)
+                {
+                    fail("Audio non valido");
+                    break;
+                }
+                if (++consecutive_errors >= RESET_AFTER_ERRORS)
+                {
+                    esp_audio_simple_dec_reset(decoder);
+                    consecutive_errors = 0;
+                    raw.len = 0;   /* restart from fresh input */
+                    break;
+                }
+                uint32_t skip = raw.consumed > 0 ? raw.consumed : 1;
+                raw.len -= skip;
+                raw.buffer += skip;
+                continue;
+            }
+
+            if (raw.consumed == 0 && frame.decoded_size == 0)
+            {
+                break;   /* needs more input: keep the rest for the next read */
+            }
+
             /* A decoder may drain cached PCM without consuming new input, but
-             * must not spin forever or replay the same frame indefinitely. */
-            if (raw.consumed > raw.len || frame.decoded_size > output_size ||
-                (raw.consumed == 0 && (frame.decoded_size == 0 || ++drained_frames > 64)))
+             * must not replay the same frame indefinitely. */
+            if (raw.consumed == 0 && ++drained_frames > 64)
             {
                 s_player.stats.decode_errors++;
-                fail("Decoder senza avanzamento");
+                esp_audio_simple_dec_reset(decoder);
+                drained_frames = 0;
+                raw.len = 0;
                 break;
             }
             if (raw.consumed != 0) drained_frames = 0;
 
             raw.len -= raw.consumed;
             raw.buffer += raw.consumed;
+            consecutive_errors = 0;
 
             if (frame.decoded_size == 0)
             {
@@ -791,6 +830,7 @@ static void dec_task(void *arg)
             }
 
             errors = 0;
+            produced = true;
 
             esp_audio_simple_dec_info_t info = {0};
             if (esp_audio_simple_dec_get_info(decoder, &info) != ESP_AUDIO_ERR_OK ||
@@ -837,6 +877,19 @@ static void dec_task(void *arg)
             s_player.last_audio_us = esp_timer_get_time();
             set_state(RADIO_STATE_PLAYING);
         }
+
+        /* Carry the unconsumed tail; a decoder that eats input without ever
+         * producing sound (lost sync) is reset after STALL_BYTES. */
+        stalled_bytes = produced ? 0 : stalled_bytes + got;
+        if (stalled_bytes > STALL_BYTES)
+        {
+            s_player.stats.decode_errors++;
+            esp_audio_simple_dec_reset(decoder);
+            stalled_bytes = 0;
+            raw.len = 0;
+        }
+        pending = raw.len > DEC_CHUNK ? 0 : raw.len;   /* never more than one chunk */
+        if (pending > 0 && raw.buffer != input) memmove(input, raw.buffer, pending);
     }
 
     if (!s_player.stop && s_player.state != RADIO_STATE_FAILED)
@@ -890,6 +943,13 @@ esp_err_t radio_player_start(const char *url, int volume, bool play_when_ready)
     s_player.state = RADIO_STATE_CONNECTING;
     publish();
     state_bump(STATE_RADIO_VERSION);
+
+    /* The codec libraries log every concealed frame. On a USB console that no
+     * terminal reads (a Deck Bar plugged into its PC) each line waits for the
+     * host and starves the decoder: errors are counted in the stats instead. */
+    static const char *const quiet[] = {"ESP_AAC_DEC", "ESP_MP3_DEC", "ESP_TS_DEC", "ESP_AUDIO_SIMPLE_DEC"};
+    for (size_t i = 0; i < sizeof(quiet) / sizeof(quiet[0]); i++)
+        esp_log_level_set(quiet[i], s_codec_logs ? ESP_LOG_ERROR : ESP_LOG_NONE);
 
     s_player.buffer = xStreamBufferCreateWithCaps(BUFFER_BYTES, 1, MALLOC_CAP_SPIRAM);
 

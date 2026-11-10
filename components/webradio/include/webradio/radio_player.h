@@ -78,6 +78,9 @@ typedef struct
     uint32_t sample_rate;
     uint32_t max_decode_us;
 } radio_player_stats_t;
+/* QA only: show the codec libraries' per-frame error lines (off by default). */
+void radio_player_codec_logs(bool on);
+
 void radio_player_stats(radio_player_stats_t *out);
 
 #endif
