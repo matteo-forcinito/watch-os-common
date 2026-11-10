@@ -850,6 +850,23 @@ static void websocket_url(const char *base, char *out, size_t size)
     snprintf(out, size, "%s%.*s/api/websocket", scheme, (int)n, rest);
 }
 
+bool casa_api_request(const char *path, char *url, size_t url_size, char *token, size_t token_size)
+{
+    if (s_lock == NULL) return false;
+    char base[URL_MAX];
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool configured = s_url[0] && s_token[0];
+    snprintf(base, sizeof(base), "%s", s_url);
+    snprintf(token, token_size, "%s", s_token);
+    xSemaphoreGive(s_lock);
+    if (!configured) return false;
+    char resolved[URL_MAX + 32];
+    resolve_local(base, resolved, sizeof(resolved));
+    size_t n = strlen(resolved);
+    while (n && resolved[n - 1] == '/') n--;
+    return snprintf(url, url_size, "%.*s%s", (int)n, resolved, path) < (int)url_size;
+}
+
 /* ------------------------------------------------------------ configuration */
 
 static bool valid_entity_id(const char *id);

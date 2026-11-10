@@ -35,6 +35,7 @@
 #include "hardware/board.h"
 #include "sdkconfig.h"
 #include "ui/ui.h"
+#include "src/misc/cache/instance/lv_image_cache.h" /* lv_image_cache_drop: snapshot frames reuse one descriptor */
 
 #include <ctype.h>
 #include <math.h>
@@ -769,7 +770,18 @@ typedef struct
     lv_obj_t *security_card, *security_event, *security_motion, *security_switch;
     char camera_event[CASA_ID], motion_switch[CASA_ID], motion_sensor[CASA_ID];
     lv_obj_t *attention_card, *attention_text, *attention_icon;
+    /* camera card */
+    char cameras[4][CASA_ID];
+    int camera_count, camera;
+    lv_obj_t *camera_card, *camera_image, *camera_label, *camera_veil;
+    lv_image_dsc_t camera_dsc;
+    int camera_w, camera_h;
+    uint32_t snap_revision;
+    uint32_t snap_asked_ms;
+    bool snap_now;
 } bar_view_t;
+
+#define BAR_SNAP_EVERY_MS 15000
 
 static bool bar_panel(void)
 {
@@ -936,6 +948,73 @@ static void bar_climate(lv_event_t *event)
     }
 }
 
+/* Tap: a new snapshot now. Long press: the next camera. */
+static void bar_camera_event(lv_event_t *event)
+{
+    bar_view_t *bar = s_ui->bar;
+    if (bar == NULL || !bar->camera_count) return;
+    if ((intptr_t)event_data(event) == 1 && bar->camera_count > 1)
+    {
+        bar->camera = (bar->camera + 1) % bar->camera_count;
+        lv_indev_wait_release(lv_indev_active());
+    }
+    bar->snap_now = true;
+}
+
+static void bar_camera_name(const bar_view_t *bar, const casa_ui_t *ui, char *out, size_t size)
+{
+    snprintf(out, size, "%s", bar->cameras[bar->camera]);
+    for (int i = 0; i < ui->status_now.count; i++)
+        if (!strcmp(ui->list[i].id, bar->cameras[bar->camera]))
+            snprintf(out, size, "%s", ui->list[i].area[0] && strcmp(ui->list[i].area, "Senza stanza")
+                                           ? ui->list[i].area : ui->list[i].name);
+}
+
+/* Every tick while the overview is on screen: show a new frame, ask for the next. */
+static void bar_camera_tick(casa_ui_t *ui)
+{
+    bar_view_t *bar = ui->bar;
+    if (bar == NULL || !bar->camera_count || power_screen() != POWER_SCREEN_ON) return;
+    casa_snapshot_info_t info;
+    casa_snapshot_info(&info);
+    char name[CASA_NAME + 8], text[160];
+    if (info.revision != bar->snap_revision && !casa_snapshot_busy())
+    {
+        bar->snap_revision = info.revision;
+        bar_camera_name(bar, ui, name, sizeof(name));
+        const uint16_t *pixels = casa_snapshot_pixels();
+        bool ours = info.ok && pixels && !strcmp(info.id, bar->cameras[bar->camera]) &&
+                    info.width == bar->camera_w && info.height == bar->camera_h;
+        if (ours)
+        {
+            lv_image_cache_drop(&bar->camera_dsc);
+            memset(&bar->camera_dsc, 0, sizeof(bar->camera_dsc));
+            bar->camera_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+            bar->camera_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+            bar->camera_dsc.header.w = (uint32_t)info.width;
+            bar->camera_dsc.header.h = (uint32_t)info.height;
+            bar->camera_dsc.header.stride = (uint32_t)info.width * 2;
+            bar->camera_dsc.data = (const uint8_t *)pixels;
+            bar->camera_dsc.data_size = (uint32_t)info.width * info.height * 2;
+            lv_image_set_src(bar->camera_image, &bar->camera_dsc);
+            lv_obj_invalidate(bar->camera_image);
+            time_t taken = (time_t)info.taken;
+            struct tm local;
+            localtime_r(&taken, &local);
+            snprintf(text, sizeof(text), LV_SYMBOL_VIDEO "  %s  %02d:%02d:%02d", name, local.tm_hour, local.tm_min, local.tm_sec);
+        }
+        else snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %s: %s", name, info.error[0] ? info.error : "in attesa");
+        lv_label_set_text(bar->camera_label, text);
+    }
+    bool due = bar->snap_now || (uint32_t)(lv_tick_get() - bar->snap_asked_ms) >= BAR_SNAP_EVERY_MS;
+    if (due && !casa_snapshot_busy() &&
+        casa_snapshot_request(bar->cameras[bar->camera], bar->camera_w, bar->camera_h))
+    {
+        bar->snap_now = false;
+        bar->snap_asked_ms = lv_tick_get();
+    }
+}
+
 static void bar_overview_update(casa_ui_t *ui);
 
 static void bar_overview(casa_ui_t *ui)
@@ -1050,6 +1129,44 @@ static void bar_overview(casa_ui_t *ui)
             if (short_name[0] && first[0] != short_name[0])
                 lv_label_set_text_fmt(bar->sensor_name[index], "%s%s", first, short_name + 1);
         }
+
+    /* ---- camera: the newest snapshot, available cameras first */
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < count && bar->camera_count < 4; i++)
+        {
+            const casa_entity_t *e = &ui->list[i];
+            if (e->kind == CASA_CAMERA && (e->known && e->available) == (pass == 0))
+                snprintf(bar->cameras[bar->camera_count++], CASA_ID, "%s", e->id);
+        }
+    if (bar->camera_count)
+    {
+        int32_t cw = landscape ? (full * 16 / 9) : full, ch = landscape ? full : full * 9 / 16;
+        lv_obj_t *card = bar_card(strip, cw, ch, C_ALARM_WAIT);
+        bar->camera_card = card;
+        lv_obj_set_style_clip_corner(card, true, 0);
+        lv_obj_set_style_bg_color(card, lv_color_black(), 0);
+        lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_NONE, 0);
+        lv_obj_set_clickable(card, true);
+        add_event(card, bar_camera_event, LV_EVENT_SHORT_CLICKED, (void *)0);
+        add_event(card, bar_camera_event, LV_EVENT_LONG_PRESSED, (void *)1);
+        bar->camera_w = cw - 2;
+        bar->camera_h = ch - 2;
+        bar->camera_image = lv_image_create(card);
+        lv_obj_set_pos(bar->camera_image, 1, 1);
+        lv_obj_set_size(bar->camera_image, bar->camera_w, bar->camera_h);
+        lv_obj_add_flag(bar->camera_image, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_remove_flag(bar->camera_image, LV_OBJ_FLAG_CLICKABLE);
+        /* A dark band under the caption, readable over any picture. */
+        bar->camera_veil = plain(card);
+        lv_obj_set_size(bar->camera_veil, cw, 30);
+        lv_obj_align(bar->camera_veil, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_color(bar->camera_veil, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(bar->camera_veil, LV_OPA_50, 0);
+        lv_obj_add_flag(bar->camera_veil, LV_OBJ_FLAG_EVENT_BUBBLE);
+        bar->camera_label = bar_text(card, UI_FONT_SMALL, C_INK, 10, ch - 26, cw - 20);
+        lv_label_set_text(bar->camera_label, LV_SYMBOL_VIDEO "  Carico...");
+        bar->snap_now = true;
+    }
 
     /* ---- security: camera last event, motion detection switch, motion sensor */
     for (int i = 0; i < count; i++)
@@ -2272,6 +2389,9 @@ static void tick(lv_timer_t *timer)
         casa_web_start();
 #endif
     update(ui);
+    if (ui->view == OVERVIEW && ui->bar && lv_screen_active() == lv_obj_get_screen(ui->screen) &&
+        lv_obj_is_visible(ui->screen))
+        bar_camera_tick(ui);
     s_ui = previous;
 }
 

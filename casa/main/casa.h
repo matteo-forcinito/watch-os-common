@@ -131,6 +131,26 @@ typedef struct
     int temperatures, humidities, meters, meters_available;
 } casa_home_stats_t;
 bool casa_is_indoor(const casa_entity_t *e, const casa_entity_t *list, int count);
+
+/* Full URL of a Home Assistant API path and the access token, for requests made
+ * outside the WebSocket (camera snapshots). False when Casa is not configured.
+ * The caller wipes the token after use. */
+bool casa_api_request(const char *path, char *url, size_t url_size, char *token, size_t token_size);
+
+/* Camera snapshots (snapshot.c): one request at a time, RGB565 frames. */
+typedef struct
+{
+    uint32_t revision;      /* changes after every attempt */
+    bool ok;                /* the last attempt produced the current frame */
+    int width, height;      /* of the current frame */
+    int64_t taken;          /* unix time of the current frame */
+    char id[CASA_ID];       /* camera of the current frame */
+    char error[48];         /* last failure, "" if none */
+} casa_snapshot_info_t;
+bool casa_snapshot_request(const char *entity_id, int width, int height);
+bool casa_snapshot_busy(void);
+void casa_snapshot_info(casa_snapshot_info_t *out);
+const uint16_t *casa_snapshot_pixels(void);
 void casa_home_stats(const casa_entity_t *list, int count, casa_home_stats_t *out);
 
 #endif
