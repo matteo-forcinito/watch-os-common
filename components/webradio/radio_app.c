@@ -61,7 +61,7 @@ typedef struct
 
     /* Bar panels only (see "touch bar layout") */
     bool bar_ui, landscape, tinted;
-    lv_obj_t *hero, *badge, *play, *meter, *library, *quick;
+    lv_obj_t *hero, *badge, *play, *meter, *library, *quick, *battery;
     lv_timer_t *meter_timer;
     uint32_t tint, seed, phase;
     int meter_bars;
@@ -707,6 +707,19 @@ static void bar_refresh(int station, bool on)
 
     quick_fill();
 
+    /* Battery, in the hero: hidden without a battery. */
+    int percent = (int)state_get(STATE_BATTERY);
+    bool charging = state_get(STATE_CHARGING) != 0;
+    lv_obj_set_hidden(s_ui->battery, percent < 0);
+    if (percent >= 0)
+    {
+        lv_label_set_text_fmt(s_ui->battery, "%s %d%%", charging ? LV_SYMBOL_CHARGE : ui_battery_symbol(percent),
+                              percent);
+        lv_obj_set_style_text_color(s_ui->battery, lv_color_hex(charging        ? UI_COLOR_GREEN
+                                                                : percent <= 15 ? UI_COLOR_RED
+                                                                                : UI_COLOR_TEXT_DIM), 0);
+    }
+
     /* The quick favourite playing now is filled with its colour. */
     for (int i = 0; s_ui->quick != NULL && i < s_ui->quick_count; i++)
     {
@@ -751,7 +764,9 @@ static void bar_create(lv_obj_t *screen, bool landscape)
 
     if (landscape)
     {
-        s_ui->status = bar_label(hero, pad + 72, 16, inner - 72 - 52, UI_FONT_CAPTION, UI_COLOR_TEXT_DIM);
+        s_ui->battery = bar_label(hero, hw - pad - 42 - 74, 15, 66, UI_FONT_CAPTION, UI_COLOR_TEXT_DIM);
+        lv_obj_set_style_text_align(s_ui->battery, LV_TEXT_ALIGN_RIGHT, 0);
+        s_ui->status = bar_label(hero, pad + 72, 16, inner - 72 - 52 - 74, UI_FONT_CAPTION, UI_COLOR_TEXT_DIM);
         lv_label_set_long_mode(s_ui->status, LV_LABEL_LONG_MODE_DOTS);
         lv_obj_set_height(s_ui->status, lv_font_get_line_height(UI_FONT_CAPTION));
         lv_obj_t *open = bar_pad(hero, hw - pad - 42, 8, 42, 42, 21, 0x000000, LV_SYMBOL_LIST, UI_FONT_ICON,
@@ -768,6 +783,8 @@ static void bar_create(lv_obj_t *screen, bool landscape)
     }
     else
     {
+        s_ui->battery = bar_label(hero, hw - pad - 66, 15, 66, UI_FONT_CAPTION, UI_COLOR_TEXT_DIM);
+        lv_obj_set_style_text_align(s_ui->battery, LV_TEXT_ALIGN_RIGHT, 0);
         s_ui->station = bar_label(hero, pad, 44, inner, ui_font_title, UI_COLOR_TEXT);
         lv_label_set_long_mode(s_ui->station, LV_LABEL_LONG_MODE_DOTS);
         lv_obj_set_height(s_ui->station, lv_font_get_line_height(ui_font_title) * 2);
@@ -1014,6 +1031,11 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(screen, on_knob, lv_port_knob_event(), NULL);
     lv_subject_add_observer_obj(state_subject(STATE_RADIO), refresh, page, NULL);
     lv_subject_add_observer_obj(state_subject(STATE_RADIO_VERSION), on_list_changed, page, NULL);
+    if (s_ui->bar_ui)
+    {
+        lv_subject_add_observer_obj(state_subject(STATE_BATTERY), refresh, page, NULL);
+        lv_subject_add_observer_obj(state_subject(STATE_CHARGING), refresh, page, NULL);
+    }
 }
 
 static void destroy(void)

@@ -40,8 +40,16 @@ static const esp_partition_t *launcher_slot(void)
     return esp_ota_get_next_update_partition(NULL);
 }
 
+static bool s_is_app;
+
+bool extapp_sdk_is_app(void)
+{
+    return s_is_app;
+}
+
 esp_err_t extapp_sdk_init(void)
 {
+    s_is_app = true;
     /* Confirm the running app before selecting the launcher. With rollback
      * enabled, selecting another slot first loses the pending verification
      * entry, and restarting this app can mark it aborted. The launcher is

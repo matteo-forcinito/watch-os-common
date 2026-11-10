@@ -866,8 +866,95 @@ void app_manager_set_aod(void (*aod_create)(lv_obj_t *screen))
     s_aod_create = aod_create;
 }
 
+/* ---- battery pill (external apps) */
+
+static int s_pill_wanted = -1;   /* -1 default (on in external apps), 0 off, 1 on */
+static lv_obj_t *s_pill;
+static bool (*s_pill_hidden)(void);
+
+/* Set by components/extapp_sdk when this image is an external app. */
+extern bool extapp_sdk_is_app(void) __attribute__((weak));
+
+static const char *pill_symbol(int percent)
+{
+    return percent > 80 ? LV_SYMBOL_BATTERY_FULL
+         : percent > 55 ? LV_SYMBOL_BATTERY_3
+         : percent > 30 ? LV_SYMBOL_BATTERY_2
+         : percent > 10 ? LV_SYMBOL_BATTERY_1
+                        : LV_SYMBOL_BATTERY_EMPTY;
+}
+
+static void pill_tick(lv_timer_t *timer)
+{
+    (void)timer;
+    static int shown = -2, shown_charging = -1, shown_hidden = -1;
+    int percent = (int)state_get(STATE_BATTERY);
+    int charging = state_get(STATE_CHARGING) != 0;
+    int hidden = percent < 0 || (s_pill_hidden != NULL && s_pill_hidden());
+    if (percent == shown && charging == shown_charging && hidden == shown_hidden)
+        return;   /* redraw only on change */
+    shown = percent;
+    shown_charging = charging;
+    shown_hidden = hidden;
+    if (hidden)
+    {
+        lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_t *label = lv_obj_get_child(s_pill, 0);
+    lv_label_set_text_fmt(label, "%s %d%%", charging ? LV_SYMBOL_CHARGE : pill_symbol(percent), percent);
+    lv_obj_set_style_text_color(label, lv_color_hex(charging ? TK_LIME : percent <= 15 ? TK_RED : TK_TEXT_2), 0);
+    lv_obj_remove_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void pill_start(void)
+{
+    lv_port_lock();
+    s_pill = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_pill);
+    lv_obj_set_size(s_pill, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(s_pill, 8, 0);
+    lv_obj_set_style_pad_ver(s_pill, 1, 0);
+    lv_obj_set_style_radius(s_pill, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_pill, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_pill, LV_OPA_70, 0);
+    lv_obj_remove_flag(s_pill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_pill, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *label = lv_label_create(s_pill);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_label_set_text(label, "");
+    lv_obj_align(s_pill, LV_ALIGN_TOP_MID, 0, board_info()->round ? board_info()->height * 3 / 100 : 1);
+    lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
+    pill_tick(NULL);
+    lv_timer_create(pill_tick, 1000, NULL);
+    lv_port_unlock();
+}
+
+void app_manager_battery_pill(bool on)
+{
+    s_pill_wanted = on ? 1 : 0;
+    if (s_pill != NULL)
+    {
+        lv_port_lock();
+        if (on) lv_obj_remove_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(s_pill, LV_OBJ_FLAG_HIDDEN);
+        lv_port_unlock();
+    }
+}
+
+void app_manager_battery_pill_filter(bool (*hidden_now)(void))
+{
+    s_pill_hidden = hidden_now;
+}
+
 void app_manager_init(void)
 {
+    bool external = extapp_sdk_is_app != NULL && extapp_sdk_is_app();
+    if (s_pill_wanted == 1 || (s_pill_wanted < 0 && external))
+    {
+        pill_start();
+    }
+
     lv_port_lock();
     lv_subject_add_observer(state_subject(STATE_SCREEN), screen_observer, NULL);
     lv_port_unlock();

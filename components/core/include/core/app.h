@@ -112,8 +112,17 @@ void app_manager_set_aod(void (*aod_create)(lv_obj_t *screen));
 /* Told (lvgl task) when the knob double click switched focus navigation on/off. */
 void app_manager_set_focus_cb(void (*changed)(bool on));
 
-/* Start the manager (after lv_port_init and power_init). */
+/* Start the manager (after lv_port_init and power_init). External apps (see
+ * extapp_sdk) also get the battery pill below, unless they turned it off. */
 void app_manager_init(void);
+
+/* Battery pill: a small "battery 82%" badge at the top centre, above every
+ * screen (LVGL top layer, touches go through). On by default in external apps;
+ * an app that shows the battery itself calls app_manager_battery_pill(false)
+ * before app_manager_init(). hidden_now, if set, hides it while it returns true
+ * (e.g. a keyboard that writes in the top strip). */
+void app_manager_battery_pill(bool on);
+void app_manager_battery_pill_filter(bool (*hidden_now)(void));
 
 /* Dispatch a logical button event in the LVGL task (also used by devtools). */
 void app_manager_button(button_id_t button, button_event_t event);

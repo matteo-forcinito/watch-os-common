@@ -24,12 +24,18 @@
 
 #define EXTAPP_SDK_VERSION 2
 
+#include <stdbool.h>
+
 #include "esp_err.h"
 
 esp_err_t extapp_sdk_init(void);
 
 /* Restart into the launcher. Does not return. */
 void extapp_return_to_launcher(void);
+
+/* True once extapp_sdk_init() ran: this image is an external app. The core
+ * uses it to show the battery pill (see app_manager_battery_pill). */
+bool extapp_sdk_is_app(void);
 
 /*
  * Restart this app once more (e.g. to free the USB port). The next restart
