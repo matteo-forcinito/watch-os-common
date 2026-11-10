@@ -129,7 +129,7 @@ static bool grip_axis(float axis[3])
     int turns;
     if (grip == 0)
     {
-        turns = settings_get()->screen_rotation & 3;        if (board_info()->width == 172 && board_info()->height == 640 && (turns & 1) == 0)            turns = 2; /* Same USB-at-top mounting as Remote's display. */
+        turns = settings_get()->screen_rotation & 3; /* follows the display mounting */
         if (turns == 0)
             return false;
     }

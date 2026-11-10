@@ -39,12 +39,8 @@ void app_main(void)
 
     ESP_ERROR_CHECK(settings_init());
     ESP_ERROR_CHECK(board_init());
-    const board_info_t *board = board_info();
-    /* LCD349 handheld grip: the USB connector is above the vertical screen.
-     * Keep the launcher's saved orientation, but give Remote its own mounting. */
-    bool lcd349_portrait = board->width == 172 && board->height == 640 &&
-                           (settings_get()->screen_rotation & 1) == 0;
-    ESP_ERROR_CHECK(lcd349_portrait ? lv_port_init_orientation(2) : lv_port_init());
+    /* Same mounting as the launcher: landscape, portrait and both flipped variants. */
+    ESP_ERROR_CHECK(lv_port_init());
     if (remote_drive_boot())
         return; /* started as a USB drive to install Watch Deck: nothing else runs */
 
