@@ -82,7 +82,7 @@ bool casa_catalog_request(const char *type, int page, const char *path, int *job
         static const char template[] =
             "{% set items = states | selectattr('domain','in',"
             "['light','switch','input_boolean','automation','fan','cover','climate','alarm_control_panel',"
-            "'media_player','scene','script','button','input_button','lock','sensor','binary_sensor','weather','person','device_tracker']) | list %}"
+            "'media_player','scene','script','button','input_button','lock','sensor','binary_sensor','weather','person','device_tracker','camera']) | list %}"
             "{\"total\":{{ items|count }},\"entities\":["
             "{% for s in items[start:start+64] %}{{ dict(id=s.entity_id,name=s.name,"
             "area=area_name(s.entity_id) or 'Senza stanza',area_id=area_id(s.entity_id) or '',"
@@ -228,7 +228,7 @@ casa_kind_t casa_kind_of(const char *id)
         {"script.", CASA_SCENE},         {"button.", CASA_SCENE},        {"input_button.", CASA_SCENE},
         {"lock.", CASA_LOCK},            {"sensor.", CASA_SENSOR},       {"binary_sensor.", CASA_SENSOR},
         {"weather.", CASA_SENSOR},       {"person.", CASA_PERSON},       {"device_tracker.", CASA_PERSON},
-        {"alarm_control_panel.", CASA_ALARM},
+        {"alarm_control_panel.", CASA_ALARM}, {"camera.", CASA_CAMERA},
     };
     for (unsigned i = 0; i < sizeof(map) / sizeof(map[0]); i++)
         if (strncmp(id, map[i].prefix, strlen(map[i].prefix)) == 0)
@@ -438,6 +438,8 @@ static void apply_attributes(casa_entity_t *e, const cJSON *a)
         e->max_temp = value;
     if (!isnan(value = number_of(cJSON_GetObjectItem(a, "target_temp_step"))))
         e->temp_step = value;
+    if (cJSON_IsString(item = cJSON_GetObjectItem(a, "hvac_action")))
+        snprintf(e->hvac_action, sizeof(e->hvac_action), "%s", item->valuestring);
     if (cJSON_IsArray(item = cJSON_GetObjectItem(a, "hvac_modes")))
     {
         e->hvac_count = 0;

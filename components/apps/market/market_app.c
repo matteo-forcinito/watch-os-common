@@ -917,14 +917,15 @@ bool devcon_app_command(char *line)
     {
         /* QA: the selected entities as the panel sees them (no URL or token). */
         static const char *const kinds[] = {"light", "switch", "fan", "cover", "climate", "media", "scene",
-                                            "lock", "sensor", "person", "other", "alarm"};
+                                            "lock", "sensor", "person", "other", "alarm", "camera"};
         casa_entity_t *list = heap_caps_malloc(sizeof(casa_entity_t) * CASA_ENTITIES, MALLOC_CAP_SPIRAM);
         int count = list != NULL ? casa_entities(list, CASA_ENTITIES) : 0;
         for (int i = 0; i < count; i++)
         {
             const casa_entity_t *e = &list[i];
-            printf("@CASA %s|%s|%s|%s|%s|%s%s|%s|%s\n", e->id, e->name, kinds[e->kind < 12 ? e->kind : 10], e->area,
-                   e->device_class, e->state, e->unit, e->device_name, e->available ? "ok" : "off");
+            printf("@CASA %s|%s|%s|%s|%s|%s%s|%s|%s|%.1f>%.1f %s\n", e->id, e->name, kinds[e->kind < 13 ? e->kind : 10],
+                   e->area, e->device_class, e->state, e->unit, e->device_name, e->available ? "ok" : "off",
+                   (double)e->current_temp, (double)e->target_temp, e->hvac_action);
             vTaskDelay(pdMS_TO_TICKS(5));
         }
         heap_caps_free(list);

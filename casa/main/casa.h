@@ -39,6 +39,7 @@ typedef enum
     CASA_PERSON,   /* person, device_tracker */
     CASA_OTHER,
     CASA_ALARM,
+    CASA_CAMERA,   /* camera: read only (snapshot) */
 } casa_kind_t;
 
 typedef struct
@@ -66,6 +67,7 @@ typedef struct
     int position;           /* cover 0..100, fan percentage, media volume 0..100; -1 n/a */
     float current_temp, target_temp, min_temp, max_temp, temp_step; /* climate (NaN = n/a) */
     char hvac_modes[6][12];
+    char hvac_action[16];   /* climate: heating / idle / off..., "" = not reported */
     int hvac_count;
     char media_title[48], media_artist[40];
     uint32_t changed_ms;    /* local time of the last change */

@@ -217,6 +217,7 @@ static const char *glyph_of(const casa_entity_t *e)
     case CASA_PERSON: return LV_SYMBOL_HOME;
     case CASA_SENSOR: return LV_SYMBOL_GPS;
     case CASA_ALARM: return LV_SYMBOL_WARNING;
+    case CASA_CAMERA: return LV_SYMBOL_VIDEO;
     default: return LV_SYMBOL_DUMMY;
     }
 }
@@ -265,7 +266,8 @@ static void tile_event(lv_event_t *e)
     if (!found)
         return;
     lv_event_code_t code = lv_event_get_code(e);
-    bool read_only = entity.kind == CASA_SENSOR || entity.kind == CASA_PERSON || entity.kind == CASA_OTHER;
+    bool read_only = entity.kind == CASA_SENSOR || entity.kind == CASA_PERSON || entity.kind == CASA_OTHER ||
+                     entity.kind == CASA_CAMERA;
     if (code == LV_EVENT_LONG_PRESSED || read_only || entity.kind == CASA_LOCK || entity.kind == CASA_CLIMATE)
     {
         if (code == LV_EVENT_LONG_PRESSED)
@@ -1199,11 +1201,20 @@ static void bar_overview_update(casa_ui_t *ui)
     const casa_entity_t *climate = quick_entity(ui, CASA_CLIMATE);
     if (climate && climate->known && climate->available)
     {
+        /* hvac_action says what it does now; the state is only the mode. */
         char target[24];
         bar_degrees(climate->target_temp, target, sizeof(target));
-        snprintf(text, sizeof(text), "%s Caldaia %s  %s", climate->on ? LV_SYMBOL_CHARGE : LV_SYMBOL_POWER,
-                 climate->on ? "accesa" : "spenta", isnan(climate->target_temp) ? "" : target);
-        lv_obj_set_style_text_color(bar->boiler, ui_color(climate->on ? C_WARM : C_MIST), 0);
+        bool off = !strcmp(climate->state, "off");
+        bool heating = !strcmp(climate->hvac_action, "heating") || !strcmp(climate->hvac_action, "preheating");
+        bool cooling = !strcmp(climate->hvac_action, "cooling");
+        const char *doing = off ? "Spento" : heating ? "Scalda" : cooling ? "Raffredda"
+                          : climate->hvac_action[0] ? "In pausa" : "Acceso";
+        /* No room temperature: a thermostat that cannot regulate, say so. */
+        bool blind = !off && isnan(climate->current_temp);
+        if (blind) snprintf(text, sizeof(text), LV_SYMBOL_WARNING " Senza sensore");
+        else snprintf(text, sizeof(text), "%s %s %s", heating ? LV_SYMBOL_CHARGE : LV_SYMBOL_POWER, doing,
+                      off || isnan(climate->target_temp) ? "" : target);
+        lv_obj_set_style_text_color(bar->boiler, ui_color(blind ? C_ALARM_WAIT : heating ? 0xFF8A5B : off ? C_MIST : C_INK), 0);
     }
     else snprintf(text, sizeof(text), climate ? "Caldaia offline" : "Dettagli " LV_SYMBOL_RIGHT);
     lv_label_set_text(bar->boiler, text);

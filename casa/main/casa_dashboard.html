@@ -66,7 +66,7 @@ if(!localStorage.getItem('appkit-theme'))document.documentElement.dataset.theme=
 'use strict';
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-const SUPPORTED = new Set(['light','switch','input_boolean','automation','fan','cover','climate','alarm_control_panel','media_player','scene','script','button','input_button','lock','sensor','binary_sensor','weather','person','device_tracker']);
+const SUPPORTED = new Set(['light','switch','input_boolean','automation','fan','cover','climate','alarm_control_panel','media_player','scene','script','button','input_button','lock','sensor','binary_sensor','weather','person','device_tracker','camera']);
 let state = {connected:false,entities:[]}, catalog = [], selected = new Map(), limit = 256, mode = localStorage.casaPanelMode || 'overview';
 let dragging = false, loadingCatalog = false, configurationLoaded = false, savedCredentials = false, savedUrl = '', cacheDirty = false, unitPage = 0, unitFilter = '', climateId = '';
 const UNIT_PAGE_SIZE=6;
@@ -75,7 +75,7 @@ function feedback(text, bad = false) { $('#feedback').textContent = text; $('#fe
 function category(entity) {
   const domain = entity.id.split('.')[0], dc = entity.device_class;
   if (domain === 'sensor' || domain === 'binary_sensor' || domain === 'weather') return ({temperature:'Termometri',humidity:'Umidità',power:'Energia',energy:'Energia'})[dc] || 'Sensori';
-  return ({light:'Luci',switch:dc === 'outlet' ? 'Prese' : 'Interruttori',input_boolean:'Interruttori',automation:'Interruttori',climate:'Termostati',alarm_control_panel:'Allarme',cover:'Tapparelle',fan:'Ventilazione',media_player:'Multimedia',scene:'Scene e azioni',script:'Scene e azioni',button:'Scene e azioni',input_button:'Scene e azioni',lock:'Serrature',person:'Presenze',device_tracker:'Presenze'})[domain] || 'Altro';
+  return ({light:'Luci',switch:dc === 'outlet' ? 'Prese' : 'Interruttori',input_boolean:'Interruttori',automation:'Interruttori',climate:'Termostati',alarm_control_panel:'Allarme',cover:'Tapparelle',fan:'Ventilazione',media_player:'Multimedia',scene:'Scene e azioni',script:'Scene e azioni',button:'Scene e azioni',input_button:'Scene e azioni',lock:'Serrature',person:'Presenze',device_tracker:'Presenze',camera:'Telecamere'})[domain] || 'Altro';
 }
 function groups(entity) {
   if (mode === 'area') return [entity.area || 'Senza stanza'];
