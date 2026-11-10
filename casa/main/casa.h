@@ -100,6 +100,12 @@ void casa_ui_create_view(lv_obj_t *screen, int view, const char *id);
 void casa_open_view(int view, const char *id);
 esp_err_t casa_acquire(void);
 void casa_release(void);
+/* A session without the setup page, for the alerts (alerts.c). */
+esp_err_t casa_background(bool on);
+/* Alerts: thermostat heating on/off, alarm armed/disarmed/triggered (OS only). */
+void casa_alerts_init(void);
+bool casa_alerts_enabled(void);
+void casa_alerts_set(bool on);
 void casa_web_stop(void);
 void casa_status(casa_status_t *out);
 int casa_entities(casa_entity_t *out, int max);

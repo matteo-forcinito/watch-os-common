@@ -334,8 +334,60 @@ static void update_tile(tile_t *t, const casa_entity_t *e)
     lv_obj_set_style_text_color(t->state, ui_color(!e->available ? 0x666B78 : active ? C_INK : C_MIST), 0);
 }
 
+/* Width of a list of tiles: bar panels use the whole panel minus thin margins. */
+static int list_width(void)
+{
+    const board_info_t *b = ui_board_info();
+    return bar_panel() ? b->width - 12 : b->round ? b->width * 78 / 100 : b->width - 28;
+}
+
+/* Tiles across a list: two on watches and squares; on bar panels full-width
+ * rows in portrait and three columns in landscape. */
+static int tile_width(int width)
+{
+    if (!bar_panel()) return (width - 10) / 2;
+    return ui_board_info()->width > ui_board_info()->height ? (width - 20) / 3 : width;
+}
+
 static lv_obj_t *make_tile(casa_ui_t *ui, lv_obj_t *parent, tile_t *t, int w)
 {
+    if (bar_panel())
+    {
+        /* A row: glowing orb on the left, name and state beside it. */
+        t->unit = false;
+        lv_obj_t *tile = lv_obj_create(parent);
+        lv_obj_remove_style_all(tile);
+        lv_obj_set_size(tile, w, 60);
+        lv_obj_set_style_radius(tile, 18, 0);
+        lv_obj_set_style_bg_color(tile, ui_color(C_TILE), 0);
+        lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(tile, ui_color(C_TILE_PRESSED), LV_STATE_PRESSED);
+        lv_obj_set_scrollable(tile, false);
+        t->orb = plain(tile);
+        lv_obj_set_size(t->orb, 36, 36);
+        lv_obj_set_pos(t->orb, 10, 12);
+        lv_obj_set_style_radius(t->orb, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(t->orb, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(t->orb, ui_color(C_OFF), 0);
+        t->glyph = label(t->orb, UI_FONT_ICON, C_MIST, "");
+        lv_obj_center(t->glyph);
+        t->name = label(tile, UI_FONT_SMALL, C_INK, "");
+        lv_obj_set_pos(t->name, 56, 9);
+        lv_obj_set_width(t->name, w - 64);
+        lv_label_set_long_mode(t->name, LV_LABEL_LONG_MODE_DOTS);
+        lv_obj_set_height(t->name, lv_font_get_line_height(UI_FONT_SMALL));
+        t->state = label(tile, UI_FONT_SMALL, C_MIST, "");
+        lv_obj_set_pos(t->state, 56, 31);
+        lv_obj_set_width(t->state, w - 64);
+        lv_label_set_long_mode(t->state, LV_LABEL_LONG_MODE_DOTS);
+        lv_obj_set_height(t->state, lv_font_get_line_height(UI_FONT_SMALL));
+        t->tile = tile;
+        add_event(tile, tile_event, LV_EVENT_CLICKED, t);
+        add_event(tile, tile_event, LV_EVENT_LONG_PRESSED, t);
+        lv_port_set_focusable(tile);
+        (void)ui;
+        return tile;
+    }
     t->unit = false;
     lv_obj_t *tile = lv_obj_create(parent);
     lv_obj_remove_style_all(tile);
@@ -386,7 +438,7 @@ static void summary_text(casa_ui_t *ui, int count, char *out, size_t size)
 {
     int available = 0;
     for (int i = 0; i < count; i++) available += ui->list[i].known && ui->list[i].available;
-    snprintf(out, size, "%d disponibili / %d selezionati", available, count);
+    snprintf(out, size, bar_panel() ? "%d di %d attivi" : "%d disponibili / %d selezionati", available, count);
 }
 
 static void mode_event(lv_event_t *event)
@@ -1676,7 +1728,11 @@ static void update_unit(casa_ui_t *ui, tile_t *tile)
         if (!strcmp(entity->device_class, "battery") && !strncmp(entity->id, "sensor.", 7) && (!battery || entity->available)) battery = entity;
     }
     if (!first) return;
-    lv_label_set_text(tile->name, first->device_name[0] ? first->device_name : first->name);
+    const char *device = first->device_name[0] ? first->device_name : first->name;
+    if (bar_panel() && !strncasecmp(device, "Termometro ", 11) && device[11])
+        lv_label_set_text_fmt(tile->name, "%c%s", toupper((unsigned char)device[11]), device + 12);
+    else
+        lv_label_set_text(tile->name, device);
     char text[160], t[48] = "--", h[48] = "--", b[48] = "--";
     if (temperature && temperature->available) casa_state_text(temperature, t, sizeof(t));
     if (humidity && humidity->available) casa_state_text(humidity, h, sizeof(h));
@@ -1703,16 +1759,26 @@ static void make_unit(casa_ui_t *ui, lv_obj_t *parent, tile_t *tile, int width, 
     snprintf(tile->id, sizeof(tile->id), "%s", entity->device_id);
     lv_obj_remove_event_cb(tile->tile, tile_event);
     add_event(tile->tile, unit_event, LV_EVENT_CLICKED, tile);
-    lv_obj_set_height(tile->tile, 146);
     lv_label_set_text(tile->glyph, LV_SYMBOL_HOME);
-    lv_obj_set_height(tile->state, 56);
     lv_label_set_long_mode(tile->state, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_align(tile->state, LV_ALIGN_TOP_LEFT, 0, 70);
+    if (bar_panel())
+    {
+        lv_obj_set_height(tile->tile, 78);
+        lv_obj_set_height(tile->state, 2 * lv_font_get_line_height(UI_FONT_SMALL));
+        lv_obj_set_y(tile->orb, 20);
+    }
+    else
+    {
+        lv_obj_set_height(tile->tile, 146);
+        lv_obj_set_height(tile->state, 56);
+        lv_obj_align(tile->state, LV_ALIGN_TOP_LEFT, 0, 70);
+    }
     update_unit(ui, tile);
 }
 
 static void all_devices(casa_ui_t *ui, lv_obj_t *page)
 {
+    if (bar_panel()) lv_obj_set_style_pad_hor(page, 6, 0);
     int count = casa_entities(ui->list, CASA_ENTITIES), heads = 0;
     for (int i = 0; i < count; i++)
     {
@@ -1725,13 +1791,13 @@ static void all_devices(casa_ui_t *ui, lv_obj_t *page)
                 if (!strcmp(ui->list[ui->unit_heads[j]].device_id, ui->list[i].device_id)) { duplicate = true; break; }
         if (!duplicate) ui->unit_heads[heads++] = i;
     }
-    int width = ui_board_info()->round ? ui_board_info()->width * 78 / 100 : ui_board_info()->width - 28;
+    int width = list_width();
     lv_obj_t *grid = plain(page);
     lv_obj_set_size(grid, width, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_column(grid, 10, 0);
-    lv_obj_set_style_pad_row(grid, 10, 0);
-    int page_size = 6;
+    lv_obj_set_style_pad_row(grid, bar_panel() ? 6 : 10, 0);
+    int page_size = bar_panel() ? 48 : 6;   /* bar panels scroll instead of paging */
     int filtered = 0;
     for (int h = 0; h < heads; h++)
     {
@@ -1749,11 +1815,11 @@ static void all_devices(casa_ui_t *ui, lv_obj_t *page)
             int index = matched++;
             if (index < ui->page * page_size || index >= (ui->page + 1) * page_size) continue;
             tile_t *tile = &ui->tiles[ui->tile_count++];
-            if (entity->device_id[0]) make_unit(ui, grid, tile, (width - 10) / 2, entity);
+            if (entity->device_id[0]) make_unit(ui, grid, tile, tile_width(width), entity);
             else
             {
                 snprintf(tile->id, sizeof(tile->id), "%s", entity->id);
-                make_tile(ui, grid, tile, (width - 10) / 2);
+                make_tile(ui, grid, tile, tile_width(width));
                 update_tile(tile, entity);
             }
         }
@@ -1771,7 +1837,8 @@ static void device_page(casa_ui_t *ui)
     if (!first) { ui_text(page, "Dispositivo non trovato", true); return; }
     ui_title(page, first->device_name[0] ? first->device_name : first->name);
     ui_text(page, first->area, true);
-    int width = ui_board_info()->round ? ui_board_info()->width * 78 / 100 : ui_board_info()->width - 28;
+    if (bar_panel()) lv_obj_set_style_pad_hor(page, 6, 0);
+    int width = list_width();
     lv_obj_t *grid = plain(page);
     lv_obj_set_size(grid, width, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
@@ -1788,7 +1855,7 @@ static void device_page(casa_ui_t *ui)
             if (index < ui->page * 12 || index >= (ui->page + 1) * 12) continue;
             tile_t *tile = &ui->tiles[ui->tile_count++];
             snprintf(tile->id, sizeof(tile->id), "%s", entity->id);
-            make_tile(ui, grid, tile, (width - 10) / 2);
+            make_tile(ui, grid, tile, tile_width(width));
             update_tile(tile, entity);
         }
     if (members > 12) pager(page, members);
@@ -1799,6 +1866,7 @@ static void home(casa_ui_t *ui)
     const board_info_t *b = ui_board_info();
     int w = b->width;
     lv_obj_t *page = ui_page(ui->content, NULL);
+    if (bar_panel()) lv_obj_set_style_pad_hor(page, 6, 0);
     panel_button(page, LV_SYMBOL_HOME "  Casa", C_OFF, show_overview, NULL);
     lv_obj_t *header = plain(page);
     lv_obj_set_size(header, LV_PCT(100), LV_SIZE_CONTENT);
@@ -1810,7 +1878,7 @@ static void home(casa_ui_t *ui)
     lv_port_set_focusable(header);
     lv_obj_t *brand = label(header, UI_FONT_SMALL, C_WARM, "CASA  " LV_SYMBOL_SETTINGS);
     lv_obj_set_style_text_letter_space(brand, 3, 0);
-    ui->summary = label(header, ui_font_title, C_INK, "");
+    ui->summary = label(header, bar_panel() ? UI_FONT_LARGE : ui_font_title, C_INK, "");
     lv_obj_set_width(ui->summary, LV_PCT(100));
     lv_label_set_long_mode(ui->summary, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_style_text_align(ui->summary, b->round ? LV_TEXT_ALIGN_CENTER : LV_TEXT_ALIGN_LEFT, 0);
@@ -1828,15 +1896,16 @@ static void home(casa_ui_t *ui)
     lv_obj_set_flex_flow(modes, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_column(modes, 6, 0);
     lv_obj_set_style_pad_row(modes, 6, 0);
-    const char *labels[] = {"Stanze", "Tipi", "Dashboard", "Tutte"};
+    const char *labels[] = {"Stanze", "Tipi", bar_panel() ? "Viste" : "Dashboard", "Tutte"};
     for (int i = 0; i < 4; i++)
     {
         lv_obj_t *button = casa_button(modes, labels[i], ui->group_mode == i ? C_WARM : C_OFF, mode_event, (void *)(intptr_t)i);
-        lv_obj_set_width(button, LV_SIZE_CONTENT);
-        lv_obj_set_height(button, 48);
+        lv_obj_set_width(button, bar_panel() && ui_board_info()->width < ui_board_info()->height ? LV_PCT(48) : LV_SIZE_CONTENT);
+        lv_obj_set_height(button, bar_panel() ? 40 : 48);
+        lv_obj_set_style_min_height(button, bar_panel() ? 40 : 48, 0);
         lv_obj_t *text = lv_obj_get_child(button, 0);
         lv_obj_set_style_text_font(text, UI_FONT_SMALL, 0);
-        lv_obj_set_style_text_color(text, ui_color(ui->group_mode == i ? C_BG : C_INK), 0);
+        lv_obj_set_style_text_color(text, ui_color(ui->group_mode == i ? (bar_panel() ? C_WARM : C_BG) : C_INK), 0);
     }
     panel_button(page, ui->show_unavailable ? "Tutti: inclusi offline" : "Disponibili  /  Mostra offline", C_OFF, show_offline, NULL);
     if (ui->group_mode == 3) { all_devices(ui, page); return; }
@@ -1858,16 +1927,17 @@ static void home(casa_ui_t *ui)
                     snprintf(ui->groups[ui->group_count++], CASA_NAME, "%s", name);
             }
         }
-        if (ui->page * 12 >= ui->group_count) ui->page = 0;
+        int per_page = bar_panel() ? 48 : 12;
+        if (ui->page * per_page >= ui->group_count) ui->page = 0;
         if (!ui->group_count) ui_text(page, "Nessun dispositivo disponibile. Tocca Mostra offline per consultare gli stati ricevuti da HA.", true);
-        for (int i = ui->page * 12; i < ui->group_count && i < (ui->page + 1) * 12; i++)
+        for (int i = ui->page * per_page; i < ui->group_count && i < (ui->page + 1) * per_page; i++)
             casa_row(page, LV_SYMBOL_HOME, C_WARM, ui->groups[i], LV_SYMBOL_RIGHT, group_event, ui->groups[i]);
-        if (ui->group_count > 12) pager(page, ui->group_count);
+        if (ui->group_count > per_page) pager(page, ui->group_count);
         return;
     }
     casa_row(page, LV_SYMBOL_LEFT, C_WARM, ui->group, "Tutti i gruppi", group_event, "");
-    int inner = b->round ? w * 78 / 100 : w - 28;
-    int tile_w = (inner - 10) / 2;
+    int inner = bar_panel() ? list_width() : b->round ? w * 78 / 100 : w - 28;
+    int tile_w = tile_width(inner);
     lv_obj_t *grid = plain(page);
     lv_obj_set_size(grid, inner, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
@@ -1877,20 +1947,21 @@ static void home(casa_ui_t *ui)
     int group_count = 0;
     for (int i = 0; i < count; i++)
         if (in_group(&ui->list[i]) && (ui->show_unavailable || (ui->list[i].known && ui->list[i].available))) group_count++;
-    if (ui->page * 12 >= group_count) ui->page = 0;
+    int per_page = bar_panel() ? 48 : 12;
+    if (ui->page * per_page >= group_count) ui->page = 0;
     for (int i = 0; i < count; i++)
     {
         const casa_entity_t *entity = &ui->list[i];
         if (!in_group(entity) || (!ui->show_unavailable && (!entity->known || !entity->available))) continue;
         int index = matched++;
-        if (index < ui->page * 12 || index >= (ui->page + 1) * 12) continue;
+        if (index < ui->page * per_page || index >= (ui->page + 1) * per_page) continue;
         tile_t *tile = &ui->tiles[ui->tile_count++];
         snprintf(tile->id, sizeof(tile->id), "%s", entity->id);
         make_tile(ui, grid, tile, tile_w);
         update_tile(tile, entity);
     }
     if (!matched) ui_text(page, "Nessun dispositivo disponibile. Mostra offline oppure modifica la selezione dal PC.", true);
-    if (matched > 12) pager(page, matched);
+    if (matched > per_page) pager(page, matched);
 
 }
 
@@ -2493,6 +2564,14 @@ static void settings_action(lv_event_t *e)
         casa_reconnect();
         ui_toast("Ricollego");
     }
+#if CONFIG_APPKIT_HOSTED
+    else if ((intptr_t)event_data(e) == 3)
+    {
+        casa_alerts_set(!casa_alerts_enabled());
+        ui_toast(casa_alerts_enabled() ? "Avvisi attivi" : "Avvisi spenti");
+        render(s_ui);
+    }
+#endif
     else
     {
 #if CONFIG_APPKIT_HOSTED
@@ -2516,6 +2595,11 @@ static void settings(casa_ui_t *ui)
     ui_text(page, casa_web_code(), false);
 #endif
     ui->status = ui_text(page, ui->status_now.message, true);
+#if CONFIG_APPKIT_HOSTED
+    casa_button(page, casa_alerts_enabled() ? LV_SYMBOL_BELL "  Avvisi: attivi" : LV_SYMBOL_BELL "  Avvisi: spenti",
+                0x2A2E38, settings_action, (void *)3);
+    ui_text(page, "Caldaia accesa/spenta e allarme, anche con Casa chiusa. Solo con l'USB collegato.", true);
+#endif
     casa_button(page, "Ricollega", 0x2A2E38, settings_action, (void *)1);
     casa_button(page, "Esci", 0x2A2E38, settings_action, (void *)2);
 }

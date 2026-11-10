@@ -27,11 +27,41 @@ esp_err_t casa_acquire(void)
     return ESP_OK;
 }
 
+static bool s_background;
+
 void casa_release(void)
 {
-    if (!s_owners || --s_owners) return;
+    if (!s_owners || --s_owners)
+    {
+        /* Only the alerts still hold the session: no setup page for them. */
+        if (s_owners == 1 && s_background) casa_web_stop();
+        return;
+    }
     casa_web_stop();
     casa_stop();
+}
+
+esp_err_t casa_background(bool on)
+{
+    if (on == s_background) return ESP_OK;
+    if (on)
+    {
+        if (!s_owners)
+        {
+            esp_err_t err = casa_start();
+            if (err != ESP_OK) return err;
+        }
+        s_owners++;
+        s_background = true;
+        return ESP_OK;
+    }
+    s_background = false;
+    if (s_owners && !--s_owners)
+    {
+        casa_web_stop();
+        casa_stop();
+    }
+    return ESP_OK;
 }
 
 void casa_open_view(int view, const char *id)

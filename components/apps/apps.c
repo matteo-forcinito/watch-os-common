@@ -58,6 +58,7 @@ static const app_t *const s_apps[] = {
     &giornata_app,
     &pieno_app,
     &casa_app,
+    &casa_alert_app,
     &copertura_app,
     &bilancio_app,
     &raccolta_app,
@@ -322,6 +323,7 @@ void apps_init(void)
     appkit_hosted_register("Giornata", "giornata");
     appkit_hosted_register("Pieno", "pieno");
     appkit_hosted_register("Casa", "casa");
+    casa_alerts_init();   /* thermostat / alarm alerts on USB power, if enabled */
     appkit_hosted_register("Copertura", "copertura");
     appkit_hosted_register("Bilancio", "bilancio");
     appkit_hosted_register("Sentinel", "sentinel");
