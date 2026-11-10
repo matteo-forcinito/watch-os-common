@@ -21,6 +21,7 @@ idf_component_register(
         esp_timer
     PRIV_REQUIRES
         esp_app_format
+        app_update
         nvs_flash
         espcoredump
         esp_pm

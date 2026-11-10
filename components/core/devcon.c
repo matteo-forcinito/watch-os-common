@@ -27,6 +27,8 @@
 #include "core/recovery.h"
 #include "core/sys.h"
 #include "core/settings.h"
+#include "esp_ota_ops.h"
+#include "esp_system.h"
 
 #include "hardware/pmu.h"
 #include "hardware/microphone.h"
@@ -757,6 +759,19 @@ static void handle(char *line)
                (unsigned)heap_caps_get_largest_free_block(caps),
                (unsigned)heap_caps_get_minimum_free_size(caps),
                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), ok);
+    }
+    else if (strcmp(cmd, "rotate") == 0 && a1 != NULL)
+    {
+        /* QA: restart the running image in another orientation. A launcher sets
+         * its own mounting again at boot; an external app keeps this one. */
+        settings_t settings = *settings_get();
+        settings.screen_rotation = (uint8_t)(atoi(a1) & 3);
+        settings_save(&settings);
+        settings_flush();
+        esp_ota_set_boot_partition(esp_ota_get_running_partition());
+        printf("@OK rotate %d\n", settings.screen_rotation);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        esp_restart();
     }
     else if (strcmp(cmd, "health") == 0)
     {

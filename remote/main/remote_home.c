@@ -254,8 +254,10 @@ static void switcher_tile(lv_obj_t *screen, ui_key_rect_t r, const char *icon, c
 
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, text);
-    lv_obj_set_width(label, r.w - 12);
-    lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+    bool narrow = r.w < 100;   /* bar panels: two tiles across 172 px */
+    lv_obj_set_width(label, narrow ? r.w - 4 : r.w - 12);
+    lv_obj_set_style_text_font(label, narrow ? UI_FONT_CAPTION : UI_FONT_SMALL, 0);
+    if (narrow) lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(label, ui_color(current ? UI_COLOR_TEXT : UI_COLOR_TEXT_DIM), 0);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);

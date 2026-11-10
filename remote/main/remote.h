@@ -128,6 +128,10 @@ const char *remote_edge_name(remote_edge_t edge);
 void remote_edge_move(remote_edge_t edge, int32_t delta, float *carry);
 lv_obj_t *remote_edge_mark(lv_obj_t *parent, remote_edge_t edge);
 void remote_edge_light(lv_obj_t *const marks[4], remote_edge_t lit);
+/* Bar panels: visible scroll / volume rails and click keys replace the edge
+ * gestures; remote_rails_create() builds them and returns the pad area. */
+bool remote_rails_wanted(void);
+ui_key_rect_t remote_rails_create(lv_obj_t *screen, uint32_t accent);
 
 /* Mode switcher: one button, same place and look on every mode screen. */
 extern const app_t remote_switcher_app;

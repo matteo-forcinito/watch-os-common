@@ -570,17 +570,41 @@ static void air_create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(air->pad, air_touch, LV_EVENT_PRESSING, air);
     lv_obj_add_event_cb(air->pad, air_touch, LV_EVENT_RELEASED, air);
     lv_obj_add_event_cb(air->pad, air_touch, LV_EVENT_PRESS_LOST, air);
-    for (int i = 0; i < 4; i++)
-        air->marks[i] = remote_edge_mark(air->pad, (remote_edge_t)i);
+    bool rails = remote_rails_wanted();
+    if (rails)
+    {
+        /* Bar panels: rails and click keys; the pad keeps tap, hold and drag */
+        ui_key_rect_t area = remote_rails_create(screen, UI_COLOR_ORANGE);
+        lv_obj_set_pos(air->pad, area.x, area.y);
+        lv_obj_set_size(air->pad, area.w, area.h);
+        lv_obj_set_style_radius(air->pad, 22, 0);
+        lv_obj_set_style_bg_grad_color(air->pad, lv_color_mix(ui_color(UI_COLOR_ORANGE), lv_color_hex(0x07080D), 30), 0);
+        lv_obj_set_style_bg_grad_dir(air->pad, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_border_width(air->pad, 1, 0);
+        lv_obj_set_style_border_color(air->pad, ui_color(UI_COLOR_ORANGE), 0);
+        lv_obj_set_style_border_opa(air->pad, LV_OPA_30, 0);
+        w = area.w;
+        h = area.h;
+    }
+    else
+    {
+        for (int i = 0; i < 4; i++)
+            air->marks[i] = remote_edge_mark(air->pad, (remote_edge_t)i);
+    }
 
     /* The ring tells what the wrist does: teal idle, orange while it moves the pointer */
     int32_t size = LV_MIN(w, h) * 46 / 100;
     air->ring = lv_obj_create(air->pad);
     lv_obj_remove_style_all(air->ring);
     lv_obj_set_size(air->ring, size, size);
-    bool bar = h <= 200 && w >= 2 * h;
-    bool narrow = w <= 200 && h >= 2 * w;
-    if (bar)
+    bool bar = !rails && h <= 200 && w >= 2 * h;
+    bool narrow = !rails && w <= 200 && h >= 2 * w;
+    bool wide = rails && w > 2 * h;   /* landscape bar: a capsule along the pad */
+    if (wide)
+        lv_obj_set_size(air->ring, w - 16, h - 12);
+    else if (rails)
+        lv_obj_set_size(air->ring, LV_MIN(w - 16, h - 16), LV_MIN(w - 16, h - 16));
+    else if (bar)
         lv_obj_set_size(air->ring, w / 2, h / 2);
     else if (narrow)
         lv_obj_set_size(air->ring, w - 24, 180);
@@ -592,11 +616,15 @@ static void air_create(lv_obj_t *screen, void *arg)
     air->hint = lv_label_create(air->ring);
     lv_label_set_text(air->hint, "Tieni fermo\nl'orologio...");
     lv_obj_set_width(air->hint, size * 84 / 100);
-    if (bar)
+    if (wide)
+        lv_obj_set_width(air->hint, w - 40);
+    else if (rails)
+        lv_obj_set_width(air->hint, LV_MIN(w - 16, h - 16) - 20);
+    else if (bar)
         lv_obj_set_width(air->hint, w / 2 - 20);
     else if (narrow)
         lv_obj_set_width(air->hint, w - 48);
-    lv_obj_set_style_text_font(air->hint, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_font(air->hint, rails ? UI_FONT_CAPTION : UI_FONT_SMALL, 0);
     lv_obj_set_style_text_align(air->hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(air->hint);
 

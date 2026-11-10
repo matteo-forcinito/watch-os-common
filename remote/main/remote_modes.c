@@ -57,6 +57,93 @@ static lv_obj_t *button_at(lv_obj_t *screen, ui_key_rect_t rect, const char *tex
     return button;
 }
 
+/* Bar panels (172 px on the short side): icon-first keys, a one-line header. */
+static bool bar_panel(void)
+{
+    int32_t w = remote_screen_w(), h = remote_screen_h();
+    return remote_bar_size(w, h) || remote_narrow_size(w, h);
+}
+
+/*
+ * A control of the bar panels: a large symbol over a short caption.
+ *
+ *   primary   filled with the mode colour, dark symbol and caption
+ *   other     dark card, symbol in the mode colour, a hairline in that colour
+ *
+ * Elsewhere the classic text button (text) is used.
+ */
+static lv_obj_t *key_at(lv_obj_t *screen, ui_key_rect_t rect, const char *icon, const char *caption, const char *text,
+                        uint32_t color, bool primary, lv_event_cb_t cb, lv_event_code_t code, void *data)
+{
+    if (!bar_panel())
+    {
+        return button_at(screen, rect, text, primary ? color : UI_COLOR_CARD, cb, code, data);
+    }
+    lv_obj_t *key = lv_obj_create(screen);
+    lv_obj_remove_style_all(key);
+    lv_obj_set_pos(key, rect.x + 3, rect.y + 3);
+    lv_obj_set_size(key, rect.w - 6, rect.h - 6);
+    lv_obj_set_style_radius(key, 18, 0);
+    lv_obj_set_style_bg_opa(key, LV_OPA_COVER, 0);
+    lv_color_t tint = ui_color(color);
+    lv_color_t deep = lv_color_hex(0x07080D);
+    if (primary)
+    {
+        lv_obj_set_style_bg_color(key, tint, 0);
+        lv_obj_set_style_bg_grad_color(key, lv_color_mix(tint, deep, 170), 0);
+        lv_obj_set_style_bg_grad_dir(key, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_shadow_color(key, tint, 0);
+        lv_obj_set_style_shadow_width(key, 18, 0);
+        lv_obj_set_style_shadow_opa(key, LV_OPA_40, 0);
+    }
+    else
+    {
+        lv_obj_set_style_bg_color(key, ui_color(UI_COLOR_CARD), 0);
+        lv_obj_set_style_bg_grad_color(key, lv_color_mix(tint, deep, 28), 0);
+        lv_obj_set_style_bg_grad_dir(key, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_border_width(key, 1, 0);
+        lv_obj_set_style_border_color(key, tint, 0);
+        lv_obj_set_style_border_opa(key, LV_OPA_40, 0);
+    }
+    lv_obj_set_style_bg_color(key, lv_color_mix(lv_color_white(), tint, 70), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_grad_color(key, lv_color_mix(lv_color_white(), tint, 70), LV_STATE_PRESSED);
+    lv_obj_set_style_transform_scale(key, 240, LV_STATE_PRESSED);   /* a slight press-in */
+    lv_obj_set_style_transform_pivot_x(key, (rect.w - 6) / 2, 0);
+    lv_obj_set_style_transform_pivot_y(key, (rect.h - 6) / 2, 0);
+    lv_obj_set_scrollable(key, false);
+    lv_obj_set_gesture_bubble(key, false);
+    lv_obj_add_event_cb(key, cb, code, data);
+    lv_port_set_focusable(key);
+
+    bool tall = rect.h >= 84;
+    lv_obj_t *glyph = lv_label_create(key);
+    lv_label_set_text(glyph, icon);
+    lv_obj_set_style_text_font(glyph, tall && primary ? &lv_font_montserrat_32 : UI_FONT_ICON, 0);
+    lv_obj_set_style_text_color(glyph, primary ? lv_color_black() : tint, 0);
+    lv_obj_align(glyph, LV_ALIGN_CENTER, 0, tall ? -12 : -8);
+
+    lv_obj_t *label = lv_label_create(key);
+    lv_label_set_text(label, caption);
+    lv_obj_set_width(label, rect.w - 10);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_text_font(label, tall && strlen(caption) <= 7 ? UI_FONT_SMALL : UI_FONT_CAPTION, 0);
+    lv_obj_set_height(label, lv_font_get_line_height(tall && strlen(caption) <= 7 ? UI_FONT_SMALL : UI_FONT_CAPTION));
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(label, primary ? lv_color_black() : ui_color(UI_COLOR_TEXT_DIM), 0);
+    lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, tall ? -12 : -4);
+    if (rect.h < 60)
+    {
+        /* Low keys (landscape bar): symbol and caption side by side */
+        lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+        lv_obj_set_height(label, lv_font_get_line_height(UI_FONT_SMALL));
+        lv_obj_set_width(label, rect.w - 6 - 50);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_align(glyph, LV_ALIGN_LEFT_MID, 14, 0);
+        lv_obj_align(label, LV_ALIGN_LEFT_MID, 46, 0);
+    }
+    return key;
+}
+
 /* Lowest usable line: round panels stop at the last comfortable chord. */
 static int32_t panel_bottom(void)
 {
@@ -73,13 +160,26 @@ static panel_t *panel_create(lv_obj_t *screen, const char *title)
     remote_switcher_button(screen);
     lv_obj_t *label = lv_label_create(screen);
     lv_label_set_text(label, title);
-    /* Centred on the screen, clear of the switcher on both sides. */
-    lv_obj_set_width(label, header.w - 2 * 52);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_style_text_font(label, strlen(title) > 12 ? UI_FONT_BODY : UI_FONT_LARGE, 0);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_update_layout(label);
-    lv_obj_set_pos(label, header.x + 52, header.y + (header.h - lv_obj_get_height(label)) / 2);
+    if (bar_panel())
+    {
+        /* One line beside the switcher: the panel is only 172 px across. */
+        lv_obj_set_width(label, header.w - 56);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+        lv_obj_set_style_text_font(label, UI_FONT_SMALL, 0);
+        lv_obj_set_style_text_color(label, ui_color(UI_COLOR_TEXT), 0);
+        lv_obj_set_height(label, lv_font_get_line_height(UI_FONT_SMALL));
+        lv_obj_set_pos(label, header.x + 54, header.y + (header.h - lv_font_get_line_height(UI_FONT_SMALL)) / 2);
+    }
+    else
+    {
+        /* Centred on the screen, clear of the switcher on both sides. */
+        lv_obj_set_width(label, header.w - 2 * 52);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+        lv_obj_set_style_text_font(label, strlen(title) > 12 ? UI_FONT_BODY : UI_FONT_LARGE, 0);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_update_layout(label);
+        lv_obj_set_pos(label, header.x + 52, header.y + (header.h - lv_obj_get_height(label)) / 2);
+    }
     panel_t *panel = calloc(1, sizeof(*panel));
     if (panel == NULL)
         return NULL;
@@ -90,7 +190,7 @@ static panel_t *panel_create(lv_obj_t *screen, const char *title)
     lv_obj_set_pos(panel->status, footer.x, footer.y);
     lv_obj_set_width(panel->status, footer.w);
     lv_obj_set_style_text_align(panel->status, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(panel->status, UI_FONT_SMALL, 0);
+    lv_obj_set_style_text_font(panel->status, bar_panel() ? UI_FONT_CAPTION : UI_FONT_SMALL, 0);
     panel->timer = lv_timer_create(panel_tick, 300, panel);
     lv_obj_add_event_cb(screen, panel_deleted, LV_EVENT_DELETE, panel);
     panel_tick(panel->timer);
@@ -118,6 +218,26 @@ static ui_key_rect_t grid_rect(int index)
     ui_key_rect_t band = ui_keyboard_band(remote_screen_w(), h, board_info()->round, y0, y1 - y0, 8);
     int32_t middle = band.w / 2;
     return (ui_key_rect_t){band.x + (index % 2 ? middle : 0), band.y, index % 2 ? band.w - middle : middle, band.h};
+}
+
+/* Keys `index` of `total` on bar panels: two columns in portrait, two rows in
+ * landscape; same bands as grid_rect elsewhere. */
+static ui_key_rect_t grid_rect_n(int index, int total)
+{
+    if (!bar_panel())
+    {
+        return grid_rect(index);
+    }
+    int32_t w = remote_screen_w(), h = remote_screen_h();
+    ui_key_rect_t header = remote_header_band();
+    int32_t top = header.y + header.h + 4;
+    int32_t bottom = panel_bottom() - lv_font_get_line_height(UI_FONT_CAPTION) - 4;
+    int cols = remote_bar_size(w, h) ? (total + 1) / 2 : 2;
+    int rows = (total + cols - 1) / cols;
+    int row = index / cols, col = index % cols;
+    int32_t span = w - 12;
+    int32_t y0 = top + (bottom - top) * row / rows, y1 = top + (bottom - top) * (row + 1) / rows;
+    return (ui_key_rect_t){6 + span * col / cols, y0, span * (col + 1) / cols - span * col / cols, y1 - y0};
 }
 
 static bool mac(void)
@@ -158,10 +278,13 @@ static void media_create(lv_obj_t *screen, void *arg)
                                         "Volume +",
                                         "Stop",
                                         "Espelli"};
+    static const char *const icons[] = {LV_SYMBOL_PLAY,       LV_SYMBOL_MUTE,       LV_SYMBOL_PREV, LV_SYMBOL_NEXT,
+                                        LV_SYMBOL_VOLUME_MID, LV_SYMBOL_VOLUME_MAX, LV_SYMBOL_STOP, LV_SYMBOL_EJECT};
+    static const char *const captions[] = {"Play", "Muto", "Indietro", "Avanti", "Vol -", "Vol +", "Stop", "Espelli"};
     for (int i = 0; i < 8; i++)
     {
-        lv_obj_t *button = button_at(screen, grid_rect(i), names[i], i == 0 ? UI_COLOR_PINK : UI_COLOR_CARD,
-                                     media_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_t *button = key_at(screen, grid_rect_n(i, 8), icons[i], captions[i], names[i], UI_COLOR_PINK, i == 0,
+                                  media_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         if (i == 4 || i == 5)
         {
             lv_obj_add_event_cb(button, media_clicked, LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)i);
@@ -220,10 +343,13 @@ static void presenter_create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(screen, control_knob, lv_port_knob_event(), (void *)(intptr_t)2);
     static const char *const names[] = {"Precedente",   "Successiva",     "Avvia",       "Da qui",
                                         "Schermo nero", "Schermo bianco", "Prima slide", "Termina"};
+    static const char *const icons[] = {LV_SYMBOL_LEFT,      LV_SYMBOL_RIGHT,    LV_SYMBOL_PLAY, LV_SYMBOL_NEXT,
+                                        LV_SYMBOL_EYE_CLOSE, LV_SYMBOL_EYE_OPEN, LV_SYMBOL_HOME, LV_SYMBOL_STOP};
+    static const char *const captions[] = {"Indietro", "Avanti", "Avvia", "Da qui", "Nero", "Bianco", "Inizio", "Fine"};
     for (int i = 0; i < 8; i++)
     {
-        button_at(screen, grid_rect(i), names[i], i == 1 ? UI_COLOR_ORANGE : UI_COLOR_CARD, presenter_clicked,
-                  LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        key_at(screen, grid_rect_n(i, 8), icons[i], captions[i], names[i], UI_COLOR_ORANGE, i == 1, presenter_clicked,
+               LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
 }
 
@@ -256,6 +382,19 @@ static void meeting_clicked(lv_event_t *e)
 static void meeting_create(lv_obj_t *screen, void *arg)
 {
     (void)arg;
+    if (bar_panel())
+    {
+        panel_create(screen, remote_settings()->meeting ? "Zoom" : "Teams");
+        static const char *const icons[] = {LV_SYMBOL_MUTE,   LV_SYMBOL_VIDEO, LV_SYMBOL_UP,
+                                            LV_SYMBOL_UPLOAD, LV_SYMBOL_LIST,  LV_SYMBOL_CLOSE};
+        static const char *const captions[] = {"Microfono", "Camera", "Mano", "Condividi", "Chat", "Esci"};
+        for (int i = 0; i < 6; i++)
+        {
+            key_at(screen, grid_rect_n(i, 6), icons[i], captions[i], captions[i], i == 5 ? UI_COLOR_RED : UI_COLOR_INDIGO,
+                   i == 0 || i == 5, meeting_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        }
+        return;
+    }
     lv_obj_t *page = remote_page(screen, remote_settings()->meeting ? "Zoom" : "Teams");
     ui_text(page, "Apri la riunione sul computer. I pulsanti alternano lo stato; Remote non legge microfono o camera.",
             true);
@@ -645,13 +784,34 @@ static void mouse_create(lv_obj_t *screen, void *arg)
     lv_obj_add_event_cb(mouse->pad, mouse_touch, LV_EVENT_RELEASED, mouse);
     lv_obj_add_event_cb(mouse->pad, mouse_touch, LV_EVENT_PRESS_LOST, mouse);
 
-    for (int i = 0; i < 4; i++)
-        mouse->marks[i] = remote_edge_mark(mouse->pad, (remote_edge_t)i);
+    bool rails = remote_rails_wanted();
+    if (rails)
+    {
+        /* Bar panels: rails and click keys around a framed pad */
+        ui_key_rect_t area = remote_rails_create(screen, UI_COLOR_TEAL);
+        lv_obj_set_pos(mouse->pad, area.x, area.y);
+        lv_obj_set_size(mouse->pad, area.w, area.h);
+        lv_obj_set_style_radius(mouse->pad, 22, 0);
+        lv_obj_set_style_bg_grad_color(mouse->pad, lv_color_mix(ui_color(UI_COLOR_TEAL), lv_color_hex(0x07080D), 30), 0);
+        lv_obj_set_style_bg_grad_dir(mouse->pad, LV_GRAD_DIR_VER, 0);
+        lv_obj_set_style_border_width(mouse->pad, 1, 0);
+        lv_obj_set_style_border_color(mouse->pad, ui_color(UI_COLOR_TEAL), 0);
+        lv_obj_set_style_border_opa(mouse->pad, LV_OPA_30, 0);
+        w = area.w;
+    }
+    else
+    {
+        for (int i = 0; i < 4; i++)
+            mouse->marks[i] = remote_edge_mark(mouse->pad, (remote_edge_t)i);
+    }
 
     mouse->hint = lv_label_create(mouse->pad);
-    lv_label_set_text(mouse->hint, "Tocca: clic\nTieni premuto: destro\nTocca e trascina: sposta");
-    lv_obj_set_width(mouse->hint, w * 62 / 100);
-    lv_obj_set_style_text_font(mouse->hint, UI_FONT_SMALL, 0);
+    bool wide = rails && w > 2 * lv_obj_get_style_height(mouse->pad, 0);
+    lv_label_set_text(mouse->hint, wide    ? "Tocca: clic  -  Tieni: destro  -  Tocca e trascina"
+                                   : rails ? "Tocca: clic\nTieni: destro\nTocca e trascina"
+                                           : "Tocca: clic\nTieni premuto: destro\nTocca e trascina: sposta");
+    lv_obj_set_width(mouse->hint, rails ? w - 16 : w * 62 / 100);
+    lv_obj_set_style_text_font(mouse->hint, rails ? UI_FONT_CAPTION : UI_FONT_SMALL, 0);
     lv_obj_set_style_text_color(mouse->hint, ui_color(UI_COLOR_TEXT_DIM), 0);
     lv_obj_set_style_text_align(mouse->hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(mouse->hint, 6, 0);
