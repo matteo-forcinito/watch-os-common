@@ -224,6 +224,7 @@ static void battery_tick(lv_timer_t *timer)
 
 void remote_battery_start(void)
 {
+    app_manager_battery_pill(true);   /* every Remote layout keeps the top strip free */
     app_manager_battery_pill_filter(battery_covered);
     lv_timer_create(battery_tick, 2000, NULL);
 }

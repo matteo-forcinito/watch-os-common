@@ -195,14 +195,14 @@ static void snap_task(void *arg)
             snprintf(error, sizeof(error), "Immagine troppo grande");
         else
         {
-            size_t capacity = declared > 0 ? (size_t)declared : 128 * 1024;
+            size_t capacity = declared > 0 ? (size_t)declared + 1 : 128 * 1024;   /* +1: the end is a 0-byte read */
             jpeg = heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM);
             while (jpeg != NULL)
             {
                 if (length == capacity)
                 {
-                    if (capacity >= SNAP_MAX_BYTES) { snprintf(error, sizeof(error), "Immagine troppo grande"); break; }
-                    size_t larger = capacity * 2 > SNAP_MAX_BYTES ? SNAP_MAX_BYTES : capacity * 2;
+                    if (capacity >= SNAP_MAX_BYTES + 1) { snprintf(error, sizeof(error), "Immagine troppo grande"); break; }
+                    size_t larger = capacity * 2 > SNAP_MAX_BYTES + 1 ? SNAP_MAX_BYTES + 1 : capacity * 2;
                     uint8_t *grown = heap_caps_realloc(jpeg, larger, MALLOC_CAP_SPIRAM);
                     if (grown == NULL) break;
                     jpeg = grown;

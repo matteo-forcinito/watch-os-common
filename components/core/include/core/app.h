@@ -117,7 +117,8 @@ void app_manager_set_focus_cb(void (*changed)(bool on));
 void app_manager_init(void);
 
 /* Battery pill: a small "battery 82%" badge at the top centre, above every
- * screen (LVGL top layer, touches go through). On by default in external apps;
+ * screen (LVGL top layer, touches go through). On by default in external apps
+ * on bar panels (wide or tall strips);
  * an app that shows the battery itself calls app_manager_battery_pill(false)
  * before app_manager_init(). hidden_now, if set, hides it while it returns true
  * (e.g. a keyboard that writes in the top strip). */

@@ -366,7 +366,9 @@ static bool fetch_text(http_stream_t *stream, const char *url, char *out, size_t
         snprintf(final_url, URL_MAX, "%s", stream->url);
     }
 
-    return got == 0 && length > 0;
+    /* A playlist larger than the buffer is used truncated, as before: the
+     * newest segments are lost, the stream still starts. */
+    return length > 0 && (got == 0 || length + 1 >= size);
 }
 
 static size_t play_hls(char *playlist_url, char *text)
@@ -703,6 +705,7 @@ static void dec_task(void *arg)
     int errors = 0;
     int drained_frames = 0;
     int consecutive_errors = 0;
+    int write_failures = 0;
 
     if (input == NULL || output == NULL || !wait_until_ready())
     {
@@ -882,10 +885,17 @@ static void dec_task(void *arg)
 
             if (audio_write((const int16_t *)output, frame.decoded_size / sizeof(int16_t)) != ESP_OK)
             {
+                /* One failed write is a glitch (a notification sound on the same
+                 * output); only a run of them means the output is gone. */
                 s_player.stats.write_errors++;
-                fail("Uscita audio interrotta");
-                break;
+                if (++write_failures >= 20)
+                {
+                    fail("Uscita audio interrotta");
+                    break;
+                }
+                continue;
             }
+            write_failures = 0;
 
             s_player.stats.frames++;
 

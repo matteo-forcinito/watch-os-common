@@ -890,7 +890,7 @@ static void pill_tick(lv_timer_t *timer)
     static int shown = -2, shown_charging = -1, shown_hidden = -1;
     int percent = (int)state_get(STATE_BATTERY);
     int charging = state_get(STATE_CHARGING) != 0;
-    int hidden = percent < 0 || (s_pill_hidden != NULL && s_pill_hidden());
+    int hidden = percent < 0 || s_pill_wanted == 0 || (s_pill_hidden != NULL && s_pill_hidden());
     if (percent == shown && charging == shown_charging && hidden == shown_hidden)
         return;   /* redraw only on change */
     shown = percent;
@@ -949,8 +949,12 @@ void app_manager_battery_pill_filter(bool (*hidden_now)(void))
 
 void app_manager_init(void)
 {
+    /* Default: external apps on bar panels (172 px), whose layouts keep the top
+     * strip free. Elsewhere an app turns it on when its screens leave room. */
+    const board_info_t *b = board_info();
+    bool bar = !b->round && (b->width >= 2 * b->height || b->height >= 2 * b->width);
     bool external = extapp_sdk_is_app != NULL && extapp_sdk_is_app();
-    if (s_pill_wanted == 1 || (s_pill_wanted < 0 && external))
+    if (s_pill_wanted == 1 || (s_pill_wanted < 0 && external && bar))
     {
         pill_start();
     }

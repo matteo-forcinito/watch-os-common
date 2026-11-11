@@ -1343,6 +1343,7 @@ void casa_status(casa_status_t *out)
 
 int casa_entities(casa_entity_t *out, int max)
 {
+    if (s_lock == NULL) return 0;   /* Casa never started */
     xSemaphoreTake(s_lock, portMAX_DELAY);
     int n = s_count < max ? s_count : max;
     memcpy(out, s_entities, sizeof(casa_entity_t) * (size_t)n);
@@ -1352,6 +1353,7 @@ int casa_entities(casa_entity_t *out, int max)
 
 bool casa_entity(const char *id, casa_entity_t *out)
 {
+    if (s_lock == NULL) return false;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     casa_entity_t *e = find(id);
     if (e)
