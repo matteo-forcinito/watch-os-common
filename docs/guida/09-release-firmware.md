@@ -67,6 +67,30 @@ foreach ($d in "ESP32-S3-Amoled-Touch-1.8","ESP32-S3-Touch-AMOLED-1.75","ESP32-S
 }
 ```
 
+## Tutta la famiglia da Linux, macOS o Windows (`tools/dev/release_all.py`)
+
+Stesso numero per tutti i firmware, Deck Bar compresa, senza PowerShell. I firmware vanno clonati
+uno accanto all'altro (come `watch-os-common`); serve `gh` autenticato (`gh auth login`, una volta).
+
+```bash
+cd ~/ESP-IDF/watch-os-common                     # tutto committato e pushato su main
+python tools/dev/release_all.py status --version 1.20.0          # cosa manca, prodotto per prodotto
+python tools/dev/release_all.py prepare --version 1.20.0 --notes ../release-notes/1.20.0.md --push
+python tools/dev/release_all.py publish --version 1.20.0 --verify-only   # build e verifica, niente pubblicato
+python tools/dev/release_all.py publish --version 1.20.0                 # pubblica tutti
+```
+
+- `prepare`: in ogni firmware `main` aggiornato (solo fast-forward), submodule su `origin/main`
+  della libreria, note in `release/notes/`, `PROJECT_VER`, un commit `Release X.Y.Z: <prima riga>`.
+  Si ferma se un repository ha modifiche non committate.
+- `publish --verify-only`: avvia tutte le build su GitHub Actions in parallelo e verifica i pacchetti
+  senza pubblicare. Va fatto prima, così un firmware che fallisce non lascia la famiglia su versioni
+  diverse. Il `publish` successivo riusa le build verificate.
+- La **Deck Bar** (`lcd349`) non ha ancora il workflow su Actions: viene compilata sul computer
+  (build di produzione in `build/`, mai QA) e pubblicata con `release_firmware.py --local-build`.
+- Stato e log in `~/.cache/watch-release/`. Un prodotto fallito si rilancia con `--only <prodotto>`.
+- Sul Cyberdeck lo stesso flusso è nella dashboard: Progetti → **Rilascio**.
+
 ## Canale Dev con un comando (`tools/dev/release_dev.ps1`)
 
 Il modo normale di lavorare: le novità escono prima come `X.Y.Z-dev.N` dal branch `dev`, si provano
@@ -144,7 +168,7 @@ Ogni log deve finire con `PUBLISHED:`.
 | `Release published but catalog update failed` | Rilancia lo stesso comando: la release esiste già (bozza completata), riprova il catalogo |
 | Build ok ma pubblicazione interrotta | Rilancia riusando la build: `python ..\watch-os-common\tools\release_firmware.py --repo matteo-forcinito/<repo> --product <prodotto> --version X.Y.Z --project . --gh $gh --run-id <numero run>` |
 
-Prodotti validi per `--product`: `amoled`, `amoled175`, `amoled175c`, `knob`, `watcher`.
+Prodotti validi per `--product`: `amoled`, `amoled175`, `amoled175c`, `knob`, `watcher`, `guition4848`, `lcd13`, `lcd349`.
 
 ## Flash via USB di una release (recupero)
 

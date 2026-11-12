@@ -1114,6 +1114,7 @@ esp_err_t casa_config_clear(void)
     {
         esp_err_t url_error = nvs_erase_key(nvs, "url");
         esp_err_t token_error = nvs_erase_key(nvs, "token");
+        nvs_erase_key(nvs, "camera");   /* the default camera belongs to the instance */
         if (url_error != ESP_OK && url_error != ESP_ERR_NVS_NOT_FOUND) result = url_error;
         if (token_error != ESP_OK && token_error != ESP_ERR_NVS_NOT_FOUND) result = token_error;
         if (result == ESP_OK) result = nvs_commit(nvs);

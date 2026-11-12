@@ -20,7 +20,8 @@ import time
 import zipfile
 
 PRODUCTS = {'amoled175': 'amoled175_watch', 'amoled175c': 'amoled175c_watch',
-            'amoled': 'amoled_watch', 'knob': 'knob_os', 'watcher': 'watcher_os', 'guition4848': 'guition4848_panel', 'lcd13': 'lcd13_panel'}
+            'amoled': 'amoled_watch', 'knob': 'knob_os', 'watcher': 'watcher_os', 'guition4848': 'guition4848_panel', 'lcd13': 'lcd13_panel',
+            'lcd349': 'lcd349_deck'}
 
 def qa_compile_commands(commands):
     return any(any(flag in c['command'] for flag in

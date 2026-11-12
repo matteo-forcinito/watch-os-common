@@ -26,6 +26,7 @@
 #include "apps/apps.h"
 #endif
 #include "esp_heap_caps.h"
+#include "nvs.h"
 #include "esp_timer.h"
 #if CONFIG_APPKIT_HOSTED
 #include "appkit.h"
@@ -797,7 +798,7 @@ static void overview(casa_ui_t *ui)
  *                target and room temperature; tap = detail (changes confirmed)
  *   4 climate    outside / inside, then one row per thermometer (battery
  *                under 20 % in orange), offline ones counted
- *   5 camera     newest snapshot; tap = refresh, long press = next camera
+ *   5 camera     newest snapshot; tap = full screen, long press = next camera (kept)
  *   6 media      only while a player plays or is paused
  *   7 devices    every device, with low batteries and offline devices
  *
@@ -1060,6 +1061,30 @@ static void bar_media(lv_event_t *event)
 
 /* ------------------------------------------------------------ cameras */
 
+/* The camera last chosen in the home, kept in Casa's NVS namespace (with URL and token). */
+#define CAMERA_KEY "camera"
+
+static void camera_default_get(char *out, size_t size)
+{
+    out[0] = '\0';
+    nvs_handle_t nvs;
+    if (nvs_open("casa", NVS_READONLY, &nvs) != ESP_OK) return;
+    if (nvs_get_str(nvs, CAMERA_KEY, out, &size) != ESP_OK) out[0] = '\0';
+    nvs_close(nvs);
+}
+
+/* Written only when it changes: a camera switch is a deliberate tap, not a loop. */
+static void camera_default_set(const char *id)
+{
+    char old[CASA_ID];
+    camera_default_get(old, sizeof(old));
+    if (!strcmp(old, id)) return;
+    nvs_handle_t nvs;
+    if (nvs_open("casa", NVS_READWRITE, &nvs) != ESP_OK) return;
+    if (nvs_set_str(nvs, CAMERA_KEY, id) == ESP_OK) nvs_commit(nvs);
+    nvs_close(nvs);
+}
+
 /* The selected cameras, available ones first; `first` becomes the current one. */
 static void camera_collect(casa_ui_t *ui, camera_feed_t *feed, const char *first)
 {
@@ -1145,6 +1170,7 @@ static void camera_switch(casa_ui_t *ui, camera_feed_t *feed, int step)
     if (feed->count < 1) return;
     feed->index = (feed->index + step + feed->count) % feed->count;
     feed->now = true;
+    camera_default_set(feed->cameras[feed->index]);
     if (feed->label)
     {
         char name[CASA_NAME + 8];
@@ -1161,7 +1187,7 @@ static void bar_feed_deleted(lv_event_t *event)
     heap_caps_free(bar);
 }
 
-/* Tap: grid = the camera full screen, bar = a new snapshot now. Long press: the next camera. */
+/* Tap: the camera full screen. Long press: the next camera, which becomes the default. */
 static void bar_camera_event(lv_event_t *event)
 {
     bar_view_t *bar = s_ui->bar;
@@ -1172,12 +1198,7 @@ static void bar_camera_event(lv_event_t *event)
         camera_switch(s_ui, &bar->feed, 1);
         return;
     }
-    if (bar->grid)
-    {
-        open_detail(s_ui, bar->feed.cameras[bar->feed.index]);
-        return;
-    }
-    bar->feed.now = true;
+    open_detail(s_ui, bar->feed.cameras[bar->feed.index]);
 }
 
 /*
@@ -1502,7 +1523,9 @@ static void bar_overview(casa_ui_t *ui)
     }
 
     /* ---- 5 camera: the newest snapshot, available cameras first */
-    camera_collect(ui, &bar->feed, NULL);
+    char saved[CASA_ID];
+    camera_default_get(saved, sizeof(saved));
+    camera_collect(ui, &bar->feed, saved[0] ? saved : NULL);
     if (bar->feed.count)
     {
         int32_t cw = landscape ? (full * 16 / 9) : full, ch = landscape ? full : full * 9 / 16;
