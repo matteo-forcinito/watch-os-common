@@ -24,6 +24,7 @@
 #define CASA_ENTITIES 256
 #define CASA_ID 256 /* Home Assistant entity IDs: up to 255 characters plus NUL. */
 #define CASA_NAME 40
+#define CASA_HEAT_STARTS 8
 
 typedef enum
 {
@@ -72,7 +73,15 @@ typedef struct
     char media_title[48], media_artist[40];
     uint32_t changed_ms;    /* local time of the last change */
     int64_t last_changed;   /* unix time from Home Assistant ("lc"), 0 = unknown */
+    uint32_t heat_starts[CASA_HEAT_STARTS]; /* climate: local ms of the last starts of heating (0 = none) */
+    uint8_t heat_head;
 } casa_entity_t;
+
+/* Starts of heating seen live within the last window_ms (short cycling check). */
+int casa_heat_starts(const casa_entity_t *e, uint32_t window_ms);
+/* A boiler that starts this often in an hour is cycling too fast. */
+#define CASA_SHORT_CYCLE_STARTS 4
+#define CASA_HOUR_MS (60u * 60u * 1000u)
 
 typedef struct
 {

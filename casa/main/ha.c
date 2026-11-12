@@ -523,6 +523,7 @@ static void apply_event(const cJSON *event)
             continue;
         const cJSON *plus = cJSON_GetObjectItem(item, "+"), *minus = cJSON_GetObjectItem(item, "-");
         const cJSON *state = cJSON_GetObjectItem(plus, "s"), *changed = cJSON_GetObjectItem(plus, "lc");
+        bool was_heating = e->kind == CASA_CLIMATE && !strcmp(e->hvac_action, "heating");
         if (cJSON_IsNumber(changed))
             e->last_changed = (int64_t)changed->valuedouble;
         if (cJSON_IsString(state))
@@ -534,6 +535,12 @@ static void apply_event(const cJSON *event)
         apply_attributes(e, cJSON_GetObjectItem(plus, "a"));
         remove_attributes(e, cJSON_GetObjectItem(minus, "a"));
         e->changed_ms = now_ms();
+        /* Only live changes count as starts: the first full state is a baseline. */
+        if (e->kind == CASA_CLIMATE && !was_heating && !strcmp(e->hvac_action, "heating"))
+        {
+            e->heat_starts[e->heat_head] = e->changed_ms ? e->changed_ms : 1;
+            e->heat_head = (uint8_t)((e->heat_head + 1) % CASA_HEAT_STARTS);
+        }
         finish_colour(e);
     }
     cJSON_ArrayForEach(item, cJSON_GetObjectItem(event, "r"))
@@ -1509,4 +1516,13 @@ void casa_home_stats(const casa_entity_t *list, int count, casa_home_stats_t *ou
     out->temperature = out->temperatures ? out->temperature / out->temperatures : NAN;
     out->humidity = out->humidities ? out->humidity / out->humidities : NAN;
     if (!out->meters_available) out->power_w = NAN;
+}
+
+int casa_heat_starts(const casa_entity_t *e, uint32_t window_ms)
+{
+    uint32_t now = now_ms();
+    int count = 0;
+    for (int i = 0; i < CASA_HEAT_STARTS; i++)
+        if (e->heat_starts[i] && now - e->heat_starts[i] < window_ms) count++;
+    return count;
 }

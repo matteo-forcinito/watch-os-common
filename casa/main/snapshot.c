@@ -36,7 +36,8 @@
 static const char *TAG = "casa_snap";
 
 #define SNAP_MAX_BYTES (768 * 1024)
-#define SNAP_MAX_SIDE 320
+#define SNAP_MAX_SIDE 480
+#define SNAP_MAX_PIXELS (480 * 272) /* 16:9 full screen on 480 px panels: two 255 KB frames in PSRAM */
 #define SNAP_POOL 8192
 
 typedef struct
@@ -101,7 +102,11 @@ static bool decode(const uint8_t *data, size_t size, uint16_t *out, int ow, int 
     JRESULT result = jd_prepare(&jd, jpeg_input, pool, SNAP_POOL, &d);
     if (result == JDR_OK)
     {
-        int sw = jd.width, sh = jd.height;
+        /* tjpgd scales by 1/2, 1/4, 1/8 while decoding: pick the smallest image
+         * still at least as large as the output (fewer pixels to convert). */
+        uint8_t scale = 0;
+        while (JD_USE_SCALE && scale < 3 && (jd.width >> (scale + 1)) >= (unsigned)ow && (jd.height >> (scale + 1)) >= (unsigned)oh) scale++;
+        int sw = jd.width >> scale, sh = jd.height >> scale;
         /* Cover: the largest centred source area with the output's ratio. */
         if ((int64_t)sw * oh > (int64_t)sh * ow)
         {
@@ -116,7 +121,7 @@ static bool decode(const uint8_t *data, size_t size, uint16_t *out, int ow, int 
         d.cx = (sw - d.cw) / 2;
         d.cy = (sh - d.ch) / 2;
         memset(out, 0, (size_t)ow * oh * sizeof(uint16_t));
-        result = jd_decomp(&jd, jpeg_output, 0);
+        result = jd_decomp(&jd, jpeg_output, scale);
     }
     heap_caps_free(pool);
     if (result != JDR_OK) snprintf(error, error_size, "Immagine non leggibile (%d)", (int)result);
@@ -244,7 +249,7 @@ done:
 
 bool casa_snapshot_request(const char *entity_id, int width, int height)
 {
-    if (width <= 0 || height <= 0 || width > SNAP_MAX_SIDE || height > SNAP_MAX_SIDE ||
+    if (width <= 0 || height <= 0 || width > SNAP_MAX_SIDE || height > SNAP_MAX_SIDE || width * height > SNAP_MAX_PIXELS ||
         strncmp(entity_id, "camera.", 7) != 0)
         return false;
     if (s_lock == NULL)
@@ -255,7 +260,7 @@ bool casa_snapshot_request(const char *entity_id, int width, int height)
     for (int i = 0; i < 2; i++)
     {
         if (s_frames[i] == NULL)
-            s_frames[i] = heap_caps_malloc(SNAP_MAX_SIDE * SNAP_MAX_SIDE * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+            s_frames[i] = heap_caps_malloc(SNAP_MAX_PIXELS * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
         if (s_frames[i] == NULL) return false;
     }
     if (atomic_exchange(&s_busy, true)) return false;

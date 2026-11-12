@@ -98,6 +98,7 @@ typedef struct
     casa_entity_t *list;
     casa_status_t status_now;
     void *bar; /* bar_view_t of the touch bar overview, freed with ui->content */
+    void *cam; /* camera_view_t of the camera full screen, freed with ui->content */
 } casa_ui_t;
 
 /* UI-thread-only context, scoped by render/timer/event dispatch. Each mounted
@@ -812,9 +813,25 @@ static void overview(casa_ui_t *ui)
 #define C_COOL 0x79D4D4
 #define C_HEAT 0xFF8A5B
 
+/* A live camera picture: the cameras to cycle through and the frame on screen. */
+#define CAMERA_MAX 8
+typedef struct
+{
+    char cameras[CAMERA_MAX][CASA_ID];
+    int count, index;
+    lv_obj_t *image, *label;
+    lv_image_dsc_t dsc;
+    int w, h;
+    uint32_t revision, asked_ms, every_ms;
+    bool now;
+} camera_feed_t;
+
 typedef struct
 {
     bool landscape;
+    bool grid;                /* square panels: two balanced columns of cards */
+    lv_obj_t *columns[2];
+    int32_t column_h[2];
     /* clock */
     lv_obj_t *clock, *date, *weather_icon_box, *weather_icon, *weather_text;
     int weather_code;
@@ -830,13 +847,10 @@ typedef struct
     char sensor_device[BAR_SENSORS][64];
     lv_obj_t *sensor_row[BAR_SENSORS], *sensor_name[BAR_SENSORS], *sensor_temp[BAR_SENSORS], *sensor_meta[BAR_SENSORS];
     /* camera */
-    char cameras[4][CASA_ID];
-    int camera_count, camera;
-    lv_obj_t *camera_card, *camera_image, *camera_label;
-    lv_image_dsc_t camera_dsc;
-    int camera_w, camera_h;
-    uint32_t snap_revision, snap_asked_ms;
-    bool snap_now;
+    camera_feed_t feed;
+    lv_obj_t *camera_card;
+    /* energy (grid only) */
+    lv_obj_t *energy_value, *energy_meta;
     /* media */
     char media[CASA_ID];
     lv_obj_t *media_card, *media_title, *media_artist, *media_button;
@@ -853,6 +867,13 @@ static bool bar_panel(void)
 {
     const board_info_t *b = ui_board_info();
     return !b->round && ((b->width <= 200 && b->height >= 2 * b->width) || (b->height <= 200 && b->width >= 2 * b->height));
+}
+
+/* Square desk panels (480x480): the same priority cards, in two columns. */
+static bool grid_panel(void)
+{
+    const board_info_t *b = ui_board_info();
+    return !b->round && !bar_panel() && b->width >= 400 && b->height >= 400;
 }
 
 static void bar_view_deleted(lv_event_t *event)
@@ -1037,71 +1058,271 @@ static void bar_media(lv_event_t *event)
     if (!casa_call("media_player", "media_play_pause", e.id, NULL)) ui_toast("Comando non inviato");
 }
 
-/* Tap: a new snapshot now. Long press: the next camera. */
-static void bar_camera_event(lv_event_t *event)
+/* ------------------------------------------------------------ cameras */
+
+/* The selected cameras, available ones first; `first` becomes the current one. */
+static void camera_collect(casa_ui_t *ui, camera_feed_t *feed, const char *first)
 {
-    bar_view_t *bar = s_ui->bar;
-    if (bar == NULL || !bar->camera_count || bar_dragged()) return;
-    if ((intptr_t)event_data(event) == 1 && bar->camera_count > 1)
-    {
-        bar->camera = (bar->camera + 1) % bar->camera_count;
-        lv_indev_wait_release(lv_indev_active());
-    }
-    bar->snap_now = true;
+    feed->count = feed->index = 0;
+#if !LV_USE_TJPGD
+    (void)ui; (void)first;
+    return;   /* no JPEG decoder in this build: no camera cards */
+#endif
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < ui->status_now.count && feed->count < CAMERA_MAX; i++)
+        {
+            const casa_entity_t *e = &ui->list[i];
+            if (e->kind == CASA_CAMERA && (e->known && e->available) == (pass == 0))
+            {
+                if (first && !strcmp(e->id, first)) feed->index = feed->count;
+                snprintf(feed->cameras[feed->count++], CASA_ID, "%s", e->id);
+            }
+        }
 }
 
-static void bar_camera_name(const bar_view_t *bar, const casa_ui_t *ui, char *out, size_t size)
+/* Room of the camera when it has one, else its name. */
+static void camera_name(const casa_ui_t *ui, const char *id, char *out, size_t size)
 {
-    snprintf(out, size, "%s", bar->cameras[bar->camera]);
+    snprintf(out, size, "%s", id);
     for (int i = 0; i < ui->status_now.count; i++)
-        if (!strcmp(ui->list[i].id, bar->cameras[bar->camera]))
+        if (!strcmp(ui->list[i].id, id))
             snprintf(out, size, "%s", ui->list[i].area[0] && strcmp(ui->list[i].area, "Senza stanza")
-                                           ? ui->list[i].area : ui->list[i].name);
+                                          ? ui->list[i].area : ui->list[i].name);
 }
 
-/* Every tick while the overview is on screen: show a new frame, ask for the next. */
-static void bar_camera_tick(casa_ui_t *ui)
+/* Every tick while the feed is on screen: show a new frame, ask for the next. */
+static void camera_feed_tick(casa_ui_t *ui, camera_feed_t *feed)
 {
-    bar_view_t *bar = ui->bar;
-    if (bar == NULL || !bar->camera_count || power_screen() != POWER_SCREEN_ON) return;
+    if (!feed->count || feed->image == NULL || power_screen() != POWER_SCREEN_ON) return;
     casa_snapshot_info_t info;
     casa_snapshot_info(&info);
+    const char *id = feed->cameras[feed->index];
     char name[CASA_NAME + 8], text[160];
-    if (info.revision != bar->snap_revision && !casa_snapshot_busy())
+    if (info.revision != feed->revision && !casa_snapshot_busy())
     {
-        bar->snap_revision = info.revision;
-        bar_camera_name(bar, ui, name, sizeof(name));
+        feed->revision = info.revision;
+        camera_name(ui, id, name, sizeof(name));
         const uint16_t *pixels = casa_snapshot_pixels();
-        bool ours = info.ok && pixels && !strcmp(info.id, bar->cameras[bar->camera]) &&
-                    info.width == bar->camera_w && info.height == bar->camera_h;
+        bool ours = info.ok && pixels && !strcmp(info.id, id) && info.width == feed->w && info.height == feed->h;
         if (ours)
         {
-            lv_image_cache_drop(&bar->camera_dsc);
-            memset(&bar->camera_dsc, 0, sizeof(bar->camera_dsc));
-            bar->camera_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-            bar->camera_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-            bar->camera_dsc.header.w = (uint32_t)info.width;
-            bar->camera_dsc.header.h = (uint32_t)info.height;
-            bar->camera_dsc.header.stride = (uint32_t)info.width * 2;
-            bar->camera_dsc.data = (const uint8_t *)pixels;
-            bar->camera_dsc.data_size = (uint32_t)info.width * info.height * 2;
-            lv_image_set_src(bar->camera_image, &bar->camera_dsc);
-            lv_obj_invalidate(bar->camera_image);
+            lv_image_cache_drop(&feed->dsc);
+            memset(&feed->dsc, 0, sizeof(feed->dsc));
+            feed->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+            feed->dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+            feed->dsc.header.w = (uint32_t)info.width;
+            feed->dsc.header.h = (uint32_t)info.height;
+            feed->dsc.header.stride = (uint32_t)info.width * 2;
+            feed->dsc.data = (const uint8_t *)pixels;
+            feed->dsc.data_size = (uint32_t)info.width * info.height * 2;
+            lv_image_set_src(feed->image, &feed->dsc);
+            lv_obj_invalidate(feed->image);
             time_t taken = (time_t)info.taken;
             struct tm local;
             localtime_r(&taken, &local);
-            snprintf(text, sizeof(text), LV_SYMBOL_VIDEO "  %s  %02d:%02d", name, local.tm_hour, local.tm_min);
+            if (feed->count > 1)
+                snprintf(text, sizeof(text), LV_SYMBOL_VIDEO "  %s  %02d:%02d:%02d   %d/%d", name, local.tm_hour, local.tm_min,
+                         local.tm_sec, feed->index + 1, feed->count);
+            else
+                snprintf(text, sizeof(text), LV_SYMBOL_VIDEO "  %s  %02d:%02d:%02d", name, local.tm_hour, local.tm_min, local.tm_sec);
         }
-        else snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %s: %s", name, info.error[0] ? info.error : "in attesa");
-        lv_label_set_text(bar->camera_label, text);
+        else if (info.error[0])
+            snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %s: %s", name, info.error);
+        else
+            snprintf(text, sizeof(text), LV_SYMBOL_VIDEO "  %s: carico...", name);
+        if (feed->label) lv_label_set_text(feed->label, text);
     }
-    bool due = bar->snap_now || (uint32_t)(lv_tick_get() - bar->snap_asked_ms) >= BAR_SNAP_EVERY_MS;
-    if (due && !casa_snapshot_busy() &&
-        casa_snapshot_request(bar->cameras[bar->camera], bar->camera_w, bar->camera_h))
+    bool due = feed->now || (uint32_t)(lv_tick_get() - feed->asked_ms) >= feed->every_ms;
+    if (due && !casa_snapshot_busy() && casa_snapshot_request(id, feed->w, feed->h))
     {
-        bar->snap_now = false;
-        bar->snap_asked_ms = lv_tick_get();
+        feed->now = false;
+        feed->asked_ms = lv_tick_get();
     }
+}
+
+static void camera_switch(casa_ui_t *ui, camera_feed_t *feed, int step)
+{
+    if (feed->count < 1) return;
+    feed->index = (feed->index + step + feed->count) % feed->count;
+    feed->now = true;
+    if (feed->label)
+    {
+        char name[CASA_NAME + 8];
+        camera_name(ui, feed->cameras[feed->index], name, sizeof(name));
+        lv_label_set_text_fmt(feed->label, LV_SYMBOL_VIDEO "  %s: carico...", name);
+    }
+}
+
+/* Views holding a feed: forget the cached frame before the memory goes back. */
+static void bar_feed_deleted(lv_event_t *event)
+{
+    bar_view_t *bar = lv_event_get_user_data(event);
+    lv_image_cache_drop(&bar->feed.dsc);
+    heap_caps_free(bar);
+}
+
+/* Tap: grid = the camera full screen, bar = a new snapshot now. Long press: the next camera. */
+static void bar_camera_event(lv_event_t *event)
+{
+    bar_view_t *bar = s_ui->bar;
+    if (bar == NULL || !bar->feed.count || bar_dragged()) return;
+    if ((intptr_t)event_data(event) == 1 && bar->feed.count > 1)
+    {
+        lv_indev_wait_release(lv_indev_active());
+        camera_switch(s_ui, &bar->feed, 1);
+        return;
+    }
+    if (bar->grid)
+    {
+        open_detail(s_ui, bar->feed.cameras[bar->feed.index]);
+        return;
+    }
+    bar->feed.now = true;
+}
+
+/*
+ * Camera full screen (the detail of a camera entity).
+ *
+ *   tall panels                         wide bars (640x172)
+ *   +------------------------+          +--+--------------+--------------+
+ *   | <   Telecamere         |          |< |              | name  time   |
+ *   | +--------------------+ |          |  |   picture    | [<][R][>]    |
+ *   | |      picture       | |          |  |    16:9      |              |
+ *   | +--------------------+ |          +--+--------------+--------------+
+ *   | name  12:04:31   1/3   |
+ *   | [ < ]  [ R ]  [ > ]    |  a new frame every 4 s while on screen
+ *   +------------------------+
+ */
+#define CAMERA_VIEW_EVERY_MS 4000
+
+typedef struct
+{
+    camera_feed_t feed;
+} camera_view_t;
+
+static void camera_view_event(lv_event_t *event)
+{
+    camera_view_t *cam = s_ui->cam;
+    if (cam == NULL) return;
+    int step = (int)(intptr_t)event_data(event);
+    if (step) camera_switch(s_ui, &cam->feed, step);
+    else cam->feed.now = true;
+}
+
+static void camera_view_deleted(lv_event_t *event)
+{
+    camera_view_t *cam = lv_event_get_user_data(event);
+    lv_image_cache_drop(&cam->feed.dsc);
+    heap_caps_free(cam);
+}
+
+static void camera_back(lv_event_t *event)
+{
+    (void)event;
+    if (!s_ui->embedded && s_ui == s_app_ui && s_ui->entry_view == DETAIL)
+    {
+        app_back();
+        return;
+    }
+    s_ui->view = s_ui->detail_parent == DETAIL ? OVERVIEW : s_ui->detail_parent;
+    render(s_ui);
+}
+
+static void camera_view(casa_ui_t *ui, const char *id)
+{
+    camera_view_t *cam = heap_caps_calloc(1, sizeof(camera_view_t), MALLOC_CAP_SPIRAM);
+    if (cam == NULL)
+    {
+        ui_text(ui_page(ui->content, NULL), "Memoria insufficiente", true);
+        return;
+    }
+    ui->cam = cam;
+    ui->pending = INT32_MIN;   /* no dial here */
+    lv_obj_add_event_cb(ui->content, camera_view_deleted, LV_EVENT_DELETE, cam);
+    casa_entities(ui->list, CASA_ENTITIES);
+    camera_feed_t *feed = &cam->feed;
+    camera_collect(ui, feed, id);
+    feed->every_ms = CAMERA_VIEW_EVERY_MS;
+    feed->now = true;
+
+    int32_t w = ui_board_info()->width, h = ui_board_info()->height - navigation_height();
+    bool wide = w > 2 * h;
+    lv_obj_t *page = plain(ui->content);
+    lv_obj_set_size(page, w, h);
+    lv_obj_set_style_bg_color(page, ui_color(C_BG), 0);
+    lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
+
+    lv_obj_t *back = panel_button(page, LV_SYMBOL_LEFT, C_OFF, camera_back, NULL);
+    lv_obj_set_size(back, 44, wide ? h - 12 : 44);
+    lv_obj_set_pos(back, 6, 6);
+
+    int32_t iw, ih, ix, iy;
+    if (wide)
+    {
+        ih = h - 12;
+        iw = ih * 16 / 9;
+        ix = 58;
+        iy = 6;
+    }
+    else
+    {
+        lv_obj_t *title = label(page, UI_FONT_BODY, C_INK, "Telecamere");
+        lv_obj_set_pos(title, 60, 16);
+        iw = w - 12;
+        ih = iw * 9 / 16;
+        int32_t room = h - 56 - 40 - 64;   /* header, caption, buttons */
+        if (ih > room) { ih = room > 32 ? room : 32; iw = ih * 16 / 9; }
+        iy = 56;
+    }
+    if (iw > 480) { iw = 480; ih = iw * 9 / 16; }
+    if (ih > 480) ih = 480;
+    if (!wide) ix = (w - iw) / 2;
+    lv_obj_t *frame = plain(page);
+    lv_obj_set_pos(frame, ix, iy);
+    lv_obj_set_size(frame, iw, ih);
+    lv_obj_set_style_radius(frame, 14, 0);
+    lv_obj_set_style_clip_corner(frame, true, 0);
+    lv_obj_set_style_bg_color(frame, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(frame, LV_OPA_COVER, 0);
+    lv_obj_set_clickable(frame, true);
+    add_event(frame, camera_view_event, LV_EVENT_CLICKED, (void *)0);
+    feed->w = iw;
+    feed->h = ih;
+    feed->image = lv_image_create(frame);
+    lv_obj_set_size(feed->image, iw, ih);
+    lv_obj_remove_flag(feed->image, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(feed->image, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    int32_t cx = wide ? ix + iw + 10 : 12, cw = wide ? w - cx - 8 : w - 24;
+    feed->label = label(page, UI_FONT_SMALL, C_INK, feed->count ? LV_SYMBOL_VIDEO "  Carico..." : "Nessuna telecamera selezionata");
+    lv_obj_set_pos(feed->label, cx, wide ? 10 : iy + ih + 10);
+    lv_obj_set_width(feed->label, cw);
+    lv_label_set_long_mode(feed->label, wide ? LV_LABEL_LONG_MODE_WRAP : LV_LABEL_LONG_MODE_DOTS);
+
+    lv_obj_t *buttons = plain(page);
+    lv_obj_set_size(buttons, cw, 56);
+    lv_obj_set_pos(buttons, cx, wide ? h - 62 : iy + ih + 44);
+    lv_obj_set_flex_flow(buttons, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(buttons, 8, 0);
+    static const char *const icons[] = {LV_SYMBOL_LEFT, LV_SYMBOL_REFRESH, LV_SYMBOL_RIGHT};
+    for (int i = 0; i < 3; i++)
+    {
+        if (i != 1 && feed->count < 2) continue;
+        lv_obj_t *button = panel_button(buttons, icons[i], i == 1 ? 0x3A2E18 : C_OFF, camera_view_event, (void *)(intptr_t)(i - 1));
+        lv_obj_set_height(button, 56);
+        lv_obj_set_flex_grow(button, 1);
+        lv_obj_set_width(button, 1);
+        lv_obj_set_style_text_font(lv_obj_get_child(button, 0), UI_FONT_ICON, 0);
+    }
+}
+
+/* Where the next card goes: the strip, or on squares the shorter column. */
+static lv_obj_t *bar_slot(bar_view_t *bar, lv_obj_t *strip, int32_t height)
+{
+    if (!bar->grid) return strip;
+    int c = bar->column_h[0] <= bar->column_h[1] ? 0 : 1;
+    bar->column_h[c] += height + 8;
+    return bar->columns[c];
 }
 
 static void bar_overview_update(casa_ui_t *ui);
@@ -1111,13 +1332,15 @@ static void bar_overview(casa_ui_t *ui)
     bar_view_t *bar = heap_caps_calloc(1, sizeof(bar_view_t), MALLOC_CAP_SPIRAM);
     if (bar == NULL) { overview(ui); return; }
     ui->bar = bar;
-    lv_obj_add_event_cb(ui->content, bar_view_deleted, LV_EVENT_DELETE, bar);
+    lv_obj_add_event_cb(ui->content, bar_feed_deleted, LV_EVENT_DELETE, bar);
     casa_entities(ui->list, CASA_ENTITIES);
     int count = ui->status_now.count;
 
-    int32_t w = ui_board_info()->width, h = ui_board_info()->height;
-    bool landscape = w > h;
+    bool grid = !bar_panel();
+    int32_t w = ui_board_info()->width, h = ui_board_info()->height - (grid ? navigation_height() : 0);
+    bool landscape = !grid && w > h;
     bar->landscape = landscape;
+    bar->grid = grid;
     bar->weather_code = -1;
     const int32_t gap = 8, pad = 6;
 
@@ -1125,18 +1348,29 @@ static void bar_overview(casa_ui_t *ui)
     lv_obj_set_size(strip, w, h);
     lv_obj_set_style_pad_all(strip, pad, 0);
     lv_obj_set_style_pad_gap(strip, gap, 0);
-    lv_obj_set_flex_flow(strip, landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_flow(strip, landscape || grid ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollable(strip, true);
     lv_obj_set_scroll_dir(strip, landscape ? LV_DIR_HOR : LV_DIR_VER);
     lv_obj_set_scrollbar_mode(strip, LV_SCROLLBAR_MODE_OFF);
-    int32_t full = landscape ? h - 2 * pad : w - 2 * pad;   /* card thickness across the strip */
+    /* card thickness across the strip; on squares the width of a column */
+    int32_t full = landscape ? h - 2 * pad : grid ? (w - 2 * pad - gap) / 2 : w - 2 * pad;
+    if (grid)
+        for (int c = 0; c < 2; c++)
+        {
+            lv_obj_t *column = plain(strip);
+            lv_obj_set_size(column, full, LV_SIZE_CONTENT);
+            lv_obj_set_flex_flow(column, LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_style_pad_row(column, gap, 0);
+            lv_obj_add_flag(column, LV_OBJ_FLAG_EVENT_BUBBLE);
+            bar->columns[c] = column;
+        }
     lv_obj_add_event_cb(strip, bar_touch, LV_EVENT_PRESSED, bar);
     lv_obj_add_event_cb(strip, bar_touch, LV_EVENT_PRESSING, bar);
 
     /* ---- 1 clock, date, weather */
     {
         int32_t cw = landscape ? 176 : full, ch = landscape ? full : 112;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_COOL);
+        lv_obj_t *card = bar_card(bar_slot(bar, strip, ch), cw, ch, C_COOL);
         bar->clock = bar_text(card, landscape ? ui_font_headline : ui_font_title, C_INK, 14, 8, 0);
         bar->date = bar_text(card, UI_FONT_SMALL, C_MIST, 15, landscape ? 54 : 44, cw - 30);
         bar->weather_icon_box = plain(card);
@@ -1159,7 +1393,7 @@ static void bar_overview(casa_ui_t *ui)
     if (quick_entity(ui, CASA_ALARM))
     {
         int32_t cw = landscape ? 180 : full, ch = landscape ? full : 112;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_ALARM_ON);
+        lv_obj_t *card = bar_card(bar_slot(bar, strip, ch), cw, ch, C_ALARM_ON);
         bar->alarm_card = card;
         lv_obj_set_clickable(card, true);
         add_event(card, bar_alarm, LV_EVENT_SHORT_CLICKED, (void *)0);
@@ -1175,7 +1409,7 @@ static void bar_overview(casa_ui_t *ui)
     if (quick_entity(ui, CASA_CLIMATE))
     {
         int32_t cw = landscape ? 190 : full, ch = landscape ? full : 124;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_HEAT);
+        lv_obj_t *card = bar_card(bar_slot(bar, strip, ch), cw, ch, C_HEAT);
         bar->thermo_card = card;
         lv_obj_set_clickable(card, true);
         add_event(card, bar_thermostat, LV_EVENT_CLICKED, NULL);
@@ -1205,7 +1439,7 @@ static void bar_overview(casa_ui_t *ui)
         int32_t row_h = 28;
         int32_t cw = landscape ? 150 + (rows > 3 ? 150 : 0) : full;
         int32_t ch = landscape ? full : 80 + rows * row_h + 26;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_COOL);
+        lv_obj_t *card = bar_card(bar_slot(bar, strip, ch), cw, ch, C_COOL);
         int32_t half = landscape ? 66 : (cw - 28) / 2;
         lv_obj_t *t1 = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 8, half);
         lv_label_set_text(t1, "Fuori");
@@ -1268,17 +1502,11 @@ static void bar_overview(casa_ui_t *ui)
     }
 
     /* ---- 5 camera: the newest snapshot, available cameras first */
-    for (int pass = 0; pass < 2; pass++)
-        for (int i = 0; i < count && bar->camera_count < 4; i++)
-        {
-            const casa_entity_t *e = &ui->list[i];
-            if (e->kind == CASA_CAMERA && (e->known && e->available) == (pass == 0))
-                snprintf(bar->cameras[bar->camera_count++], CASA_ID, "%s", e->id);
-        }
-    if (bar->camera_count)
+    camera_collect(ui, &bar->feed, NULL);
+    if (bar->feed.count)
     {
         int32_t cw = landscape ? (full * 16 / 9) : full, ch = landscape ? full : full * 9 / 16;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_ALARM_WAIT);
+        lv_obj_t *card = bar_card(bar_slot(bar, strip, ch), cw, ch, C_ALARM_WAIT);
         bar->camera_card = card;
         lv_obj_set_style_clip_corner(card, true, 0);
         lv_obj_set_style_bg_color(card, lv_color_black(), 0);
@@ -1286,22 +1514,24 @@ static void bar_overview(casa_ui_t *ui)
         lv_obj_set_clickable(card, true);
         add_event(card, bar_camera_event, LV_EVENT_SHORT_CLICKED, (void *)0);
         add_event(card, bar_camera_event, LV_EVENT_LONG_PRESSED, (void *)1);
-        bar->camera_w = cw - 2;
-        bar->camera_h = ch - 2;
-        bar->camera_image = lv_image_create(card);
-        lv_obj_set_pos(bar->camera_image, 1, 1);
-        lv_obj_set_size(bar->camera_image, bar->camera_w, bar->camera_h);
-        lv_obj_add_flag(bar->camera_image, LV_OBJ_FLAG_EVENT_BUBBLE);
-        lv_obj_remove_flag(bar->camera_image, LV_OBJ_FLAG_CLICKABLE);
+        camera_feed_t *feed = &bar->feed;
+        feed->w = cw - 2;
+        feed->h = ch - 2;
+        feed->every_ms = BAR_SNAP_EVERY_MS;
+        feed->image = lv_image_create(card);
+        lv_obj_set_pos(feed->image, 1, 1);
+        lv_obj_set_size(feed->image, feed->w, feed->h);
+        lv_obj_add_flag(feed->image, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_remove_flag(feed->image, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t *veil = plain(card);   /* a dark band under the caption, readable over any picture */
         lv_obj_set_size(veil, cw, 30);
         lv_obj_align(veil, LV_ALIGN_BOTTOM_MID, 0, 0);
         lv_obj_set_style_bg_color(veil, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(veil, LV_OPA_50, 0);
         lv_obj_add_flag(veil, LV_OBJ_FLAG_EVENT_BUBBLE);
-        bar->camera_label = bar_text(card, UI_FONT_SMALL, C_INK, 10, ch - 26, cw - 20);
-        lv_label_set_text(bar->camera_label, LV_SYMBOL_VIDEO "  Carico...");
-        bar->snap_now = true;
+        feed->label = bar_text(card, UI_FONT_SMALL, C_INK, 10, ch - 26, cw - 20);
+        lv_label_set_text(feed->label, LV_SYMBOL_VIDEO "  Carico...");
+        feed->now = true;
     }
 
     /* ---- 6 media: only while something plays or is paused */
@@ -1314,7 +1544,7 @@ static void bar_overview(casa_ui_t *ui)
     if (bar->media[0])
     {
         int32_t cw = landscape ? 220 : full, ch = landscape ? full : 96;
-        lv_obj_t *card = bar_card(strip, cw, ch, 0xE36FB0);
+        lv_obj_t *card = bar_card(bar_slot(bar, strip, ch), cw, ch, 0xE36FB0);
         bar->media_card = card;
         bar->media_title = bar_text(card, UI_FONT_SMALL, C_INK, 14, 10, cw - 78);
         bar->media_artist = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 34, cw - 78);
@@ -1323,10 +1553,25 @@ static void bar_overview(casa_ui_t *ui)
         lv_obj_align(bar->media_button, landscape ? LV_ALIGN_BOTTOM_RIGHT : LV_ALIGN_RIGHT_MID, -10, landscape ? -10 : 0);
     }
 
+    /* ---- energy (squares): live power of the meters; tap = the meters */
+    casa_home_stats_t stats;
+    casa_home_stats(ui->list, count, &stats);
+    if (grid && stats.meters)
+    {
+        int32_t cw = full, ch = 96;
+        lv_obj_t *card = bar_card(bar_slot(bar, strip, ch), cw, ch, 0x83BCEE);
+        lv_obj_set_clickable(card, true);
+        add_event(card, bar_alarm, LV_EVENT_CLICKED, (void *)3);
+        lv_obj_t *title = bar_text(card, UI_FONT_SMALL, C_MIST, 14, 8, cw - 28);
+        lv_label_set_text(title, LV_SYMBOL_CHARGE "  Consumi");
+        bar->energy_value = bar_text(card, UI_FONT_LARGE, C_INK, 14, 30, cw - 28);
+        bar->energy_meta = bar_text(card, UI_FONT_SMALL, C_MIST, 14, ch - 28, cw - 28);
+    }
+
     /* ---- 7 every device, with what needs attention */
     {
         int32_t cw = landscape ? 150 : full, ch = landscape ? full : 64;
-        lv_obj_t *card = bar_card(strip, cw, ch, C_MIST);
+        lv_obj_t *card = bar_card(bar_slot(bar, strip, ch), cw, ch, C_MIST);
         bar->devices_card = card;
         lv_obj_set_clickable(card, true);
         add_event(card, bar_show_all, LV_EVENT_CLICKED, NULL);
@@ -1442,7 +1687,12 @@ static void bar_overview_update(casa_ui_t *ui)
         lv_label_set_text(bar->thermo_target, text);
         bar_degrees(climate->current_temp, value, sizeof(value));
         snprintf(text, sizeof(text), "Ambiente %s", value);
+        int starts = casa_heat_starts(climate, CASA_HOUR_MS);
+        bool cycling = usable && starts >= CASA_SHORT_CYCLE_STARTS;
+        if (cycling) snprintf(text, sizeof(text), LV_SYMBOL_WARNING " %d accensioni/ora", starts);
         lv_label_set_text(bar->thermo_room, text);
+        lv_obj_set_style_text_color(bar->thermo_room, ui_color(cycling ? C_ALARM_WAIT : C_MIST), 0);
+        if (cycling) bar_card_tint(bar->thermo_card, C_ALARM_WAIT, true);
     }
 
     /* 4 climate */
@@ -1519,6 +1769,23 @@ static void bar_overview_update(casa_ui_t *ui)
     else snprintf(text, sizeof(text), "%d offline", offline);
     lv_label_set_text(bar->devices_text, text);
     lv_obj_set_style_text_color(bar->devices_text, ui_color(low || offline ? C_ALARM_WAIT : C_OK), 0);
+
+    /* energy */
+    if (bar->energy_value)
+    {
+        if (stats.meters_available && !isnan(stats.power_w))
+        {
+            snprintf(text, sizeof(text), "%.0f W", (double)stats.power_w);
+            lv_label_set_text(bar->energy_value, text);
+            snprintf(text, sizeof(text), "%d/%d misuratori online", stats.meters_available, stats.meters);
+        }
+        else
+        {
+            lv_label_set_text(bar->energy_value, "--");
+            snprintf(text, sizeof(text), "%d misurator%c offline", stats.meters, stats.meters == 1 ? 'e' : 'i');
+        }
+        lv_label_set_text(bar->energy_meta, text);
+    }
 
     /* 6 media */
     casa_entity_t media;
@@ -2372,6 +2639,11 @@ static void climate_detail(casa_ui_t *ui, const casa_entity_t *entity)
 static void detail(casa_ui_t *ui)
 {
     casa_entity_t e;
+    if (casa_entity(ui->selected, &e) && e.kind == CASA_CAMERA && !ui_board_info()->round)
+    {
+        camera_view(ui, e.id);
+        return;
+    }
     if (casa_entity(ui->selected, &e) && e.kind == CASA_CLIMATE && bar_panel())
     {
         climate_bar(ui, &e);
@@ -2534,6 +2806,11 @@ static void detail_update(casa_ui_t *ui)
                                                           : (now_ms() - e.changed_ms) / 60000;
     if (!enabled)
         lv_label_set_text(ui->d_extra, !ui->status_now.connected ? "Home Assistant scollegato" : !e.known ? "In attesa del primo stato da HA" : "Questo stato arriva da Home Assistant. Verifica il dispositivo o l'integrazione in HA.");
+    else if (e.kind == CASA_CLIMATE && casa_heat_starts(&e, CASA_HOUR_MS) >= CASA_SHORT_CYCLE_STARTS)
+    {
+        snprintf(text, sizeof(text), LV_SYMBOL_WARNING " Caldaia: %d accensioni nell'ultima ora", casa_heat_starts(&e, CASA_HOUR_MS));
+        lv_label_set_text(ui->d_extra, text);
+    }
     else if (e.known)
     {
         if (ago == 0)
@@ -2624,6 +2901,7 @@ static void render(casa_ui_t *ui)
     memset(ui->quick_values, 0, sizeof(ui->quick_values));
     ui->tile_count = 0;
     ui->bar = NULL; /* freed by the delete event of the old content */
+    ui->cam = NULL;
     ui->content = plain(ui->screen);
     lv_obj_set_size(ui->content, ui_board_info()->width, ui_board_info()->height - navigation_height());
     lv_obj_set_style_bg_color(ui->content, ui_color(C_BG), 0);
@@ -2631,7 +2909,7 @@ static void render(casa_ui_t *ui)
     lv_obj_move_to_index(ui->content, 0);
     casa_status(&ui->status_now);
     bool bar_home = ui->view == OVERVIEW && bar_panel();
-    if (bar_home)
+    if (bar_home || (ui->view == OVERVIEW && grid_panel()))
         bar_overview(ui);
     else if (ui->view == OVERVIEW)
         overview(ui);
@@ -2728,9 +3006,11 @@ static void tick(lv_timer_t *timer)
         casa_web_start();
 #endif
     update(ui);
-    if (ui->view == OVERVIEW && ui->bar && lv_screen_active() == lv_obj_get_screen(ui->screen) &&
-        lv_obj_is_visible(ui->screen))
-        bar_camera_tick(ui);
+    bool visible = lv_screen_active() == lv_obj_get_screen(ui->screen) && lv_obj_is_visible(ui->screen);
+    if (visible && ui->view == OVERVIEW && ui->bar)
+        camera_feed_tick(ui, &((bar_view_t *)ui->bar)->feed);
+    else if (visible && ui->view == DETAIL && ui->cam)
+        camera_feed_tick(ui, &((camera_view_t *)ui->cam)->feed);
     s_ui = previous;
 }
 

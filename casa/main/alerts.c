@@ -19,6 +19,7 @@
 #include "core/power.h"
 #include "core/state.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "hardware/board.h"
 #include "nvs.h"
 #include "services/notify.h"
@@ -39,6 +40,7 @@ static bool s_baseline;
 static char s_climate_action[16], s_alarm_state[24];
 static char s_alarm_name[CASA_NAME];
 static int s_enabled = -1;      /* -1 = not read yet */
+static uint32_t s_cycling_told; /* ms of the last short cycling warning, 0 = never */
 
 bool casa_alerts_enabled(void)
 {
@@ -195,7 +197,20 @@ static void watch(void)
     if (s_baseline)
     {
         bool was_heating = !strcmp(s_climate_action, "heating"), heating = !strcmp(climate_action, "heating");
-        if (climate && heating != was_heating)
+        int starts = climate ? casa_heat_starts(climate, CASA_HOUR_MS) : 0;
+        if (climate && heating != was_heating && starts >= CASA_SHORT_CYCLE_STARTS)
+        {
+            /* A boiler cycling too fast: one warning an hour instead of a stream of on/off. */
+            uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+            if (!s_cycling_told || now - s_cycling_told >= CASA_HOUR_MS)
+            {
+                char body[CASA_NAME + 48];
+                snprintf(body, sizeof(body), "%d accensioni nell'ultima ora - %s", starts, climate->name);
+                tell("Caldaia: cicli troppo brevi", body);
+                s_cycling_told = now ? now : 1;
+            }
+        }
+        else if (climate && heating != was_heating)
             tell(heating ? "Caldaia accesa" : "Caldaia spenta", climate->name);
         if (alarm && strcmp(alarm_state, s_alarm_state))
         {

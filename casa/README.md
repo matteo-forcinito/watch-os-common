@@ -33,6 +33,18 @@ Le priorità derivano dalle entità selezionate e privilegiano quelle disponibil
 
 Selezionare anche `alarm_control_panel.…` per avere **Alarmo** in home. Un tocco sul pulsante passa da disinserito a fuori casa e viceversa; negli altri stati si usa il menu. Le modalità sono filtrate con `supported_features`. Se Home Assistant richiede un codice per l’operazione (`code_format` / `code_arm_required`), viene richiesto al momento del comando; annullare non invia nulla. Il PIN non viene conservato in localStorage. Il servizio resta soggetto alla validazione di HA e lo stato cambia solo dopo la risposta live. Riferimenti: [Alarm control panel](https://www.home-assistant.io/integrations/alarm_control_panel/) e [Alarmo](https://github.com/nielsfaber/alarmo).
 
+## Home sui pannelli quadrati e sulle barre
+
+Sui pannelli quadrati da almeno 400 pixel (Guition 480×480) la home usa le stesse card a priorità della barra LCD 3.49, disposte su due colonne bilanciate e scorrevoli: ora e meteo, Alarmo con l'ultimo movimento, termostato (cosa sta facendo, obiettivo, ambiente), temperature interne/esterne con una riga per termometro, telecamera, consumi, media in riproduzione e dispositivi che richiedono attenzione.
+
+## Telecamere
+
+Le entità `camera.…` selezionate mostrano un'istantanea da `/api/camera_proxy` della stessa istanza HA, decodificata sul pannello (tjpgd) e ritagliata al formato della card. Nella home l'immagine si aggiorna ogni 15 s; una pressione prolungata passa alla telecamera successiva. Sui pannelli quadrati un tocco apre la vista a schermo intero (anche da liste e dettagli): fotogramma fino a 480 px, aggiornamento ogni 4 s finché è visibile, pulsanti precedente/aggiorna/successiva e ora dell'ultimo fotogramma. Fino a otto telecamere, disponibili per prime. Non è uno streaming video: è una sequenza di istantanee, che non tiene aperte connessioni quando la vista è chiusa o lo schermo è spento.
+
+## Termostato e caldaia
+
+Casa non regola la temperatura: invia a Home Assistant solo obiettivo e modalità del termostato scelto, quindi non entra mai in conflitto con il regolatore. Il regolatore deve essere uno solo: due termostati che comandano lo stesso relè della caldaia producono accensioni e spegnimenti continui. Casa conta le accensioni ricevute in diretta da HA (`hvac_action` che passa a `heating`): con quattro o più nell'ultima ora la card e il dettaglio del termostato lo segnalano in arancione, e gli avvisi sostituiscono le notifiche accesa/spenta con un solo avviso «cicli troppo brevi» all'ora.
+
 ## Verifica
 
 Il collaudo del BSP registra separatamente compilazione, flash, simulazione del protocollo e prove sull'istanza reale. Un test con server simulato non certifica l'accesso alla propria istanza Nabu Casa: per quello occorrono URL e token inseriti nella pagina di configurazione.
