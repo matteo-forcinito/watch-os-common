@@ -17,6 +17,15 @@ menu "Watch OS services"
             handover on supported hardware. Disabled in production by default.
 
 
+    config WATCH_TIME_SYNC_HOLDS_SPLASH
+        bool "First clock sync keeps the boot splash on screen"
+        default y
+        help
+            With no valid clock at boot the first NTP sync holds the splash so
+            the home appears with the right time. Boards without an RTC that
+            keep Wi-Fi on (mains panels) turn it off: the home appears at once
+            and shows the time as soon as the sync lands.
+
     config WATCH_UPDATE_MANIFEST_URL
         string "Online update: default manifest URL"
         default ""

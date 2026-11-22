@@ -86,6 +86,8 @@ typedef struct
 } face_t;
 
 static face_t s_face;
+/* The date font chosen by the layout, remembered before "ORA NON IMPOSTATA" shrinks it. */
+static const lv_font_t *s_date_font;
 
 /* ------------------------------------------------------- app shortcuts */
 
@@ -206,6 +208,10 @@ static void update_time(lv_observer_t *observer, lv_subject_t *subject)
             lv_label_set_text(s_face.hours, text);
             lv_label_set_text(s_face.minutes, colon + 1);
         }
+        if (s_date_font != NULL)
+        {
+            lv_obj_set_style_text_font(s_face.date, s_date_font, 0);   /* the layout's own size */
+        }
         lv_label_set_text_fmt(s_face.date, "%s %d %s", clock_weekday_name(now.tm_wday, true), now.tm_mday,
                               clock_month_name(now.tm_mon, true));
     }
@@ -213,6 +219,12 @@ static void update_time(lv_observer_t *observer, lv_subject_t *subject)
     {
         lv_label_set_text(s_face.hours, "--");
         lv_label_set_text(s_face.minutes, "--");
+        /* Longer than any date: the small font keeps it inside narrow panels (320 px). */
+        if (s_date_font == NULL)
+        {
+            s_date_font = lv_obj_get_style_text_font(s_face.date, 0);
+        }
+        lv_obj_set_style_text_font(s_face.date, UI_FONT_SMALL, 0);
         lv_label_set_text(s_face.date, "ORA NON IMPOSTATA");
     }
 }
@@ -666,6 +678,7 @@ static void build_round(lv_obj_t *root)
     lv_obj_set_style_text_color(s_face.status_battery, lv_color_hex(UI_COLOR_TEXT_DIM), 0);
 
     s_face.date = lv_label_create(root);
+    s_date_font = NULL;
     lv_obj_set_style_text_font(s_face.date, small ? UI_FONT_BODY : UI_FONT_LARGE, 0);
     lv_obj_set_style_text_color(s_face.date, lv_color_hex(TK_TEXT_2), 0);
     lv_obj_set_style_text_letter_space(s_face.date, small ? 2 : 3, 0);
@@ -729,6 +742,7 @@ void watchface_create(lv_obj_t *parent)
 
     /* date + time */
     s_face.date = lv_label_create(root);
+    s_date_font = NULL;
     lv_obj_set_style_text_font(s_face.date, UI_FONT_LARGE, 0);
     lv_obj_set_style_text_color(s_face.date, lv_color_hex(TK_TEXT_2), 0);
     lv_obj_set_style_text_letter_space(s_face.date, 3, 0);

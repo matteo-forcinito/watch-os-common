@@ -147,7 +147,11 @@ void time_sync_init(void)
     /* Clock never set (new board, RTC battery flat): try right away. */
     if (!clock_is_valid() && wifi_known_any())
     {
+#if CONFIG_WATCH_TIME_SYNC_HOLDS_SPLASH
         start_task(true, true);
+#else
+        start_task(true, false);
+#endif
     }
 }
 

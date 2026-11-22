@@ -27,6 +27,7 @@ static lv_obj_t *s_classic, *s_notifications;
 static lv_obj_t *s_casa_home, *s_casa_all;
 static lv_obj_t *s_list;           /* homepage "Lista app" */
 static bool s_casa_mode, s_list_mode;
+static void (*s_face_create)(lv_obj_t *parent);   /* board home face, NULL = classic */
 #if CONFIG_APPKIT_HOSTED
 static void *s_home_component, *s_all_component;
 #endif
@@ -206,6 +207,11 @@ static void on_knob(lv_event_t *event)
     }
 }
 
+void apps_set_home_face(void (*create)(lv_obj_t *parent))
+{
+    s_face_create = create;
+}
+
 void shell_create(void)
 {
     lv_obj_t *home = lv_obj_create(NULL);
@@ -234,7 +240,8 @@ void shell_create(void)
     lv_obj_set_hidden(s_list, true);
     lv_obj_set_hidden(s_casa_home, true);
     lv_obj_set_hidden(s_casa_all, true);
-    watchface_create(s_classic);
+    if (s_face_create != NULL) s_face_create(s_classic);
+    else watchface_create(s_classic);
     control_center_create(control);
     notifications_create(s_notifications);
     launcher_create(apps);

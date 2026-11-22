@@ -71,6 +71,47 @@ typedef struct
 } player_t;
 
 static player_t s_player = {.state = RADIO_STATE_IDLE, .net_done = true, .dec_done = true};
+
+/*
+ * PSRAM stream buffer, created statically on purpose: ESP-IDF 6.1's
+ * vStreamBufferDeleteWithCaps() deletes it with vSemaphoreDelete(), which reads
+ * the stream buffer as a queue and may vPortFree() the control block before
+ * heap_caps_free() frees it again (double free, seen on the ESP32-P4).
+ */
+static StreamBufferHandle_t psram_stream_create(size_t size)
+{
+    StaticStreamBuffer_t *control = heap_caps_calloc(1, sizeof(StaticStreamBuffer_t), MALLOC_CAP_SPIRAM);
+    uint8_t *storage = heap_caps_malloc(size + 1, MALLOC_CAP_SPIRAM);
+    StreamBufferHandle_t sb = NULL;
+
+    if (control != NULL && storage != NULL)
+    {
+        sb = xStreamBufferCreateStatic(size, 1, storage, control);
+    }
+
+    if (sb == NULL)
+    {
+        heap_caps_free(control);
+        heap_caps_free(storage);
+    }
+
+    return sb;
+}
+
+static void psram_stream_delete(StreamBufferHandle_t sb)
+{
+    uint8_t *storage = NULL;
+    StaticStreamBuffer_t *control = NULL;
+
+    if (sb == NULL || xStreamBufferGetStaticBuffers(sb, &storage, &control) != pdTRUE)
+    {
+        return;
+    }
+
+    vStreamBufferDelete(sb);   /* static: frees nothing itself */
+    heap_caps_free(control);
+    heap_caps_free(storage);
+}
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_codecs_registered = false;
 static bool s_codec_logs = false;   /* QA: keep the codec libraries' error lines */
@@ -956,7 +997,7 @@ esp_err_t radio_player_start(const char *url, int volume, bool play_when_ready)
 
     if (s_player.buffer != NULL)
     {
-        vStreamBufferDeleteWithCaps(s_player.buffer);
+        psram_stream_delete(s_player.buffer);
         s_player.buffer = NULL;
     }
 
@@ -976,7 +1017,7 @@ esp_err_t radio_player_start(const char *url, int volume, bool play_when_ready)
     for (size_t i = 0; i < sizeof(quiet) / sizeof(quiet[0]); i++)
         esp_log_level_set(quiet[i], s_codec_logs ? ESP_LOG_ERROR : ESP_LOG_NONE);
 
-    s_player.buffer = xStreamBufferCreateWithCaps(BUFFER_BYTES, 1, MALLOC_CAP_SPIRAM);
+    s_player.buffer = psram_stream_create(BUFFER_BYTES);
 
     if (s_player.buffer == NULL)
     {
@@ -1040,7 +1081,7 @@ void radio_player_stop(void)
         return;   /* the buffer is freed by the next start, once they are done */
     }
 
-    vStreamBufferDeleteWithCaps(s_player.buffer);
+    psram_stream_delete(s_player.buffer);
     s_player.buffer = NULL;
     s_player.state = RADIO_STATE_IDLE;
     publish();

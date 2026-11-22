@@ -1,6 +1,8 @@
 #ifndef APPS_APPS_H
 #define APPS_APPS_H
 
+#include "lvgl.h"
+
 /*
  * The built-in apps and the watch shell (home screen).
  *
@@ -19,6 +21,14 @@
 
 /* Register every built-in app and build the home screen. LVGL lock held. */
 void apps_init(void);
+
+/*
+ * A board can replace the classic watch face in the middle of the home tiles
+ * with its own (e.g. a phone-like home on a large panel). The control center,
+ * notifications, launcher and now-playing tiles stay. Call before apps_init();
+ * the always-on face is unchanged.
+ */
+void apps_set_home_face(void (*create)(lv_obj_t *parent));
 
 /*
  * Show one page of the home screen (lvgl task): col/row in the 3 x 3 grid,
