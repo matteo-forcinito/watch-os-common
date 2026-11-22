@@ -42,6 +42,7 @@ static uint8_t s_own_addr_type = 0;
 static bool s_running = false;
 static bool s_connected = false;
 
+void hid_ble_forget(void);
 #define HOSTS_NVS "hid_hosts" /* chosen host and host names, keyed by address */
 #define NO_HOST 0xFF          /* ble_addr_t type: no host chosen, any paired one connects */
 #define BONDS_MAX MYNEWT_VAL(BLE_STORE_MAX_BONDS)
@@ -341,7 +342,11 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_ENC_CHANGE:
     {
-        ESP_LOGI(TAG, "Encryption: %s", event->enc_change.status == 0 ? "on" : "failed");
+        if (event->enc_change.status == 0)
+            ESP_LOGI(TAG, "Encryption: on");
+        else /* 0x2xx controller (HCI), 0x5xx our security manager, 0x6xx the host's */
+            ESP_LOGW(TAG, "Encryption failed: status 0x%x (bonding %d)", event->enc_change.status,
+                     ble_hs_cfg.sm_bonding);
         struct ble_gap_conn_desc desc;
         if (event->enc_change.status != 0 || ble_gap_conn_find(event->enc_change.conn_handle, &desc) != 0)
             break;
@@ -364,6 +369,46 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     return 0;
 }
 
+/*
+ * Hosts bond with our controller address. If it changed (radio co-processor
+ * updated or replaced) every stored pairing is void: the host sees a new
+ * device and pairs from scratch, which the "known host only" policy would
+ * refuse. Forget them so the next host is accepted at once.
+ */
+static void check_own_address(void)
+{
+    uint8_t now[6] = {0};
+    uint8_t saved[6] = {0};
+    size_t size = sizeof(saved);
+    nvs_handle_t nvs;
+
+    if (ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, now, NULL) != 0 || nvs_open(HOSTS_NVS, NVS_READWRITE, &nvs) != ESP_OK)
+    {
+        return;
+    }
+
+    bool known = nvs_get_blob(nvs, "own", saved, &size) == ESP_OK && size == sizeof(saved);
+    nvs_close(nvs);
+
+    if (known && memcmp(saved, now, sizeof(now)) == 0)
+    {
+        return;
+    }
+
+    if (known)
+    {
+        ESP_LOGW(TAG, "Bluetooth address changed: old pairings removed, pair the host again");
+        hid_ble_forget();   /* erases this namespace too */
+    }
+
+    if (nvs_open(HOSTS_NVS, NVS_READWRITE, &nvs) == ESP_OK)
+    {
+        nvs_set_blob(nvs, "own", now, sizeof(now));
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
+
 static void hidd_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
@@ -374,6 +419,7 @@ static void hidd_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     {
     case ESP_HIDD_START_EVENT:
         ble_hs_util_ensure_addr(0);
+        check_own_address();
         ble_hs_id_infer_auto(0, &s_own_addr_type);
         advertise();
         hid_link_set_state(HID_LINK_WAITING);
