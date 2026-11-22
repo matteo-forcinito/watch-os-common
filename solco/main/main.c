@@ -287,7 +287,10 @@ void app_main(void)
     power_set_button_handler(solco_ui_button);
     ESP_ERROR_CHECK(solco_engine_start());
     devcon_start();
+#if !SOLCO_EMBEDDED
+    /* External app only: built into a firmware (ESP32-P4) there is no slot image to publish. */
     sys_post(solco_install_launcher, NULL);
+#endif
     sys_heap_log("solco ready");
     ESP_LOGI("solco", "Ready: %s; dual-deck PCM16 44100 Hz; %d ch; volume 0%%", board_info()->name,
              SOLCO_OUTPUT_CHANNELS);

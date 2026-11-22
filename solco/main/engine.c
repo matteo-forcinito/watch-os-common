@@ -26,6 +26,10 @@ void solco_stream_delay(int16_t *stereo, int frames);
 #include "mix.h"
 #include "prepare.h"
 #include "studio_motion.h"
+#if SOLCO_STUDIO_PRO
+#include "studio_pro.h"
+#define TAG_LOG_PRO "solco"
+#endif
 #include "vinyl.h"
 #include "wav.h"
 #include <dirent.h>
@@ -225,7 +229,7 @@ static void touched(void);
 
 bool solco_studio_submit_at(studio_event_t event, int64_t time_us)
 {
-    if (event.type < STUDIO_HIT || event.type > STUDIO_KIT ||
+    if (event.type < STUDIO_HIT || event.type > STUDIO_STEP ||
         (event.type == STUDIO_HIT &&
          (event.value >= STUDIO_BANKS || !event.velocity || event.velocity > 127)))
     {
@@ -1211,15 +1215,34 @@ static void audio_task(void *arg)
         {
             apply_command(&cmd);
         }
+#if SOLCO_STUDIO_PRO
+        /* Microphone take: the codec cannot play and record at once. Close the output,
+         * record in this task, reopen (gains fade in again, no click). */
+        if (studio_pro_capture_pending())
+        {
+            audio_stop();
+            studio_pro_capture_run();
+            output_recover(true, &s_profiles[profile]);
+            last_write = 0;
+            continue;
+        }
+#endif
         bool a = take(&s_decks[0], s_a, block);
         bool b = take(&s_decks[1], s_b, block);
         int cross = RELAXED(&s_cross), volume = RELAXED(&s_volume);
         studio_render(&s_studio, s_bus, (size_t)block);
+#if SOLCO_STUDIO_PRO
+        /* Sampler, synth and sequencer tracks on the same bus, steps from the Studio transport. */
+        studio_pro_render(s_bus, (size_t)block, s_studio.status.playing, s_studio.status.step, s_studio.status.bpm);
+        bool pro = studio_pro_active();
+#else
+        bool pro = false;
+#endif
         /* Mix at full level: the stream tap is pre-volume, the user volume is the
          * last gain of this device's own output. */
         solco_mix_studio(&s_mix, s_a, s_b, s_bus, s_out, (size_t)block, cross, 100, a, b,
                          s_studio.status.enabled || s_studio.status.playing ||
-                             s_studio.status.voices);
+                             s_studio.status.voices || pro);
 #if SOLCO_LINK
         uint32_t frame0 = (uint32_t)s_studio.status.frame - (uint32_t)block;
         solco_stream_tap(s_out, block, frame0);
@@ -1383,6 +1406,12 @@ esp_err_t solco_engine_start(void)
     {
         return ESP_ERR_NO_MEM;
     }
+#if SOLCO_STUDIO_PRO
+    if (!studio_pro_init())
+    {
+        ESP_LOGW(TAG_LOG_PRO, "Studio Pro not available");
+    }
+#endif
     if (!sys_task_create(audio_task, "solco_audio", 4096, NULL, 6, 1))
     {
         return ESP_ERR_NO_MEM;

@@ -97,6 +97,10 @@ static void studio_action(lv_event_t *event)
         solco_studio_command(STUDIO_KIT, state.kit ? 0 : 1, 0);
     else if (code == 16)
         solco_motion_mode((solco_motion_get() + 1) % 3);
+#if SOLCO_STUDIO_PRO
+    else if (code >= 20 && code <= 22)
+        solco_pro_open(s_studio_page, code - 20);
+#endif
     else
         solco_studio_open(code);
 }
@@ -121,6 +125,10 @@ void solco_studio_open(int view)
     lv_obj_set_hidden(s_studio_page, view < 0);
     if (view < 0)
     {
+#if SOLCO_STUDIO_PRO
+        if (solco_pro_visible())
+            solco_pro_close();
+#endif
         solco_ui_studio_closed();
         return;
     }
@@ -158,6 +166,13 @@ void solco_studio_refresh(void)
 {
     if (!s_studio_page || s_studio_view < 0)
         return;
+#if SOLCO_STUDIO_PRO
+    if (solco_pro_visible())
+    {
+        solco_pro_refresh();
+        return;
+    }
+#endif
     studio_status_t state;
     solco_studio_status(&state);
     char text[48];
@@ -218,10 +233,23 @@ static void studio_build(void)
                            LV_TEXT_ALIGN_CENTER, false);
     control(s_studio_page, LV_SYMBOL_LEFT, round ? 60 : 8, round ? 25 : 5, 42, studio_action, -1);
     control(s_studio_page, "VOL", round ? 246 : 296, round ? 25 : 5, 56, studio_volume, 0);
+#if SOLCO_STUDIO_PRO
+    /* Two columns: the classic studio on the left, the Pro tools on the right. */
+    studio_tag(control(s_studio_page, "MIX / VINYL", 14, 70, 160, studio_action, -1), 0);
+    studio_tag(control(s_studio_page, "DRUMPAD / BEAT", 14, 122, 160, studio_action, 1), 0);
+    studio_tag(control(s_studio_page, "STRUMENTI", 14, 174, 160, studio_action, 2), 0);
+    studio_tag(control(s_studio_page, "MOVIMENTO", 14, 226, 160, studio_action, 3), 0);
+    studio_tag(control(s_studio_page, "CAMPIONATORE", 186, 70, 160, studio_action, 20), 0);
+    studio_tag(control(s_studio_page, "SYNTH", 186, 122, 160, studio_action, 21), 0);
+    studio_tag(control(s_studio_page, "SEQUENCER", 186, 174, 160, studio_action, 22), 0);
+    lv_obj_t *pro_hint = label(s_studio_page, "PRO // mic, synth, 16 passi", 190, 236, 160, TK_VIOLET);
+    lv_obj_set_user_data(pro_hint, (void *)1000);
+#else
     studio_tag(control(s_studio_page, "MIX / VINYL", 65, 87, 230, studio_action, -1), 0);
     studio_tag(control(s_studio_page, "DRUMPAD / BEAT", 45, 137, 270, studio_action, 1), 0);
     studio_tag(control(s_studio_page, "STRUMENTI", 45, 187, 270, studio_action, 2), 0);
     studio_tag(control(s_studio_page, "MOVIMENTO", 65, 237, 230, studio_action, 3), 0);
+#endif
     s_studio_play = control(s_studio_page, "PLAY", round ? 82 : 12, round ? 301 : 312, round ? 60 : 102,
                             studio_action, 10);
     s_studio_rec = control(s_studio_page, "REC", round ? 150 : 126, round ? 301 : 312, round ? 60 : 102,

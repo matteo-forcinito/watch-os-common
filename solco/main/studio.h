@@ -14,6 +14,7 @@
 #define STUDIO_TEMPO 5
 #define STUDIO_ENABLE 6
 #define STUDIO_KIT 7
+#define STUDIO_STEP 8   /* value = pad 0..7, velocity = step + 1: toggle one cell of the beat */
 
 typedef struct
 {

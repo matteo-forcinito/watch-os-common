@@ -337,6 +337,14 @@ static void apply(studio_t *s, studio_event_t e)
         memset(s->playback, 0, sizeof(s->playback));
         s->status.revision++;
     }
+    else if (e.type == STUDIO_STEP)
+    {
+        if (e.value < 8 && e.velocity >= 1 && e.velocity <= 16)
+        {
+            s->status.pattern.pattern[e.value] ^= (uint16_t)(1u << (e.velocity - 1));
+            s->status.revision++;
+        }
+    }
     else if (e.type == STUDIO_TEMPO)
     {
         s->status.bpm = e.value < 60 ? 60 : e.value > 200 ? 200 : e.value;

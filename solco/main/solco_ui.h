@@ -71,6 +71,13 @@ void solco_studio_open(int view); /* -1 closes */
 int solco_studio_view(void);
 bool solco_studio_tools_open(void);
 void solco_studio_refresh(void);
+#if SOLCO_STUDIO_PRO
+/* Studio Pro screens (ui_studio_pro.c): 0 CAMPIONATORE, 1 SYNTH, 2 SEQUENCER. */
+void solco_pro_open(lv_obj_t *parent, int screen);
+void solco_pro_close(void);
+bool solco_pro_visible(void);
+void solco_pro_refresh(void);
+#endif
 /* Studio tells the live views when it takes or leaves the screen. */
 void solco_ui_studio_opened(void);
 void solco_ui_studio_closed(void);
