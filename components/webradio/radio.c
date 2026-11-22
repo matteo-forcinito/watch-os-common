@@ -1,4 +1,5 @@
 #include "webradio/radio.h"
+#include "webradio/radio_player.h"
 
 #include "radio_list.h"
 #include "core/sys.h"
@@ -203,8 +204,16 @@ static void worker_task(void *arg)
 
 /* ------------------------------------------------------------- public */
 
+/* The volume set anywhere (Settings > Suono, web page, knob) reaches the
+ * stream playing now; the decoder applies it at its next frame. */
+static void settings_changed(const settings_t *settings)
+{
+    radio_player_set_volume(settings->volume);
+}
+
 void radio_service_init(void)
 {
+    settings_add_listener(settings_changed);
     s_mutex = xSemaphoreCreateMutex();
     s_queue = xQueueCreate(4, sizeof(cmd_t));
 

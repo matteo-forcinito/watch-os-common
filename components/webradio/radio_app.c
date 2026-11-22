@@ -61,6 +61,7 @@ typedef struct
 
     /* Bar panels only (see "touch bar layout") */
     bool bar_ui, landscape, tinted;
+    bool panel_ui;                     /* phone-like panel layout (panel_create) */
     lv_obj_t *hero, *badge, *play, *meter, *library, *quick, *battery;
     lv_timer_t *meter_timer;
     uint32_t tint, seed, phase;
@@ -78,7 +79,7 @@ static lv_obj_t *bar_station_tile(int station, const radio_info_t *info);
 
 static void volume_text_update(void)
 {
-    lv_label_set_text_fmt(s_ui->volume_text, s_ui->bar_ui && s_ui->landscape ? "%d%%" : "Volume %d%%",
+    lv_label_set_text_fmt(s_ui->volume_text, s_ui->bar_ui && (s_ui->landscape || s_ui->panel_ui) ? "%d%%" : "Volume %d%%",
                           settings_get()->volume);
 }
 
@@ -907,6 +908,173 @@ static void bar_create(lv_obj_t *screen, bool landscape)
     s_ui->meter_timer = lv_timer_create(meter_tick, METER_PERIOD_MS, NULL);
 }
 
+/* ---- panel layout: medium rectangular screens (320 x 480 either way) ----
+ *
+ * Portrait: tinted hero (badge, library, station, song, live meter), then
+ * prev / play / next, the volume row and the quick favourites. Landscape:
+ * hero on the left, controls and "Stazioni" on the right. Same parts as the
+ * bar layout (tint, meter, library overlay, quick list), sized for a phone.
+ */
+static void panel_create(lv_obj_t *screen, bool landscape)
+{
+    lv_display_t *display = lv_display_get_default();
+    int32_t w = lv_display_get_horizontal_resolution(display), h = lv_display_get_vertical_resolution(display);
+    const int32_t gap = 8;
+    const int32_t pad = 16;
+
+    s_ui->bar_ui = true;
+    s_ui->panel_ui = true;
+    s_ui->landscape = landscape;
+    s_ui->seed = 0x2545F491u;
+    lv_obj_set_scrollable(screen, false);
+    lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+
+    /* ---- hero */
+    int32_t hw = landscape ? w * 60 / 100 : w - 2 * gap;
+    int32_t hh = landscape ? h - 2 * gap : h * 45 / 100;
+    int32_t inner = hw - 2 * pad;
+    lv_obj_t *hero = bar_box(screen, gap, gap, hw, hh, 26, UI_COLOR_CARD);
+    s_ui->hero = hero;
+    lv_obj_set_style_bg_grad_dir(hero, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_border_width(hero, 1, 0);
+    lv_obj_set_style_border_opa(hero, LV_OPA_70, 0);
+    s_ui->meter_bars = inner / 9 > METER_MAX ? METER_MAX : inner / 9;
+
+    s_ui->badge = bar_box(hero, pad, 14, 66, 24, 12, UI_COLOR_CARD_HI);
+    lv_obj_t *badge_text = lv_label_create(s_ui->badge);
+    lv_obj_set_style_text_font(badge_text, UI_FONT_CAPTION, 0);
+    lv_obj_set_width(badge_text, 66);
+    lv_obj_set_style_text_align(badge_text, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_center(badge_text);
+
+    lv_obj_t *open = bar_pad(hero, hw - pad - 44, 8, 44, 44, 22, 0x000000, LV_SYMBOL_LIST, UI_FONT_ICON,
+                             on_library_open, NULL);
+    lv_obj_set_style_bg_opa(open, LV_OPA_40, 0);
+    lv_obj_set_ext_click_area(open, 10);
+    s_ui->battery = bar_label(hero, hw - pad - 44 - 76, 18, 70, UI_FONT_CAPTION, UI_COLOR_TEXT_DIM);
+    lv_obj_set_style_text_align(s_ui->battery, LV_TEXT_ALIGN_RIGHT, 0);
+
+    int32_t y = 58;
+    s_ui->station = bar_label(hero, pad, y, inner, ui_font_title, UI_COLOR_TEXT);
+    lv_label_set_long_mode(s_ui->station, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_ui->station, lv_font_get_line_height(ui_font_title) * 2);
+    y += lv_font_get_line_height(ui_font_title) * 2 + 4;
+    s_ui->song = bar_label(hero, pad, y, inner, UI_FONT_SMALL, UI_COLOR_TEXT);
+    lv_label_set_long_mode(s_ui->song, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    y += lv_font_get_line_height(UI_FONT_SMALL) + 2;
+    s_ui->status = bar_label(hero, pad, y, inner, UI_FONT_CAPTION, UI_COLOR_TEXT_DIM);
+    lv_label_set_long_mode(s_ui->status, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_ui->status, lv_font_get_line_height(UI_FONT_CAPTION));
+    y += lv_font_get_line_height(UI_FONT_CAPTION) + 8;
+    s_ui->meter = bar_box(hero, pad, y, inner, hh - y - 14, 0, 0);
+    lv_obj_set_style_bg_opa(s_ui->meter, LV_OPA_TRANSP, 0);
+    lv_obj_add_event_cb(s_ui->meter, meter_draw, LV_EVENT_DRAW_MAIN, NULL);
+
+    /* ---- controls */
+    int32_t cx = landscape ? hw + 2 * gap : gap;
+    int32_t cy = landscape ? gap : hh + 2 * gap;
+    int32_t cw = landscape ? w - cx - gap : w - 2 * gap;
+    int32_t play_size = landscape ? 84 : 88;
+    int32_t side = landscape ? 52 : 60;
+
+    if (landscape)
+    {
+        s_ui->play = bar_pad(screen, cx + (cw - play_size) / 2, cy + 6, play_size, play_size, play_size / 2,
+                             UI_COLOR_PINK, LV_SYMBOL_PLAY, &lv_font_montserrat_32, on_play, NULL);
+        int32_t ry = cy + play_size + 18;
+        int32_t half = (cw - gap) / 2;
+        bar_pad(screen, cx, ry, half, side, side / 2, UI_COLOR_CARD_HI, LV_SYMBOL_PREV, UI_FONT_ICON, on_prev, NULL);
+        bar_pad(screen, cx + half + gap, ry, half, side, side / 2, UI_COLOR_CARD_HI, LV_SYMBOL_NEXT, UI_FONT_ICON,
+                on_next, NULL);
+        cy = ry + side + 14;
+    }
+    else
+    {
+        int32_t space = (cw - play_size - 2 * side) / 4;
+        bar_pad(screen, cx + space, cy + (play_size - side) / 2, side, side, side / 2, UI_COLOR_CARD_HI,
+                LV_SYMBOL_PREV, UI_FONT_ICON, on_prev, NULL);
+        s_ui->play = bar_pad(screen, cx + 2 * space + side, cy, play_size, play_size, play_size / 2, UI_COLOR_PINK,
+                             LV_SYMBOL_PLAY, &lv_font_montserrat_32, on_play, NULL);
+        bar_pad(screen, cx + 3 * space + side + play_size, cy + (play_size - side) / 2, side, side, side / 2,
+                UI_COLOR_CARD_HI, LV_SYMBOL_NEXT, UI_FONT_ICON, on_next, NULL);
+        cy += play_size + 14;
+    }
+
+    /* volume: speaker, slider, value on one row */
+    lv_obj_t *speaker = bar_label(screen, cx + 4, cy + 2, 0, UI_FONT_ICON, UI_COLOR_TEXT_DIM);
+    lv_label_set_text(speaker, LV_SYMBOL_VOLUME_MAX);
+    s_ui->volume = lv_slider_create(screen);
+    lv_obj_set_pos(s_ui->volume, cx + 40, cy + 10);
+    lv_obj_set_size(s_ui->volume, cw - 40 - 56, 12);
+    s_ui->volume_text = bar_label(screen, cx + cw - 50, cy + 4, 50, UI_FONT_SMALL, UI_COLOR_TEXT);
+    lv_obj_set_style_text_align(s_ui->volume_text, LV_TEXT_ALIGN_RIGHT, 0);
+    cy += 44;
+
+    if (landscape)
+    {
+        lv_obj_t *list = bar_pad(screen, cx, cy, cw, h - cy - gap, 22, UI_COLOR_CARD, LV_SYMBOL_LIST "  Stazioni",
+                                 UI_FONT_SMALL, on_library_open, NULL);
+        lv_obj_set_style_border_width(list, 1, 0);
+        lv_obj_set_style_border_color(list, lv_color_hex(UI_COLOR_SEPARATOR), 0);
+    }
+    else
+    {
+        lv_obj_t *caption = bar_label(screen, cx + 4, cy, cw, UI_FONT_HUD, UI_COLOR_TEAL);
+        lv_obj_set_style_text_letter_space(caption, UI_HUD_LETTER_SPACE, 0);
+        lv_label_set_text(caption, "PREFERITE");
+        cy += 24;
+        s_ui->quick = bar_box(screen, cx, cy, cw, h - cy - gap, 0, 0);
+        lv_obj_set_style_bg_opa(s_ui->quick, LV_OPA_TRANSP, 0);
+        lv_obj_set_scrollable(s_ui->quick, true);
+        lv_obj_set_scroll_dir(s_ui->quick, LV_DIR_VER);
+        lv_obj_set_scrollbar_mode(s_ui->quick, LV_SCROLLBAR_MODE_OFF);
+    }
+
+    s_ui->play_label = lv_obj_get_child(s_ui->play, 0);
+    lv_obj_set_style_text_color(s_ui->play_label, lv_color_black(), 0);
+    lv_obj_set_style_outline_width(s_ui->play, 6, 0);
+    lv_obj_set_style_outline_pad(s_ui->play, 4, 0);
+    lv_obj_set_style_outline_opa(s_ui->play, LV_OPA_30, 0);
+
+    lv_slider_set_range(s_ui->volume, 0, 100);
+    lv_slider_set_value(s_ui->volume, settings_get()->volume, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(s_ui->volume, lv_color_hex(UI_COLOR_CARD_HI), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui->volume, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ui->volume, lv_color_white(), LV_PART_KNOB);
+    lv_obj_set_style_pad_all(s_ui->volume, 6, LV_PART_KNOB);
+    lv_obj_set_ext_click_area(s_ui->volume, 18);
+    lv_obj_add_event_cb(s_ui->volume, on_volume, LV_EVENT_VALUE_CHANGED, NULL);
+
+    /* ---- library overlay (chips + station list), hidden until asked */
+    lv_obj_t *library = bar_box(screen, 0, 0, w, h, 0, 0x000000);
+    s_ui->library = library;
+    lv_obj_set_clickable(library, true);
+    bar_pad(library, gap, gap, 52, 46, 22, UI_COLOR_CARD, LV_SYMBOL_LEFT, UI_FONT_ICON, on_library_close, NULL);
+    lv_obj_t *title = bar_label(library, 52 + 2 * gap + 4, gap + 10, 0, ui_font_title, UI_COLOR_TEXT);
+    lv_label_set_text(title, "Stazioni");
+    s_ui->chips = bar_box(library, gap, 46 + 2 * gap, w - 2 * gap, 44, 0, 0);
+    lv_obj_set_flex_flow(s_ui->chips, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(s_ui->chips, 6, 0);
+    lv_obj_set_scroll_dir(s_ui->chips, LV_DIR_HOR);
+    s_ui->list = bar_box(library, gap, 90 + 3 * gap, w - 2 * gap, h - (90 + 4 * gap), 0, 0);
+    lv_obj_set_flex_flow(s_ui->list, landscape ? LV_FLEX_FLOW_ROW_WRAP : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_ui->list, 8, 0);
+    lv_obj_set_style_pad_column(s_ui->list, 8, 0);
+    lv_obj_set_scroll_dir(s_ui->list, LV_DIR_VER);
+    lv_obj_set_style_bg_opa(s_ui->chips, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(s_ui->list, LV_OPA_TRANSP, 0);
+    lv_obj_set_scrollable(s_ui->chips, true);
+    lv_obj_set_scrollable(s_ui->list, true);
+    lv_obj_set_clickable(s_ui->chips, true);
+    lv_obj_set_clickable(s_ui->list, true);
+    lv_obj_set_scrollbar_mode(s_ui->chips, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scrollbar_mode(s_ui->list, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_hidden(library, true);
+
+    s_ui->meter_timer = lv_timer_create(meter_tick, METER_PERIOD_MS, NULL);
+}
+
 /* ----------------------------------------------------------------- app */
 
 /* The page of watches and square panels: now playing card, chips, rows. */
@@ -1001,10 +1169,18 @@ static void create(lv_obj_t *screen, void *arg)
     const board_info_t *view = ui_board_info();
     bool bar_panel = !view->round && ((view->width <= 200 && view->height >= 2 * view->width) ||
                                       (view->height <= 200 && view->width >= 2 * view->height));
+    /* Phone-like rectangular panels (320 x 480 either way): their own layout. */
+    int32_t short_side = view->width < view->height ? view->width : view->height;
+    bool phone_panel = !view->round && !bar_panel && view->width != view->height && short_side >= 280;
     lv_obj_t *page;
     if (bar_panel)
     {
         bar_create(screen, view->width > view->height);
+        page = screen;
+    }
+    else if (phone_panel)
+    {
+        panel_create(screen, view->width > view->height);
         page = screen;
     }
     else
