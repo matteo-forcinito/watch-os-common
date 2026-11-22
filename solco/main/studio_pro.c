@@ -1132,6 +1132,7 @@ static void start_sample(int slot, int velocity)
     sv->step = (double)s->rate / RATE * pow(2.0, s->pitch / 12.0);
     sv->gain = (s->gain / 100.0f) * (velocity / 127.0f);
     sv->on = true;
+
 }
 
 static void drain_events(void)
@@ -1280,7 +1281,7 @@ void studio_pro_render(int16_t *stereo, size_t frames, bool playing, int step, i
         }
 
         sounding = true;
-        float g = sv->gain / 32768.0f;
+        float g = sv->gain * 0.8f;   /* the mix is in 16-bit units, like the synth; headroom for chords */
 
         for (size_t i = 0; i < frames; i++)
         {
