@@ -15,7 +15,7 @@
 
 static const char *TAG = "apps";
 
-#define MAX_APPS        56
+#define MAX_APPS        80
 #define MAX_STACK       8
 #define MAX_RETIRED     16
 #define MAX_OPS         4
@@ -89,10 +89,18 @@ static void run_pending(void);
 
 void app_register(const app_t *app)
 {
-    if (s_app_count < MAX_APPS && app != NULL)
+    if (app == NULL)
     {
-        s_apps[s_app_count++] = app;
+        return;
     }
+
+    if (s_app_count >= MAX_APPS)
+    {
+        ESP_LOGE(TAG, "App registry full: \"%s\" dropped (raise MAX_APPS)", app->id);
+        return;
+    }
+
+    s_apps[s_app_count++] = app;
 }
 
 size_t app_count(void)

@@ -57,8 +57,12 @@ static void init_styles(void)
     lv_style_set_bg_color(&s_card, lv_color_hex(TK_SURFACE_1));
     lv_style_set_bg_opa(&s_card, LV_OPA_COVER);
     lv_style_set_radius(&s_card, CARD_RADIUS);
+#if UI_STYLE_SOFT
+    lv_style_set_border_width(&s_card, 0);   /* soft style: surfaces, no frames */
+#else
     lv_style_set_border_width(&s_card, TK_LW_HAIR);
     lv_style_set_border_color(&s_card, lv_color_hex(TK_LINE));
+#endif
     lv_style_set_pad_hor(&s_card, TK_SP_3);
     lv_style_set_pad_ver(&s_card, TK_SP_2);
     lv_style_set_text_color(&s_card, lv_color_hex(TK_TEXT));
@@ -390,9 +394,15 @@ void ui_icon_bubble_set_color(lv_obj_t *bubble, uint32_t color)
         return;
     }
 
+#if UI_STYLE_SOFT
+    lv_obj_set_style_bg_color(bubble, lv_color_mix(lv_color_hex(color), lv_color_white(), 225), 0);
+    lv_obj_set_style_bg_grad_color(bubble, lv_color_mix(lv_color_hex(color), lv_color_black(), 150), 0);
+    color = 0xFFFFFF;
+#else
     lv_obj_set_style_bg_color(bubble, ui_glow(color, TK_GLOW_G3), 0);
     lv_obj_set_style_border_color(bubble, ui_glow(color, TK_GLOW_G1), 0);
     lv_obj_set_style_outline_color(bubble, ui_glow(color, TK_GLOW_G1), 0);
+#endif
 
     lv_obj_t *glyph = lv_obj_get_child(bubble, 0);
 
@@ -407,11 +417,22 @@ lv_obj_t *ui_icon_bubble(lv_obj_t *parent, const char *icon, uint32_t color, int
     lv_obj_t *bubble = lv_obj_create(parent);
     lv_obj_remove_style_all(bubble);
     lv_obj_set_size(bubble, size, size);
+#if UI_STYLE_SOFT
+    /* Soft style (board option): a filled rounded tile, light-to-deep gradient
+     * of the colour, white glyph. Static: drawn once, no glow animation. */
+    lv_obj_set_style_radius(bubble, size * 28 / 100, 0);
+    lv_obj_set_style_bg_color(bubble, lv_color_mix(lv_color_hex(color), lv_color_white(), 225), 0);
+    lv_obj_set_style_bg_grad_color(bubble, lv_color_mix(lv_color_hex(color), lv_color_black(), 150), 0);
+    lv_obj_set_style_bg_grad_dir(bubble, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
+    color = 0xFFFFFF;   /* glyphs in white on the tile */
+#else
     lv_obj_set_style_radius(bubble, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(bubble, ui_glow(color, TK_GLOW_G3), 0);
     lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(bubble, TK_LW, 0);
     lv_obj_set_style_border_color(bubble, ui_glow(color, TK_GLOW_G1), 0);
+#endif
     lv_obj_set_clickable(bubble, false);
     lv_obj_set_scrollable(bubble, false);
 
