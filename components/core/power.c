@@ -26,6 +26,7 @@
 #include <stdatomic.h>
 
 static const char *TAG = "power";
+static bool s_start_dark;   /* power_start_dark(): first state idle, panel never lit */
 
 /* I2C (PMU, touch), panel commands, LVGL lock and logs: 4 KB overflowed once. */
 #define TASK_STACK          6144
@@ -189,10 +190,16 @@ static void go_aod(void)
 
 static void go_off(void)
 {
-    if (s_screen == POWER_SCREEN_OFF)
+    /* After a dark start the logical state is already OFF, but the panel and
+     * LVGL still run: put them to sleep once. */
+    static bool s_dark_done;
+
+    if (s_screen == POWER_SCREEN_OFF && (s_dark_done || !s_start_dark))
     {
         return;
     }
+
+    s_dark_done = true;
 
     set_brightness(0, s_screen == POWER_SCREEN_ON || s_screen == POWER_SCREEN_DIM);
     set_screen(POWER_SCREEN_OFF);
@@ -341,10 +348,15 @@ static void poll_battery(void)
     state_set(STATE_CHARGING, pmu_is_charging());
     state_set(STATE_USB, usb);
 
-    if (usb && !was_usb && s_screen != POWER_SCREEN_ON)
+    /* The first reading is not a plug-in: after a dark start the panel stays dark. */
+    static bool s_polled;
+
+    if (usb && !was_usb && s_screen != POWER_SCREEN_ON && (s_polled || !s_start_dark))
     {
         go_on();   /* show the charging state when the cable is plugged in */
     }
+
+    s_polled = true;
 }
 
 /*
@@ -561,6 +573,7 @@ esp_err_t power_init(void)
     s_screen = POWER_SCREEN_OFF;   /* panel starts dark: go_on() lights it */
     s_brightness_now = 0;
 
+
     if (!sys_task_create(power_task, "power", TASK_STACK, NULL, TASK_PRIORITY, 0))
     {
         return ESP_ERR_NO_MEM;
@@ -568,9 +581,14 @@ esp_err_t power_init(void)
 
     err = power_inputs_init();
     if (err != ESP_OK) ESP_LOGW(TAG, "Buttons: %s", esp_err_to_name(err));
-    post(MSG_WAKE, POWER_WAKE_OTHER, 0);
+    post(s_start_dark ? MSG_SLEEP : MSG_WAKE, POWER_WAKE_OTHER, 0);
 
     return ESP_OK;
+}
+
+void power_start_dark(void)
+{
+    s_start_dark = true;
 }
 
 void power_user_activity(void)

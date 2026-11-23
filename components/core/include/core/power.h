@@ -61,6 +61,10 @@ void power_wake(power_wake_t reason);
 /* Turn the screen off now. Any task. */
 void power_sleep_now(void);
 
+/* Call before power_init(): the first state is idle (always-on face or off)
+ * instead of lighting the panel, e.g. after a silent maintenance restart. */
+void power_start_dark(void);
+
 /* Keep the screen on while > 0 (flashlight, ringing alarm...). Any task. */
 void power_keep_screen_on(bool keep);
 
