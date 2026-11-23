@@ -151,7 +151,6 @@ void app_main(void)
     clock_init();
     vault_alarm_prepare();
     ESP_ERROR_CHECK(wifi_service_init());
-    ESP_ERROR_CHECK(vault_hid_init());
     ESP_ERROR_CHECK(vault_service_init());
     lv_port_lock();
     ui_init();
@@ -166,6 +165,9 @@ void app_main(void)
     lv_port_unlock();
     ESP_ERROR_CHECK(power_init());
     app_manager_init();
+    /* BLE last: the radio can take a few seconds to come up (a co-processor
+     * boots), the archive screen is already usable meanwhile. */
+    ESP_ERROR_CHECK(vault_hid_init());
     vault_alarm_start();
     /* Never start devcon: it supports screenshots and arbitrary commands. */
     sys_heap_log("Vault ready");

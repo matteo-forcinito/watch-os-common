@@ -18,6 +18,9 @@
 /* Readers (UI, web, QA) wait briefly: the worker runs at idle priority and may hold
  * the mutex while preempted; priority inheritance lets it finish quickly. */
 #define READ_WAIT pdMS_TO_TICKS(50)
+#if VAULT_KEEP_SCREEN_UNLOCKED
+static bool s_screen_held; /* worker task only */
+#endif
 static SemaphoreHandle_t s_mutex;
 static QueueHandle_t s_queue;
 static vault_model_t *s_model;
@@ -321,6 +324,13 @@ static void cleanup_locked(void)
     lv_port_unlock();
     vault_hid_lock(true);
     vault_web_stop();
+#if VAULT_KEEP_SCREEN_UNLOCKED
+    if (s_screen_held)
+    {
+        s_screen_held = false;
+        power_keep_screen_on(false);
+    }
+#endif
     atomic_store(&s_lock_requested, false);
 }
 
@@ -359,6 +369,15 @@ static esp_err_t unlock(vault_job_t *job)
     s_failures = 0;
     vault_activity();
     vault_hid_lock(false);
+#if VAULT_KEEP_SCREEN_UNLOCKED
+    /* Desk panels: the screen stays on while unlocked (screen-off would lock it at
+     * once); the inactivity lock (120 s) still applies. Watches keep their timeout. */
+    if (!s_screen_held)
+    {
+        s_screen_held = true;
+        power_keep_screen_on(true);
+    }
+#endif
     return ESP_OK;
 }
 

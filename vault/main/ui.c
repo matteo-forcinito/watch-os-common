@@ -71,9 +71,48 @@ static esp_err_t submit(vault_job_t *job)
     return result;
 }
 
+/* Each action has its own glyph (codes as in action()); entries and groups keep the arrow. */
+static const char *row_icon(unsigned code, uint32_t *color)
+{
+    *color = GOLD;
+    switch (code >> 16 ? (code >> 16) * 1000 + (code >> 16 == 3 ? (code & 0xFFFF) : 0) : code)
+    {
+    case 1: return LV_SYMBOL_LIST;
+    case 2: return LV_SYMBOL_ENVELOPE;
+    case 3: return LV_SYMBOL_EDIT;
+    case 4: return LV_SYMBOL_HOME;
+    case 5: *color = TEAL; return LV_SYMBOL_PLUS;
+    case 6: return LV_SYMBOL_WIFI;
+    case 7: return LV_SYMBOL_EYE_CLOSE;
+    case 8: return LV_SYMBOL_LEFT;
+    case 9: return LV_SYMBOL_PREV;
+    case 10: return LV_SYMBOL_NEXT;
+    case 11: case 12: case 33: return LV_SYMBOL_UPLOAD;
+    case 13: return LV_SYMBOL_EDIT;
+    case 14: return LV_SYMBOL_EYE_OPEN;
+    case 15: *color = 0xFF5A6A; return LV_SYMBOL_TRASH;
+    case 17: return LV_SYMBOL_REFRESH;
+    case 22: *color = 0xFF5A6A; return LV_SYMBOL_STOP;
+    case 23: case 27: return LV_SYMBOL_BLUETOOTH;
+    case 24: case 31: return LV_SYMBOL_DOWNLOAD;
+    case 26: return LV_SYMBOL_SETTINGS;
+    case 28: return LV_SYMBOL_USB;
+    case 29: case 30: return LV_SYMBOL_KEYBOARD;
+    case 32: return LV_SYMBOL_OK;
+    case 3000: return LV_SYMBOL_ENVELOPE;     /* type email */
+    case 3001: return LV_SYMBOL_EDIT;         /* type username */
+    case 3002: *color = TEAL; return LV_SYMBOL_KEYBOARD;   /* type password */
+    case 3003: return LV_SYMBOL_HOME;         /* type website */
+    case 4000: return LV_SYMBOL_EDIT;
+    default: return LV_SYMBOL_RIGHT;
+    }
+}
+
 static void row(lv_obj_t *page, const char *text, const char *value, unsigned code)
 {
-    ui_row(page, LV_SYMBOL_RIGHT, GOLD, text, value, action, (void *)(uintptr_t)code);
+    uint32_t color;
+    const char *icon = row_icon(code, &color);
+    ui_row(page, icon, color, text, value, action, (void *)(uintptr_t)code);
 }
 
 static void confirmed_create(const char *text, void *unused)
@@ -100,7 +139,7 @@ static void unlock_input(const char *text, void *unused)
         return;
     if (!vault_text_valid(text, 129, false) || (!s_ui->status.exists && strlen(text) < 12))
     {
-        ui_toast("Password principale: 12–128 byte");
+        ui_toast("La password principale deve avere da 12 a 128 caratteri");
         return;
     }
     if (!s_ui->status.exists)
@@ -666,19 +705,24 @@ static void render(void)
     lv_obj_t *page = s_ui->content;
     if (s_ui->page == 1)
     {
-        row(page, "Tutte le credenziali", "", 1);
+        char count[16];
+        snprintf(count, sizeof(count), "%u", s_ui->status.count);
+        row(page, "Tutte le credenziali", count, 1);
+        row(page, "Nuova credenziale", "", 5);
+        row(page, "Blocca archivio", "", 7);
+        ui_section(page, "Cerca");
         row(page, "Per email", "", 2);
         row(page, "Per username", "", 3);
         row(page, "Per sito web", "", 4);
-        row(page, "Nuova credenziale", LV_SYMBOL_PLUS, 5);
+        ui_section(page, "Computer");
+        row(page, "Abbina Bluetooth", "PIN sul dispositivo", 23);
+        row(page, "Connessione e layout", "Bluetooth / USB", 26);
         row(page, "Dashboard PC", "HTTPS", 6);
+        ui_section(page, "Archivio");
         row(page, "Esporta tutte", "Cifrato su SD", 11);
+        row(page, "Esporta selezionate", "Cifrato su SD", 33);
         row(page, "Importa dalla SD", "File cifrato", 31);
         row(page, "Anteprima importazione", "", 24);
-        row(page, "Esporta selezionate", "Cifrato su SD", 33);
-        row(page, "Connessione e layout", "Bluetooth / USB", 26);
-        row(page, "Abbina Bluetooth", "PIN sul dispositivo", 23);
-        row(page, "Blocca archivio", "", 7);
     }
     else if (s_ui->page == 2 || s_ui->page == 3)
     {
@@ -719,10 +763,7 @@ static void render(void)
             return;
         }
         vault_text(page, entry.name);
-        row(page, "Email", entry.email, (3U << 16) | 0);
-        row(page, "Username", entry.username, (3U << 16) | 1);
-        row(page, "Password", "Scrivi sul PC", (3U << 16) | 2);
-        row(page, "Sito web", entry.website, (3U << 16) | 3);
+        row(page, "Scrivi password", "Sul PC", (3U << 16) | 2);
         row(page, "Mostra password", "Per 10 secondi", 14);
         if (s_ui->revealing)
             vault_text(page, entry.password);
@@ -735,6 +776,10 @@ static void render(void)
                            code) == ESP_OK)
             {
                 s_ui->otp_label = vault_text(page, code);
+                /* The code is what you read from across the desk: large, spaced, teal. */
+                lv_obj_set_style_text_font(s_ui->otp_label, ui_font_title, 0);
+                lv_obj_set_style_text_color(s_ui->otp_label, ui_color(TEAL), 0);
+                lv_obj_set_style_text_letter_space(s_ui->otp_label, 4, 0);
                 s_ui->otp_expiry = vault_text(page, "");
                 s_ui->otp_counter = now / entry.otp_period;
                 s_ui->otp_period = entry.otp_period;
@@ -743,6 +788,9 @@ static void render(void)
             else
                 vault_text(page, "TOTP: verifica l'orologio");
         }
+        row(page, "Username", entry.username, (3U << 16) | 1);
+        row(page, "Email", entry.email, (3U << 16) | 0);
+        row(page, "Sito web", entry.website, (3U << 16) | 3);
         if (entry.note[0])
             vault_text(page, entry.note);
         row(page, "Modifica", "", 13);

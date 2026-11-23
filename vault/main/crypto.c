@@ -191,6 +191,21 @@ static void hw_hmac(const uint8_t inner[32], const uint8_t outer[32], const uint
     vault_wipe(digest, sizeof(digest));
 }
 
+/* One PBKDF2 iteration on the engine for a 32-byte U: inner and outer HMAC
+ * blocks share the same layout (data, 0x80, zeros, 768 bits), so the block is
+ * padded once by the caller and each digest is read straight into it: the
+ * inner digest becomes the outer block's data, the outer digest the next U.
+ * No copies or per-step wipes (the caller wipes the block once at the end). */
+static void hw_iteration(uint32_t inner[8], uint32_t outer[8], sha_block_t *block)
+{
+    esp_sha_write_digest_state(SHA2_256, inner);
+    esp_sha_block(SHA2_256, block->words, false);
+    esp_sha_read_digest_state(SHA2_256, block->words);
+    esp_sha_write_digest_state(SHA2_256, outer);
+    esp_sha_block(SHA2_256, block->words, false);
+    esp_sha_read_digest_state(SHA2_256, block->words);
+}
+
 /* ipad/opad states from the engine: first block with the standard initial values. */
 static void hw_pad_state(const uint8_t normalized[64], uint8_t value, uint8_t out[32])
 {
@@ -246,15 +261,16 @@ esp_err_t vault_derive(const char *password, const uint8_t salt[16], uint32_t it
         vTaskPrioritySet(NULL, 2);
     /* Engine check: the first iteration must match the software result exactly,
      * otherwise the whole derivation stays in software (same key either way). */
-    uint8_t inner_state[32], outer_state[32];
+    uint32_t inner_state[8], outer_state[8];
+    sha_block_t block;
     bool hardware = false;
     if (result == 0 && vault_kdf_hardware)
     {
         esp_sha_acquire_hardware();
         esp_sha_set_mode(SHA2_256);
-        hw_pad_state(normalized, 0x36, inner_state);
-        hw_pad_state(normalized, 0x5c, outer_state);
-        hw_hmac(inner_state, outer_state, input, 20, next);
+        hw_pad_state(normalized, 0x36, (uint8_t *)inner_state);
+        hw_pad_state(normalized, 0x5c, (uint8_t *)outer_state);
+        hw_hmac((const uint8_t *)inner_state, (const uint8_t *)outer_state, input, 20, next);
         hardware = vault_equal(next, u, 32);
         if (!hardware)
             esp_sha_release_hardware();
@@ -262,7 +278,12 @@ esp_err_t vault_derive(const char *password, const uint8_t salt[16], uint32_t it
     for (uint32_t i = 1; i < iterations && result == 0; i++)
     {
         if (hardware)
-            hw_hmac(inner_state, outer_state, u, 32, next);
+        {
+            if (i == 1)
+                tail_block(&block, u, 32);
+            hw_iteration(inner_state, outer_state, &block);
+            memcpy(next, block.bytes, 32);
+        }
         else
             result = cached_hmac(&inner, &outer, u, 32, next);
         if (result != 0)
@@ -297,6 +318,7 @@ esp_err_t vault_derive(const char *password, const uint8_t salt[16], uint32_t it
     printf("@VAULTKDF %s %u iterations %lld ms\n", hardware ? "hardware" : "software", (unsigned)iterations,
            (long long)((esp_timer_get_time() - started) / 1000));
 #endif
+    vault_wipe(&block, sizeof(block));
     vault_wipe(inner_state, sizeof(inner_state));
     vault_wipe(outer_state, sizeof(outer_state));
     if (priority == tskIDLE_PRIORITY)
