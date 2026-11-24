@@ -27,6 +27,7 @@ static const char *TAG = "battery";
 #define RATE_MIN_MINUTES 20
 #define RATE_MIN_DROP    3
 #define MIN_TEST_DROP_MV 3
+#define NVS_KEY_UNPLUG   "unplug"   /* {unix time, percent} of the last cable removal */
 
 /* What survives a restart. */
 typedef struct
@@ -53,6 +54,45 @@ static int s_reference = BATTERY_UNKNOWN;   /* level the next drop is counted fr
 static int s_mv = 0;
 static sample_t s_rate[RATE_SAMPLES];
 static int s_rate_count = 0;
+
+/* Last cable removal (wall clock, survives restarts): time since the last
+ * charge and a time-left estimate that does not start over after a restart. */
+typedef struct
+{
+    int64_t when;    /* unix time, 0 = unknown */
+    int32_t percent;
+} unplug_t;
+
+static unplug_t s_unplug;
+static int s_cable = -1;   /* -1 unknown at boot, 0 battery, 1 cable */
+
+static void unplug_load(void)
+{
+    nvs_handle_t nvs;
+    size_t size = sizeof(s_unplug);
+
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK)
+    {
+        if (nvs_get_blob(nvs, NVS_KEY_UNPLUG, &s_unplug, &size) != ESP_OK || size != sizeof(s_unplug))
+        {
+            memset(&s_unplug, 0, sizeof(s_unplug));
+        }
+
+        nvs_close(nvs);
+    }
+}
+
+static void unplug_save(unplug_t value)
+{
+    nvs_handle_t nvs;
+
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK)
+    {
+        nvs_set_blob(nvs, NVS_KEY_UNPLUG, &value, sizeof(value));
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+}
 
 /* ------------------------------------------------------------ storage */
 
@@ -142,9 +182,19 @@ static void sample_job(void *arg)
     int percent = state_get(STATE_BATTERY);
     bool on_cable = state_get(STATE_CHARGING) != 0 || state_get(STATE_USB) != 0;
     bool save_now = false;
+    bool unplug_now = false;
     int mv = pmu_battery_mv();
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
+
+    /* Cable removed (or first look on battery with no record): remember when and at which level. */
+    if (percent >= 0 && clock_is_valid() && !on_cable && (s_cable == 1 || (s_cable == -1 && s_unplug.when == 0)))
+    {
+        s_unplug = (unplug_t){(int64_t)time(NULL), percent};
+        unplug_now = true;
+    }
+
+    s_cable = on_cable ? 1 : 0;
 
     s_mv = mv;
 
@@ -185,6 +235,11 @@ static void sample_job(void *arg)
     {
         save();
     }
+
+    if (unplug_now)
+    {
+        unplug_save(s_unplug);
+    }
 }
 
 /* esp_timer task: only hand the work to the sys worker. */
@@ -206,6 +261,7 @@ void battery_health_init(void)
     }
 
     load();
+    unplug_load();
 
     const esp_timer_create_args_t args = {.callback = sample_timer_cb, .name = "battery"};
 
@@ -241,6 +297,7 @@ void battery_health_get(battery_report_t *out)
     out->first_seen = s_store.first_seen;
     out->tests = (int)s_store.tests;
     out->minutes_left = out->usb || out->charging ? BATTERY_UNKNOWN : minutes_left(out->percent);
+    unplug_t unplug = s_unplug;
 
     int first_drop = (int)s_store.first_drop_mv;
     int last_drop = (int)s_store.last_drop_mv;
@@ -248,6 +305,26 @@ void battery_health_get(battery_report_t *out)
     xSemaphoreGive(s_lock);
 
     out->days = BATTERY_UNKNOWN;
+    out->minutes_unplugged = out->unplug_percent = BATTERY_UNKNOWN;
+
+    if (!out->usb && !out->charging && unplug.when > 0 && clock_is_valid())
+    {
+        int64_t seconds = (int64_t)time(NULL) - unplug.when;
+
+        if (seconds >= 0)
+        {
+            out->minutes_unplugged = (int)(seconds / 60);
+            out->unplug_percent = unplug.percent;
+            int drop = unplug.percent - out->percent;
+
+            /* Recent history too short (just restarted): the pace since unplugging. */
+            if (out->minutes_left < 0 && out->minutes_unplugged >= RATE_MIN_MINUTES && drop >= RATE_MIN_DROP &&
+                out->percent > 0)
+            {
+                out->minutes_left = (int)((int64_t)out->percent * out->minutes_unplugged / drop);
+            }
+        }
+    }
 
     if (out->first_seen > 0 && clock_is_valid())
     {

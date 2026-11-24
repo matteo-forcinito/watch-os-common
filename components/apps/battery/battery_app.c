@@ -83,6 +83,7 @@ typedef struct
     lv_obj_t *age_row;
     lv_obj_t *resistance_row;
     lv_obj_t *time_row;
+    lv_obj_t *unplug_row;
     lv_obj_t *test_overlay;
     lv_timer_t *refresh;
     lv_timer_t *blink;
@@ -401,6 +402,30 @@ static void refresh(lv_timer_t *timer)
         snprintf(text, sizeof(text), "~%d h %02d min", r.minutes_left / 60, r.minutes_left % 60);
         set_value(s_ui->time_row, text);
     }
+
+    if (r.usb || r.charging)
+    {
+        set_value(s_ui->unplug_row, "in carica");
+    }
+    else if (r.minutes_unplugged < 0)
+    {
+        set_value(s_ui->unplug_row, "-");
+    }
+    else
+    {
+        int m = r.minutes_unplugged;
+
+        if (m >= 48 * 60)
+        {
+            snprintf(text, sizeof(text), "%d g %d h (da %d%%)", m / 1440, m % 1440 / 60, r.unplug_percent);
+        }
+        else
+        {
+            snprintf(text, sizeof(text), "%d h %02d min (da %d%%)", m / 60, m % 60, r.unplug_percent);
+        }
+
+        set_value(s_ui->unplug_row, text);
+    }
 }
 
 /* --------------------------------------------------------- health test */
@@ -608,6 +633,7 @@ static void create(lv_obj_t *screen, void *arg)
     s_ui->age_row = ui_row(page, LV_SYMBOL_LOOP, UI_COLOR_INDIGO, "Età", "", NULL, NULL);
     s_ui->resistance_row = ui_row(page, LV_SYMBOL_CHARGE, UI_COLOR_ORANGE, "Resistenza", "", NULL, NULL);
     s_ui->time_row = ui_row(page, LV_SYMBOL_EYE_OPEN, UI_COLOR_TEAL, "Autonomia", "", NULL, NULL);
+    s_ui->unplug_row = ui_row(page, LV_SYMBOL_USB, UI_COLOR_BLUE, "Dall'ultima carica", "", NULL, NULL);
 
     ui_row(page, LV_SYMBOL_PLAY, UI_COLOR_GREEN, "Test salute", NULL, on_test, NULL);
     ui_text(page, "La salute è una stima (nessun chip misura la capacità): il peggiore tra cicli contati, "

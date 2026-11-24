@@ -44,6 +44,8 @@ typedef struct
     int tests;             /* resistance tests stored */
     int resistance_change; /* % vs the first test (e.g. +12), only if tests >= 2 */
     int minutes_left;      /* estimated, BATTERY_UNKNOWN while learning */
+    int minutes_unplugged; /* since the cable was last removed, BATTERY_UNKNOWN if unknown or on the cable */
+    int unplug_percent;    /* level when the cable was removed, BATTERY_UNKNOWN if unknown */
 } battery_report_t;
 
 /* Load the history and start sampling. Before apps_init(). */
