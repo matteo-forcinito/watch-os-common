@@ -76,6 +76,8 @@ void lv_port_fake_touch(bool pressed, int x, int y);
 
 /* lvgl task: the second finger of the current touch, in screen coordinates (false: one finger). */
 bool lv_port_touch_second(lv_point_t *point);
+/* Quarter turns between the native panel and the UI (orientation.h), for code that maps touches to the panel. */
+int lv_port_rotation(void);
 
 /* Called (in the lvgl task) for a "swipe right from the left edge". */
 void lv_port_set_back_gesture_cb(void (*cb)(void));

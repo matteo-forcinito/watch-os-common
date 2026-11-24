@@ -710,6 +710,11 @@ __attribute__((weak)) bool touch_read_second(uint16_t *x, uint16_t *y)
     return false;
 }
 
+int lv_port_rotation(void)
+{
+    return s_rotation;
+}
+
 bool lv_port_touch_second(lv_point_t *point)
 {
     if (s_second_valid && point != NULL)
