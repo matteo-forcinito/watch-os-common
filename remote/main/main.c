@@ -49,7 +49,9 @@ void app_main(void)
     remote_settings_load();
     remote_dictionary(); /* index the words now (~0.2 s), not at the first swipe */
     remote_deck_init();
-    remote_connect();
+#if !REMOTE_LAZY_LINK
+    remote_connect();   /* REMOTE_LAZY_LINK (P4): nothing starts until a mode is chosen */
+#endif
     sys_heap_log("hid");
 
     lv_port_lock();
@@ -59,6 +61,9 @@ void app_main(void)
     app_register(&remote_options_app);
     remote_modes_register();
     app_register(&remote_deck_app);
+#if REMOTE_SCREEN_MODE
+    app_register(&remote_screen_app);   /* hidden; also reachable by id (agent, console) */
+#endif
     app_register(&remote_switcher_app);
     remote_air_register();
     remote_hub_register();

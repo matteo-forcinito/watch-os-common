@@ -46,6 +46,10 @@ static const remote_mode_t s_modes[] = {
     {"Teams / Zoom", "Riunioni", LV_SYMBOL_CALL, UI_COLOR_INDIGO, &remote_meeting_app},
     {"Gamepad", "Gamepad", LV_SYMBOL_SHUFFLE, UI_COLOR_PURPLE, &remote_gamepad_app},
     {"Scorciatoie", "Scorciatoie", LV_SYMBOL_LIST, UI_COLOR_BLUE, &remote_shortcuts_app},
+#if REMOTE_SCREEN_MODE
+    /* Home list only: the switcher keeps its fixed map of the first ten. */
+    {"Schermo PC", "Schermo", LV_SYMBOL_IMAGE, UI_COLOR_INDIGO, &remote_screen_app},
+#endif
 };
 
 static lv_obj_t *s_status;
@@ -88,6 +92,7 @@ static void open_mode(lv_event_t *e)
         return;
     }
 
+    remote_connect();   /* REMOTE_LAZY_LINK: the radio starts with the first mode chosen */
     app_open_app(mode->app, NULL);
 }
 
@@ -119,12 +124,14 @@ void remote_change_transport(lv_event_t *e)
 static void open_hub(lv_event_t *e)
 {
     (void)e;
+    remote_connect();
     app_open_app(&remote_hub_app, NULL);
 }
 
 static void open_hosts(lv_event_t *e)
 {
     (void)e;
+    remote_connect();
     app_open_app(&remote_hosts_app, NULL);
 }
 
@@ -220,7 +227,10 @@ static void choose_mode(lv_event_t *e)
     hid_link_release_all();
     app_close_others(NULL);
     if (target != NULL)
+    {
+        remote_connect();
         app_open_app(target, NULL);
+    }
 }
 
 static void switcher_tile(lv_obj_t *screen, ui_key_rect_t r, const char *icon, const char *text, uint32_t color,

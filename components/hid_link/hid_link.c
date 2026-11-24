@@ -222,6 +222,15 @@ const uint8_t hid_report_map[HID_REPORT_MAP_BYTES] = {
     0x81,
     0x02,
     0xC0,
+#if HID_LINK_ABS_POINTER
+    /* Absolute pointer, report id 6: 3 buttons + X/Y 0..32767 (no driver on Windows/macOS/Linux). */
+    0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, HID_REPORT_ABSOLUTE,
+    0x09, 0x01, 0xA1, 0x00,
+    0x05, 0x09, 0x19, 0x01, 0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x95, 0x03, 0x75, 0x01, 0x81, 0x02,
+    0x95, 0x01, 0x75, 0x05, 0x81, 0x01,
+    0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x16, 0x00, 0x00, 0x26, 0xFF, 0x7F, 0x75, 0x10, 0x95, 0x02, 0x81, 0x02,
+    0xC0, 0xC0,
+#endif
 };
 
 const uint16_t hid_report_map_len = sizeof(hid_report_map);
@@ -611,6 +620,17 @@ bool hid_link_pointer(int8_t dx, int8_t dy, uint8_t buttons, int8_t wheel, int8_
     uint8_t data[5] = {buttons, (uint8_t)dx, (uint8_t)dy, (uint8_t)wheel, (uint8_t)pan};
     return push(HID_REPORT_MOUSE, data, 5, false);
 }
+#if HID_LINK_ABS_POINTER
+bool hid_link_absolute(uint16_t x, uint16_t y, uint8_t buttons)
+{
+    x = x > 32767 ? 32767 : x;
+    y = y > 32767 ? 32767 : y;
+    uint8_t data[5] = {buttons & 7, (uint8_t)x, (uint8_t)(x >> 8), (uint8_t)y, (uint8_t)(y >> 8)};
+    /* Never the automatic zero report: for an absolute pointer it would mean "go to 0,0". */
+    return push(HID_REPORT_ABSOLUTE, data, 5, false);
+}
+#endif
+
 bool hid_link_mouse(int8_t dx, int8_t dy, uint8_t buttons, int8_t wheel)
 {
     return hid_link_pointer(dx, dy, buttons, wheel, 0);

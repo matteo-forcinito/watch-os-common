@@ -141,8 +141,43 @@ void remote_dictionary_select(remote_dict_t dict)
     remote_settings_save(&s); /* loaded when the keyboard opens */
 }
 
+static void connect_now(void);
+
+#if REMOTE_LAZY_LINK
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static void connect_task(void *arg)
+{
+    (void)arg;
+    connect_now();   /* the radio may wait for a co-processor: never in the UI task */
+    vTaskDelete(NULL);
+}
+#endif
+
+/* Idempotent: with REMOTE_LAZY_LINK the modes call it when chosen, and it returns at once. */
 void remote_connect(void)
 {
+    static bool s_started;
+
+    if (s_started)
+    {
+        return;
+    }
+
+    s_started = true;
+#if REMOTE_LAZY_LINK
+    if (xTaskCreate(connect_task, "remote_link", 6144, NULL, 5, NULL) == pdPASS)
+    {
+        return;
+    }
+#endif
+    connect_now();
+}
+
+static void connect_now(void)
+{
+
     /* A satellite talks only to its hub; a hub keeps the normal PC link and adds the radio. */
     hid_hub_role_t role = hid_hub_role();
     hid_link_transport_t transport =

@@ -75,6 +75,9 @@ extern const app_t remote_media_app;
 extern const app_t remote_presenter_app;
 extern const app_t remote_meeting_app;
 extern const app_t remote_gamepad_app;
+#if REMOTE_SCREEN_MODE
+extern const app_t remote_screen_app; /* computer screen on the panel + touch control (board-specific) */
+#endif
 extern const app_t remote_shortcuts_app;
 extern const app_t remote_air_app; /* only on boards with an IMU */
 void remote_modes_register(void);

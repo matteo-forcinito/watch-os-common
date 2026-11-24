@@ -21,7 +21,14 @@
  *   id 2 media:    16-bit consumer usage
  *   id 3 mouse:    [buttons, x, y, wheel]
  */
+#if HID_LINK_ABS_POINTER
+/* id 6 absolute pointer: [buttons, x lo, x hi, y lo, y hi], 0..32767 over the host's
+ * main screen (boards that mirror the computer screen, e.g. the P4 panel). */
+#define HID_REPORT_ABSOLUTE 6
+#define HID_REPORT_MAP_BYTES (192 + 54)
+#else
 #define HID_REPORT_MAP_BYTES 192
+#endif
 
 extern const uint8_t hid_report_map[HID_REPORT_MAP_BYTES];
 extern const uint16_t hid_report_map_len;

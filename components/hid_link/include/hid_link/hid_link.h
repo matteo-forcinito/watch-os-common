@@ -112,6 +112,11 @@ bool hid_link_backspace(int count);
 
 bool hid_link_media(uint16_t usage);
 bool hid_link_mouse(int8_t dx, int8_t dy, uint8_t buttons, int8_t wheel);
+#if HID_LINK_ABS_POINTER
+/* Absolute pointer (boards built with HID_LINK_ABS_POINTER): x/y 0..32767 over the
+ * host's main screen, buttons bit 0 left, 1 right, 2 middle. */
+bool hid_link_absolute(uint16_t x, uint16_t y, uint8_t buttons);
+#endif
 
 /* Full pointer report: pan is horizontal scrolling (consumer AC Pan). */
 bool hid_link_pointer(int8_t dx, int8_t dy, uint8_t buttons, int8_t wheel, int8_t pan);
