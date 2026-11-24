@@ -449,7 +449,8 @@ static void create(lv_obj_t *screen, void *arg)
     lv_obj_set_style_bg_color(screen, lv_color_hex(TK_VOID), 0);
     s_button = lv_button_create(screen);
     lv_obj_remove_style_all(s_button);
-    lv_obj_set_size(s_button, ui_board_info()->width - 12, ui_board_info()->height - 20);
+    lv_obj_set_size(s_button, ui_board_info()->width - 12,
+                    ui_board_info()->height - 20 - lv_obj_get_style_pad_top(screen, 0));
     lv_obj_set_pos(s_button, 6, 4);
     lv_obj_set_style_radius(s_button, ui_board_info()->round ? LV_RADIUS_CIRCLE : ui_board_info()->display_corner_radius, 0);
     lv_obj_set_style_bg_opa(s_button, LV_OPA_COVER, 0);

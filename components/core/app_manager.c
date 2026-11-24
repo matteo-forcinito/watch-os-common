@@ -78,6 +78,7 @@ static int s_op_count = 0;
 static lv_obj_t *s_home = NULL;
 static bool (*s_home_back)(void) = NULL;
 static void (*s_focus_changed)(bool on) = NULL;
+static void (*s_screen_prepare)(lv_obj_t *screen, const app_t *app) = NULL;
 static void (*s_aod_create)(lv_obj_t *screen) = NULL;
 static lv_obj_t *s_aod_screen = NULL;
 static int64_t s_sleep_started_us = 0;
@@ -244,7 +245,18 @@ static lv_obj_t *new_screen(const app_t *app)
     lv_obj_set_size(screen, LV_PCT(100), LV_PCT(100));
     lv_obj_add_event_cb(screen, screen_loaded, LV_EVENT_SCREEN_LOADED, NULL);
     lv_obj_add_event_cb(screen, screen_deleted, LV_EVENT_DELETE, (void *)app);
+
+    if (s_screen_prepare != NULL)
+    {
+        s_screen_prepare(screen, app);   /* e.g. a board status bar: padding before create() */
+    }
+
     return screen;
+}
+
+void app_manager_set_screen_prepare(void (*prepare)(lv_obj_t *screen, const app_t *app))
+{
+    s_screen_prepare = prepare;
 }
 
 /*

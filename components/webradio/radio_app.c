@@ -736,6 +736,7 @@ static void bar_create(lv_obj_t *screen, bool landscape)
 {
     lv_display_t *display = lv_display_get_default();
     int32_t w = lv_display_get_horizontal_resolution(display), h = lv_display_get_vertical_resolution(display);
+    h -= lv_obj_get_style_pad_top(screen, 0) + lv_obj_get_style_pad_bottom(screen, 0);   /* a board status bar */
     const int32_t gap = 6;
 
     s_ui->bar_ui = true;
@@ -919,6 +920,7 @@ static void panel_create(lv_obj_t *screen, bool landscape)
 {
     lv_display_t *display = lv_display_get_default();
     int32_t w = lv_display_get_horizontal_resolution(display), h = lv_display_get_vertical_resolution(display);
+    h -= lv_obj_get_style_pad_top(screen, 0) + lv_obj_get_style_pad_bottom(screen, 0);   /* a board status bar */
     const int32_t gap = 8;
     const int32_t pad = 16;
 

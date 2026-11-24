@@ -112,6 +112,11 @@ void app_manager_set_aod(void (*aod_create)(lv_obj_t *screen));
 /* Told (lvgl task) when the knob double click switched focus navigation on/off. */
 void app_manager_set_focus_cb(void (*changed)(bool on));
 
+/* Called (lvgl task) for every new app screen, before the app's create():
+ * a board can reserve room there (e.g. pad_top for its own status bar).
+ * Apps should size themselves from lv_obj_get_content_height(screen). */
+void app_manager_set_screen_prepare(void (*prepare)(lv_obj_t *screen, const app_t *app));
+
 /* Start the manager (after lv_port_init and power_init). External apps (see
  * extapp_sdk) also get the battery pill below, unless they turned it off. */
 void app_manager_init(void);
