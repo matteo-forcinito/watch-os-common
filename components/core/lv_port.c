@@ -145,6 +145,8 @@ static bool s_back_gesture = false;
 static int16_t s_start_x = 0;
 static int16_t s_start_y = 0;
 static bool s_was_pressed = false;
+static bool s_second_valid = false;
+static lv_point_t s_second;
 
 /* Knob detents not handled yet (written by the knob driver, read by the lvgl task). */
 static _Atomic int s_knob_delta = 0;
@@ -701,6 +703,23 @@ static void stop_touch_polling(void)
     if (!s_headless) touch_irq_arm();
 }
 
+__attribute__((weak)) bool touch_read_second(uint16_t *x, uint16_t *y)
+{
+    (void)x;
+    (void)y;
+    return false;
+}
+
+bool lv_port_touch_second(lv_point_t *point)
+{
+    if (s_second_valid && point != NULL)
+    {
+        *point = s_second;
+    }
+
+    return s_second_valid;
+}
+
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     (void)indev;
@@ -712,6 +731,7 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 
     if (fake != 0)
     {
+        s_second_valid = false;
         pressed = (fake & FAKE_PRESSED) != 0;
         x = (uint16_t)((fake >> 12) & 0xFFF);
         y = (uint16_t)(fake & 0xFFF);
@@ -727,6 +747,22 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         if(pressed && s_rotation) {
             int lx,ly;orientation_logical(s_rotation,board_info()->width,board_info()->height,x,y,&lx,&ly);
             x=(uint16_t)lx;y=(uint16_t)ly;
+        }
+
+        uint16_t x2, y2;
+        s_second_valid = pressed && touch_read_second(&x2, &y2);
+
+        if (s_second_valid)
+        {
+            int lx = x2, ly = y2;
+
+            if (s_rotation)
+            {
+                orientation_logical(s_rotation, board_info()->width, board_info()->height, x2, y2, &lx, &ly);
+            }
+
+            s_second.x = lx;
+            s_second.y = ly;
         }
 
         if (pressed && s_mirror != NULL)

@@ -26,6 +26,10 @@ esp_err_t touch_init(touch_irq_cb_t on_touch, void *ctx);
 /* Read the first touch point. Returns true while a finger is down. */
 bool touch_read(uint16_t *x, uint16_t *y);
 
+/* Optional: the second finger of the last touch_read (multi-touch chips). The
+ * default (weak, in core) returns false. */
+bool touch_read_second(uint16_t *x, uint16_t *y);
+
 /* True while the INT pin is low (finger down), without an I2C transfer. */
 bool touch_pin_active(void);
 
